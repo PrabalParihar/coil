@@ -11,11 +11,10 @@ import {
   useSwitchChain,
   useWriteContract,
 } from "wagmi";
+import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
 import {
   ZERO,
   addr,
@@ -39,14 +38,39 @@ import {
   percentToCr,
   poolReserves,
   quoteLoop,
-  type LoopPreview,
   type Market,
 } from "@/lib/quote";
+import {
+  Activity,
+  Banner,
+  CoilMark,
+  EmptyState,
+  HealthFilament,
+  HeroInstrument,
+  NumberField,
+  PreviewPanel,
+  Rail,
+  TweenValue,
+  activityScope,
+  shorten,
+  useCoilMotion,
+  useMotionOk,
+  type TxLink,
+} from "@/components/shell";
 
 const WAD = 10n ** 18n;
-const EXPLORER = "https://explorer.test.mezo.org/tx/";
 
-type TxLink = { label: string; hash: `0x${string}` };
+const STEPS = [
+  ["Post BTC", "Open a MUSD trove"],
+  ["Buy BTC", "Swap the MUSD"],
+  ["Post it back", "Stop at your ratio"],
+] as const;
+
+const CALL = [
+  "Your BTC collateral opens or tops up the trove and mints MUSD.",
+  "The MUSD/BTC pool swaps that MUSD back into BTC.",
+  "The BTC is added as collateral. Refinance lifts the borrow cap, and Coil repeats until the next mint would cross under your ratio.",
+] as const;
 
 export function CoilApp() {
   const [mounted, setMounted] = useState(false);
@@ -72,6 +96,8 @@ export function CoilApp() {
   const publicClient = usePublicClient({ chainId: mezoTestnet.id });
   const { writeContractAsync } = useWriteContract();
 
+  useCoilMotion();
+  const motionOk = useMotionOk();
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
@@ -302,508 +328,661 @@ export function CoilApp() {
     }
   }
 
+  function connectWallet() {
+    const connector = connectors[0];
+    if (connector) connect({ connector });
+  }
+
   const wrongChain = mounted && isConnected && chainId !== mezoTestnet.id;
   const targetCR = percentToCr(targetPct);
+  const scope = activityScope(status, txs, txError);
+  const errorText = txError ? shortError(txError) : null;
+  const positionKey = !factoryAddress
+    ? "preview"
+    : !mounted || !isConnected
+      ? "connect"
+      : !account
+        ? "account"
+        : !position?.active
+          ? "closed"
+          : "open";
+
+  const loopLabel = !factoryAddress
+    ? "Deploy to enable"
+    : !mounted || !isConnected
+      ? "Connect to loop"
+      : !account
+        ? "Create an account first"
+        : "Loop";
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-6 sm:px-6 lg:px-8">
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-5">
-        <div className="flex items-center gap-3">
-          <CoilMark />
-          <div>
-            <p className="font-[family-name:var(--font-fraunces)] text-2xl leading-none tracking-tight">
-              Coil
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">BTC leverage on MUSD</p>
+    <div className="relative min-h-screen">
+      <div className="atmosphere pointer-events-none fixed inset-0 -z-10" aria-hidden />
+      <div
+        className="pointer-events-none fixed inset-x-0 top-0 z-40 h-px bg-gradient-to-r from-transparent via-filament to-transparent"
+        aria-hidden
+      />
+      <a
+        href="#desk"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-full focus:bg-filament focus:px-4 focus:py-2 focus:text-ink"
+      >
+        Skip to compose
+      </a>
+
+      <header className="sticky top-0 z-30 border-b border-border/80 bg-background/75 backdrop-blur-xl">
+        <div className="relative mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-3">
+            <CoilMark />
+            <div>
+              <p className="font-serif text-2xl leading-none tracking-tight">Coil</p>
+              <p className="mt-1 text-xs text-muted-foreground">BTC leverage on MUSD</p>
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-3">
-          {market ? (
-            <p className="text-sm text-muted-foreground">
-              BTC <span className="text-foreground">{formatUsd(market.price)}</span>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <p className="hidden items-center gap-2 text-sm text-muted-foreground sm:flex">
+              <span className="relative flex size-1.5" aria-hidden>
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-safe opacity-60" />
+                <span className="relative inline-flex size-1.5 rounded-full bg-safe" />
+              </span>
+              BTC{" "}
+              {market ? (
+                <TweenValue
+                  canonical={formatUsd(market.price)}
+                  numeric={Number(market.price / 10n ** 18n)}
+                  digits={0}
+                  prefix="$"
+                  className="text-foreground"
+                />
+              ) : (
+                <span className="text-foreground/70">Reading oracle…</span>
+              )}
             </p>
-          ) : null}
-          <Button
-            variant={isConnected ? "outline" : "default"}
-            disabled={!mounted || connecting}
-            onClick={() => {
-              const connector = connectors[0];
-              if (connector) connect({ connector });
-            }}
-          >
-            {!mounted ? "Connect wallet" : isConnected ? shorten(address) : "Connect wallet"}
-          </Button>
+            <span
+              className={`hidden rounded-full border px-2.5 py-1 font-mono text-[10px] tracking-wide md:inline ${
+                wrongChain ? "border-destructive/50 text-destructive" : "border-border text-muted-foreground"
+              }`}
+            >
+              {wrongChain ? "Wrong network" : "Mezo 31611"}
+            </span>
+            <Button
+              type="button"
+              variant={isConnected ? "outline" : "default"}
+              className="h-10 px-4"
+              disabled={!mounted || connecting}
+              onClick={connectWallet}
+            >
+              {!mounted ? "Connect wallet" : connecting ? "Connecting…" : isConnected ? shorten(address) : "Connect wallet"}
+            </Button>
+          </div>
+          {busy ? <div className="busy-bar" aria-hidden /> : null}
         </div>
       </header>
 
-      <section className="grid gap-8 py-8 lg:grid-cols-[1.15fr_0.85fr] lg:items-start">
-        <div>
-          <p className="text-xs tracking-[0.18em] text-muted-foreground uppercase">
-            Mezo testnet · chain 31611
-          </p>
-          <h1 className="mt-3 max-w-xl font-[family-name:var(--font-fraunces)] text-4xl leading-[1.05] font-medium tracking-tight sm:text-5xl">
-            One transaction turns BTC into a leveraged BTC position.
-          </h1>
-          <p className="mt-4 max-w-xl text-base leading-relaxed text-muted-foreground">
-            Coil borrows MUSD against your Bitcoin, buys more BTC on Mezo Pools, and posts that
-            BTC back as collateral. You pick the ratio. A keeper can only make the position safer.
-          </p>
-          <ol className="mt-6 grid max-w-xl gap-3 sm:grid-cols-3">
-            {[
-              ["Post BTC", "Open a MUSD trove"],
-              ["Buy BTC", "Swap the MUSD"],
-              ["Post it back", "Stop at your ratio"],
-            ].map(([title, body]) => (
-              <li key={title} className="rounded-xl border border-border bg-card/60 px-3 py-3">
-                <p className="font-[family-name:var(--font-fraunces)] text-lg leading-none">{title}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{body}</p>
-              </li>
-            ))}
-          </ol>
-        </div>
-        <Card>
-          <CardHeader>
-            <CardTitle>Why it is one call</CardTitle>
-            <CardDescription>The clone owns the trove, so the steps share a transaction.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm leading-relaxed text-muted-foreground">
-            <p>1. Your BTC collateral opens or tops up the trove and mints MUSD.</p>
-            <p>2. The MUSD/BTC pool swaps that MUSD back into BTC.</p>
-            <p>3. The BTC is added as collateral. Refinance lifts the borrow cap, and Coil repeats until the next mint would cross under your ratio.</p>
-          </CardContent>
-        </Card>
-      </section>
-
-      {marketError ? (
-        <Banner tone="bad" title="Mezo RPC">
-          {marketError}
-        </Banner>
-      ) : null}
-      {wrongChain ? (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/40 px-4 py-3 text-sm">
-          <div>
-            <p className="font-medium">Wrong network</p>
-            <p className="mt-1 text-muted-foreground">Coil sends transactions on Mezo testnet, chain 31611.</p>
-          </div>
-          <Button
-            variant="outline"
-            onClick={() => switchChainAsync({ chainId: mezoTestnet.id }).catch(fail)}
-          >
-            Switch to Mezo testnet
-          </Button>
-        </div>
-      ) : null}
-      {!factoryAddress ? (
-        <Banner tone="warn" title="Preview only">
-          No Coil factory address is configured. Quotes below are read from the live testnet pool
-          and oracle. Set NEXT_PUBLIC_COIL_FACTORY after you deploy to enable loop and unwind.
-        </Banner>
-      ) : null}
-
-      <div className="grid items-start gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Open a coil</CardTitle>
-            <CardDescription>
-              Target {targetPct}% collateral, about {leverageLabel(targetCR)} BTC exposure.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-2">
-              <Label htmlFor="btc">BTC to deposit</Label>
-              <Input
-                id="btc"
-                inputMode="decimal"
-                value={btcText}
-                onChange={(event) => setBtcText(event.target.value)}
-                className="h-11 text-lg"
-              />
+      <div className="mx-auto flex w-full max-w-6xl flex-col px-4 sm:px-6 lg:px-8">
+        <main aria-busy={busy}>
+          <section className="grid items-center gap-10 py-10 lg:grid-cols-[minmax(0,1.15fr)_minmax(260px,0.8fr)] lg:py-14">
+            <div>
+              <p className="rise flex items-center gap-2 text-[11px] tracking-[0.18em] text-muted-foreground uppercase">
+                <span className="size-1.5 rounded-full bg-filament" aria-hidden />
+                Mezo testnet · chain 31611
+              </p>
+              <h1 className="mt-4 max-w-[16ch] font-serif text-5xl leading-[0.98] tracking-[-0.035em] sm:text-6xl">
+                <span className="rise rise-1 block">One transaction turns</span>
+                <span className="rise rise-2 block">
+                  BTC into a <em className="text-filament italic">leveraged</em>
+                </span>
+                <span className="rise rise-3 block">BTC position.</span>
+              </h1>
+              <p className="rise rise-3 mt-5 max-w-xl text-base leading-relaxed text-muted-foreground">
+                Coil borrows MUSD against your Bitcoin, buys more BTC on Mezo Pools, and posts that
+                BTC back as collateral. You pick the ratio. A keeper can only make the position safer.
+              </p>
+              <ol className="mt-8 grid max-w-xl gap-4 sm:grid-cols-3">
+                {STEPS.map(([title, body], index) => (
+                  <li key={title}>
+                    <div className="mb-3 flex items-center gap-3">
+                      <span className="font-mono text-[11px] text-filament">0{index + 1}</span>
+                      <span className={`filament-line filament-line-${index + 1} h-px flex-1 bg-gradient-to-r from-filament/80 to-transparent`} />
+                    </div>
+                    <p className="font-serif text-xl leading-none">{title}</p>
+                    <p className="mt-1.5 text-xs text-muted-foreground">{body}</p>
+                  </li>
+                ))}
+              </ol>
             </div>
-            <div className="space-y-3">
-              <div className="flex items-baseline justify-between">
-                <Label>Target collateral ratio</Label>
-                <span className="font-[family-name:var(--font-fraunces)] text-2xl">{targetPct}%</span>
-              </div>
-              <Slider
-                min={115}
-                max={350}
-                step={5}
-                value={[targetPct]}
-                onValueChange={(value) => setTargetPct(value[0] ?? 200)}
-              />
-              <p className="text-xs text-muted-foreground">
-                115% is the floor Coil will accept. Liquidation is 110%. Lower ratios are redeemed first.
+            <HeroInstrument targetPct={targetPct} />
+          </section>
+
+          <section aria-labelledby="why-title" className="border-t border-border py-8">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <h2 id="why-title" className="font-serif text-3xl tracking-tight">
+                Why it is one call
+              </h2>
+              <p className="max-w-sm text-sm text-muted-foreground">
+                The clone owns the trove, so the steps share a transaction.
               </p>
             </div>
-            <div className="space-y-3">
-              <div className="flex items-baseline justify-between">
-                <Label>Max slippage</Label>
-                <span className="text-sm">{(slippageBps / 100).toFixed(2)}%</span>
-              </div>
-              <Slider
-                min={10}
-                max={150}
-                step={5}
-                value={[slippageBps]}
-                onValueChange={(value) => setSlippageBps(value[0] ?? 50)}
-              />
-            </div>
+            <ol className="mt-6 grid gap-5 sm:grid-cols-3">
+              {CALL.map((step, index) => (
+                <li key={step} className="border-t border-border pt-4">
+                  <p className="font-mono text-[11px] text-filament">0{index + 1}</p>
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{step}</p>
+                </li>
+              ))}
+            </ol>
+          </section>
 
-            <Preview quote={preview} />
-
-            <div className="flex flex-col gap-2 sm:flex-row">
-              {factoryAddress && mounted && isConnected && !account ? (
+          <div className="space-y-3 pb-5">
+            {market ? (
+              <p className="text-sm text-muted-foreground sm:hidden">
+                BTC <span className="text-foreground">{formatUsd(market.price)}</span>
+              </p>
+            ) : null}
+            {marketError ? (
+              <Banner tone="bad" title="Mezo RPC">
+                {marketError}
+              </Banner>
+            ) : null}
+            {wrongChain ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">
+                <div>
+                  <p className="font-medium">Wrong network</p>
+                  <p className="mt-1 text-muted-foreground">Coil sends transactions on Mezo testnet, chain 31611.</p>
+                </div>
                 <Button
-                  className="h-11 flex-1"
-                  disabled={busy}
+                  type="button"
+                  variant="outline"
+                  className="h-10 px-4"
+                  onClick={() => switchChainAsync({ chainId: mezoTestnet.id }).catch(fail)}
+                >
+                  Switch to Mezo testnet
+                </Button>
+              </div>
+            ) : null}
+            {!factoryAddress ? (
+              <Banner tone="warn" title="Preview only">
+                No Coil factory address is configured. Quotes below are read from the live testnet pool
+                and oracle. Set NEXT_PUBLIC_COIL_FACTORY after you deploy to enable loop and unwind.
+              </Banner>
+            ) : null}
+          </div>
+
+          <div id="desk" className="grid scroll-mt-24 items-start gap-5 pb-6 lg:grid-cols-2">
+            <section className="panel p-5 sm:p-6" aria-labelledby="compose-title">
+              <p className="text-[11px] tracking-[0.18em] text-filament uppercase">Compose</p>
+              <h2 id="compose-title" className="mt-2 font-serif text-3xl tracking-tight">
+                Open a coil
+              </h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Target {targetPct}% collateral, about {leverageLabel(targetCR)} BTC exposure.
+              </p>
+
+              <div className="mt-6 space-y-6">
+                <div className="space-y-2">
+                  <Label htmlFor="btc" className="text-[11px] tracking-[0.16em] text-muted-foreground uppercase">
+                    BTC to deposit
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      id="btc"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={btcText}
+                      onChange={(event) => setBtcText(event.target.value)}
+                      className="h-14 rounded-2xl border-border bg-black/25 pr-16 font-serif text-3xl md:text-3xl dark:bg-black/25"
+                    />
+                    <span className="pointer-events-none absolute top-1/2 right-4 -translate-y-1/2 text-[11px] tracking-[0.16em] text-muted-foreground" aria-hidden>
+                      BTC
+                    </span>
+                  </div>
+                </div>
+
+                <Rail
+                  label="Target collateral ratio"
+                  thumbLabel="Target collateral ratio"
+                  min={115}
+                  max={350}
+                  step={5}
+                  value={targetPct}
+                  onValueChange={setTargetPct}
+                  ticks={[115, 150, 200, 300, 350]}
+                  hint="115% is the floor Coil will accept. Liquidation is 110%. Lower ratios are redeemed first."
+                  display={
+                    <TweenValue
+                      canonical={`${targetPct}%`}
+                      numeric={targetPct}
+                      digits={0}
+                      suffix="%"
+                      className="font-serif text-4xl leading-none tracking-tight"
+                    />
+                  }
+                />
+
+                <Rail
+                  label="Max slippage"
+                  thumbLabel="Max slippage"
+                  min={10}
+                  max={150}
+                  step={5}
+                  value={slippageBps}
+                  onValueChange={setSlippageBps}
+                  display={
+                    <span className="font-serif text-2xl leading-none tabular-nums">
+                      {(slippageBps / 100).toFixed(2)}%
+                    </span>
+                  }
+                />
+
+                <PreviewPanel quote={preview} />
+
+                <div className="flex flex-col gap-2">
+                  {factoryAddress && mounted && isConnected && !account ? (
+                    <Button
+                      type="button"
+                      className="h-12 px-6 text-[15px]"
+                      disabled={busy}
+                      onClick={() => {
+                        const factory = factoryAddress;
+                        if (!factory) return;
+                        begin();
+                        send("Create account", () =>
+                          writeContractAsync({
+                            address: factory,
+                            abi: coilFactoryAbi,
+                            functionName: "createAccount",
+                            chainId: mezoTestnet.id,
+                            gas: 800_000n,
+                          }),
+                        )
+                          .then(() => setStatus("Account created."))
+                          .catch(fail)
+                          .finally(() => setBusy(false));
+                      }}
+                    >
+                      Create account
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant={account ? "default" : "secondary"}
+                    className="h-12 px-6 text-[15px]"
+                    disabled={
+                      busy ||
+                      !factoryAddress ||
+                      !account ||
+                      preview.kind !== "ok" ||
+                      collateral === null ||
+                      collateral === 0n
+                    }
+                    onClick={() => {
+                      if (!account || collateral === null) return;
+                      begin();
+                      send(`Loop to ${targetPct}%`, () =>
+                        writeContractAsync({
+                          address: account,
+                          abi: coilAccountAbi,
+                          functionName: "loop",
+                          args: [targetCR, BigInt(slippageBps)],
+                          value: collateral,
+                          chainId: mezoTestnet.id,
+                          gas: 8_000_000n,
+                        }),
+                      )
+                        .then(() => setStatus("Loop confirmed."))
+                        .catch(fail)
+                        .finally(() => setBusy(false));
+                    }}
+                  >
+                    {loopLabel}
+                  </Button>
+                </div>
+
+                {scope === "compose" ? (
+                  <Activity
+                    status={status}
+                    txs={txs}
+                    error={errorText}
+                    busy={busy}
+                    deleverPct={deleverPct}
+                    unwindPct={unwindPct}
+                  />
+                ) : null}
+              </div>
+            </section>
+
+            <div className="space-y-5">
+              <section className="panel p-5 sm:p-6" aria-labelledby="position-title">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] tracking-[0.18em] text-filament uppercase">Position</p>
+                    <h2 id="position-title" className="mt-2 font-serif text-3xl tracking-tight">
+                      Trove
+                    </h2>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {account ? (
+                        <span className="font-mono text-foreground/90">{shorten(account)}</span>
+                      ) : (
+                        "Each wallet gets one clone. The clone is the borrower."
+                      )}
+                    </p>
+                  </div>
+                  {position?.active ? (
+                    <span className="rounded-full border border-safe/30 bg-safe/10 px-2.5 py-1 text-[11px] tracking-wide text-safe uppercase">
+                      Open
+                    </span>
+                  ) : null}
+                </div>
+
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={positionKey}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: motionOk ? 0.35 : 0, ease: [0.16, 1, 0.3, 1] }}
+                    className="mt-5"
+                  >
+                    {!factoryAddress ? (
+                      <EmptyState
+                        title="Nothing on-chain yet"
+                        body="The preview uses live Mezo state. After a testnet deploy, this card shows the trove the clone owns."
+                      />
+                    ) : !mounted || !isConnected ? (
+                      <EmptyState
+                        title="Connect to see your trove"
+                        body="Use any injected wallet on Mezo testnet. Test BTC comes from faucet.test.mezo.org."
+                        action={
+                          mounted
+                            ? { label: connecting ? "Connecting…" : "Connect wallet", onClick: connectWallet, disabled: connecting }
+                            : undefined
+                        }
+                      />
+                    ) : !account ? (
+                      <EmptyState
+                        title="No Coil account"
+                        body="Create one. It is a minimal proxy. Your wallet stays able to unwind, and the keeper cannot take funds."
+                      />
+                    ) : !position?.active ? (
+                      <EmptyState
+                        title="Account ready, trove closed"
+                        body="Deposit BTC and loop. The resulting debt has to clear the 1,800 MUSD minimum."
+                      />
+                    ) : (
+                      <OpenPosition
+                        position={position}
+                        deleverPct={deleverPct}
+                        setDeleverPct={setDeleverPct}
+                        unwindPct={unwindPct}
+                        setUnwindPct={setUnwindPct}
+                        busy={busy}
+                        onDelever={() => account && delever(account)}
+                        onUnwind={() => account && unwind(account)}
+                      />
+                    )}
+                  </motion.div>
+                </AnimatePresence>
+
+                {scope === "position" ? (
+                  <Activity
+                    status={status}
+                    txs={txs}
+                    error={errorText}
+                    busy={busy}
+                    deleverPct={deleverPct}
+                    unwindPct={unwindPct}
+                  />
+                ) : null}
+              </section>
+
+              <section className="panel p-5 sm:p-6" aria-labelledby="guard-title">
+                <p className="text-[11px] tracking-[0.18em] text-muted-foreground uppercase">Keeper</p>
+                <h2 id="guard-title" className="mt-2 font-serif text-3xl tracking-tight">
+                  Guard
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                  The keeper calls deleverTo only up to this ratio, and only if you set one.
+                </p>
+                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <NumberField id="floor" label="Floor %" value={floorPct} onChange={setFloorPct} />
+                  <NumberField id="guard-target" label="De-lever to %" value={guardPct} onChange={setGuardPct} />
+                  <NumberField id="zone" label="Redeem zone" value={zone} onChange={setZone} />
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="mt-4 h-12 w-full px-6 text-[15px]"
+                  disabled={busy || !account}
                   onClick={() => {
-                    const factory = factoryAddress;
-                    if (!factory) return;
+                    if (!account) return;
                     begin();
-                    send("Create account", () =>
+                    send("Set guard", () =>
                       writeContractAsync({
-                        address: factory,
-                        abi: coilFactoryAbi,
-                        functionName: "createAccount",
+                        address: account,
+                        abi: coilAccountAbi,
+                        functionName: "setGuard",
+                        args: [percentToCr(floorPct), percentToCr(guardPct), zone],
                         chainId: mezoTestnet.id,
-                        gas: 800_000n,
+                        gas: 300_000n,
                       }),
                     )
-                      .then(() => setStatus("Account created."))
+                      .then(() => setStatus("Guard saved."))
                       .catch(fail)
                       .finally(() => setBusy(false));
                   }}
                 >
-                  Create account
+                  Set guard
                 </Button>
-              ) : null}
-              <Button
-                className="h-11 flex-1"
-                disabled={
-                  busy ||
-                  !factoryAddress ||
-                  !account ||
-                  preview.kind !== "ok" ||
-                  collateral === null ||
-                  collateral === 0n
-                }
-                onClick={() => {
-                  if (!account || collateral === null) return;
-                  begin();
-                  send(`Loop to ${targetPct}%`, () =>
-                    writeContractAsync({
-                      address: account,
-                      abi: coilAccountAbi,
-                      functionName: "loop",
-                      args: [targetCR, BigInt(slippageBps)],
-                      value: collateral,
-                      chainId: mezoTestnet.id,
-                      gas: 8_000_000n,
-                    }),
-                  )
-                    .then(() => setStatus("Loop confirmed."))
-                    .catch(fail)
-                    .finally(() => setBusy(false));
-                }}
-              >
-                {account ? "Loop" : factoryAddress ? "Create an account first" : "Deploy to enable"}
-              </Button>
-            </div>
-            {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
-            <TxList txs={txs} />
-            {txError ? <p className="text-sm text-destructive">{shortError(txError)}</p> : null}
-          </CardContent>
-        </Card>
-
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Position</CardTitle>
-              <CardDescription>
-                {account ? shorten(account) : "Each wallet gets one clone. The clone is the borrower."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {!factoryAddress ? (
-                <Empty
-                  title="Nothing on-chain yet"
-                  body="The preview uses live Mezo state. After a testnet deploy, this card shows the trove the clone owns."
-                />
-              ) : !mounted || !isConnected ? (
-                <Empty
-                  title="Connect to see your trove"
-                  body="Use any injected wallet on Mezo testnet. Test BTC comes from faucet.test.mezo.org."
-                />
-              ) : !account ? (
-                <Empty
-                  title="No Coil account"
-                  body="Create one. It is a minimal proxy. Your wallet stays able to unwind, and the keeper cannot take funds."
-                />
-              ) : !position?.active ? (
-                <Empty
-                  title="Account ready, trove closed"
-                  body="Deposit BTC and loop. The resulting debt has to clear the 1,800 MUSD minimum."
-                />
-              ) : (
-                <div className="space-y-5">
-                  <div className="grid grid-cols-2 gap-4">
-                    <Stat label="Collateral ratio" value={formatPercent(position.cr)} />
-                    <Stat label="Leverage" value={leverageLabel(position.cr)} />
-                    <Stat label="Collateral" value={`${formatBtc(position.collateral)} BTC`} />
-                    <Stat label="Debt" value={`${formatMusd(position.debt)} MUSD`} />
-                    <Stat label="Liquidation price" value={formatUsd(position.liquidationPrice)} />
-                    <Stat label="Redemption rank" value={rankLabel(position.redemptionRank)} />
-                  </div>
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    {redemptionNote(position.redemptionRank, position.cr)} Liquidation can take the
-                    trove if BTC trades through {formatUsd(position.liquidationPrice)}.
+                {position?.guardTargetCR ? (
+                  <ul className="mt-4 flex flex-wrap gap-2 text-xs">
+                    <li className="rounded-full border border-border px-2.5 py-1">
+                      Floor {formatPercent(position.floorCR)}
+                    </li>
+                    <li className="rounded-full border border-border px-2.5 py-1">
+                      Target {formatPercent(position.guardTargetCR)}
+                    </li>
+                    <li className="rounded-full border border-border px-2.5 py-1">Zone {position.redemptionZone}</li>
+                  </ul>
+                ) : (
+                  <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+                    Unset, the keeper cannot touch the trove. You can always unwind yourself.
                   </p>
-                  <div className="space-y-3">
-                    <div className="flex items-baseline justify-between">
-                      <Label>Raise the ratio</Label>
-                      <span className="font-[family-name:var(--font-fraunces)] text-2xl">{deleverPct}%</span>
-                    </div>
-                    <Slider
-                      min={130}
-                      max={400}
-                      step={10}
-                      value={[deleverPct]}
-                      onValueChange={(value) => setDeleverPct(value[0] ?? 300)}
-                    />
-                    <Button
-                      variant="secondary"
-                      className="h-11 w-full"
-                      disabled={busy || !account || percentToCr(deleverPct) <= position.cr}
-                      onClick={() => account && delever(account)}
-                    >
-                      De-lever to {deleverPct}%
-                    </Button>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex items-baseline justify-between">
-                      <Label>Unwind</Label>
-                      <span className="text-sm">{unwindPct === 100 ? "Close trove" : `${unwindPct}% of debt`}</span>
-                    </div>
-                    <Slider
-                      min={10}
-                      max={100}
-                      step={10}
-                      value={[unwindPct]}
-                      onValueChange={(value) => setUnwindPct(value[0] ?? 100)}
-                    />
-                    <Button
-                      variant="outline"
-                      className="h-11 w-full"
-                      disabled={busy || !account}
-                      onClick={() => account && unwind(account)}
-                    >
-                      {unwindPct === 100 ? "Unwind and close" : "Unwind"}
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                )}
+              </section>
+            </div>
+          </div>
+        </main>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Guard</CardTitle>
-              <CardDescription>
-                The keeper calls deleverTo only up to this ratio, and only if you set one.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <Field label="Floor %" value={floorPct} onChange={setFloorPct} />
-                <Field label="De-lever to %" value={guardPct} onChange={setGuardPct} />
-                <Field label="Redeem zone" value={zone} onChange={setZone} />
-              </div>
-              <Button
-                variant="secondary"
-                className="h-11 w-full"
-                disabled={busy || !account}
-                onClick={() => {
-                  if (!account) return;
-                  begin();
-                  send("Set guard", () =>
-                    writeContractAsync({
-                      address: account,
-                      abi: coilAccountAbi,
-                      functionName: "setGuard",
-                      args: [percentToCr(floorPct), percentToCr(guardPct), zone],
-                      chainId: mezoTestnet.id,
-                      gas: 300_000n,
-                    }),
-                  )
-                    .then(() => setStatus("Guard saved."))
-                    .catch(fail)
-                    .finally(() => setBusy(false));
-                }}
-              >
-                Set guard
-              </Button>
-              {position?.guardTargetCR ? (
-                <p className="text-xs text-muted-foreground">
-                  Active floor {formatPercent(position.floorCR)}, target {formatPercent(position.guardTargetCR)}, zone{" "}
-                  {position.redemptionZone}.
-                </p>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Unset, the keeper cannot touch the trove. You can always unwind yourself.
-                </p>
-              )}
-            </CardContent>
-          </Card>
+        <footer className="mt-6 border-t border-border py-8 text-sm text-muted-foreground">
+          <div className="grid gap-6 sm:grid-cols-3">
+            <div>
+              <p className="text-[11px] tracking-[0.16em] text-foreground/80 uppercase">Liquidation</p>
+              <p className="mt-2 leading-relaxed">Liquidation takes the trove at 110%. Coil will not target below 115%.</p>
+            </div>
+            <div>
+              <p className="text-[11px] tracking-[0.16em] text-foreground/80 uppercase">Redemptions</p>
+              <p className="mt-2 leading-relaxed">
+                Redemptions repay the lowest-ratio troves first. A tight coil sits at the front of that queue.
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] tracking-[0.16em] text-foreground/80 uppercase">Transactions</p>
+              <p className="mt-2 leading-relaxed">
+                A big de-lever or a full unwind can take more than one transaction. Mezo allows 20 precompile
+                calls per transaction, so Coil sells collateral once per call and continues.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-xs leading-relaxed">
+            Built by{" "}
+            <a className="link text-foreground" href="https://prabal.pro" target="_blank" rel="noreferrer noopener">
+              Prabal Pratap Singh
+            </a>{" "}
+            (
+            <a
+              className="link"
+              href="https://github.com/PrabalParihar"
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              PrabalParihar
+            </a>
+            ) for Mezo Buildathon Wave 1. Factory{" "}
+            <a
+              className="link font-mono text-foreground"
+              href={`https://explorer.test.mezo.org/address/${factoryAddress}`}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              {shorten(factoryAddress)}
+            </a>{" "}
+            on chain 31611.
+          </p>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function OpenPosition({
+  position,
+  deleverPct,
+  setDeleverPct,
+  unwindPct,
+  setUnwindPct,
+  busy,
+  onDelever,
+  onUnwind,
+}: {
+  position: Position;
+  deleverPct: number;
+  setDeleverPct: (value: number) => void;
+  unwindPct: number;
+  setUnwindPct: (value: number) => void;
+  busy: boolean;
+  onDelever: () => void;
+  onUnwind: () => void;
+}) {
+  const ratio = Number((position.cr * 10000n) / 10n ** 18n) / 100;
+  const leverage = leverageNumber(position.cr);
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <TweenValue
+            canonical={formatPercent(position.cr)}
+            numeric={ratio}
+            digits={2}
+            suffix="%"
+            className="font-serif text-4xl leading-none tracking-tight sm:text-5xl"
+          />
+          <p className="mt-2 text-[11px] tracking-[0.14em] text-muted-foreground uppercase">Collateral ratio</p>
+        </div>
+        <div className="text-right">
+          <TweenValue
+            canonical={leverageLabel(position.cr)}
+            numeric={leverage}
+            digits={2}
+            suffix="×"
+            className="font-serif text-4xl leading-none tracking-tight sm:text-5xl"
+          />
+          <p className="mt-2 text-[11px] tracking-[0.14em] text-muted-foreground uppercase">Leverage</p>
         </div>
       </div>
-
-      <footer className="mt-10 border-t border-border py-8 text-sm text-muted-foreground">
-        <div className="grid gap-4 sm:grid-cols-3">
-          <p>Liquidation takes the trove at 110%. Coil will not target below 115%.</p>
-          <p>Redemptions repay the lowest-ratio troves first. A tight coil sits at the front of that queue.</p>
-          <p>
-            A big de-lever or a full unwind can take more than one transaction. Mezo allows 20 precompile
-            calls per transaction, so Coil sells collateral once per call and continues.
-          </p>
-        </div>
-        <p className="mt-6">
-          Built by Prabal Pratap Singh for Mezo Buildathon Wave 1. Factory {shorten(factoryAddress)} on chain
-          31611.
-        </p>
-      </footer>
+      <HealthFilament percent={ratio} />
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-4">
+        <Stat label="Collateral">
+          <TweenValue canonical={`${formatBtc(position.collateral)} BTC`} numeric={wadNumber(position.collateral, 4)} digits={4} suffix=" BTC" />
+        </Stat>
+        <Stat label="Debt">
+          <TweenValue canonical={`${formatMusd(position.debt)} MUSD`} numeric={wadNumber(position.debt, 2)} digits={2} suffix=" MUSD" />
+        </Stat>
+        <Stat label="Liquidation price">
+          <TweenValue
+            canonical={formatUsd(position.liquidationPrice)}
+            numeric={wadNumber(position.liquidationPrice, 0)}
+            digits={0}
+            prefix="$"
+          />
+        </Stat>
+        <Stat label="Redemption rank">{rankLabel(position.redemptionRank)}</Stat>
+      </dl>
+      <p className="text-sm leading-relaxed text-muted-foreground">
+        {redemptionNote(position.redemptionRank, position.cr)} Liquidation can take the trove if BTC trades
+        through {formatUsd(position.liquidationPrice)}.
+      </p>
+      <div className="space-y-3 border-t border-border pt-5">
+        <Rail
+          label="Raise the ratio"
+          thumbLabel="De-lever target ratio"
+          min={130}
+          max={400}
+          step={10}
+          value={deleverPct}
+          onValueChange={setDeleverPct}
+          ticks={[130, 200, 300, 400]}
+          display={
+            <span className="font-serif text-3xl leading-none tabular-nums">{deleverPct}%</span>
+          }
+        />
+        <Button
+          type="button"
+          variant="secondary"
+          className="h-12 w-full px-6"
+          disabled={busy || percentToCr(deleverPct) <= position.cr}
+          onClick={onDelever}
+        >
+          De-lever to {deleverPct}%
+        </Button>
+      </div>
+      <div className="space-y-3 border-t border-border pt-5">
+        <Rail
+          label="Unwind"
+          thumbLabel="Unwind fraction"
+          min={10}
+          max={100}
+          step={10}
+          value={unwindPct}
+          onValueChange={setUnwindPct}
+          ticks={[10, 50, 100]}
+          display={
+            <span className="font-serif text-2xl leading-none">
+              {unwindPct === 100 ? "Close trove" : `${unwindPct}% of debt`}
+            </span>
+          }
+        />
+        <Button
+          type="button"
+          variant="outline"
+          className="h-12 w-full px-6"
+          disabled={busy}
+          onClick={onUnwind}
+        >
+          {unwindPct === 100 ? "Unwind and close" : "Unwind"}
+        </Button>
+      </div>
     </div>
   );
 }
 
-function Preview({
-  quote,
-}: {
-  quote: { kind: "loading" } | { kind: "error"; message: string } | { kind: "ok"; quote: LoopPreview };
-}) {
-  if (quote.kind === "loading") {
-    return <p className="text-sm text-muted-foreground">Reading the pool and the oracle…</p>;
-  }
-  if (quote.kind === "error") {
-    return <p className="text-sm text-destructive">{quote.message}</p>;
-  }
-  const q = quote.quote;
-  return (
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border bg-background/40 p-4 text-sm">
-      <Stat label="Collateral after" value={`${formatBtc(q.collateral)} BTC`} />
-      <Stat label="Debt" value={`${formatMusd(q.debt)} MUSD`} />
-      <Stat label="Resulting ratio" value={formatPercent(q.cr)} />
-      <Stat label="Liquidation price" value={formatUsd(q.liquidationPrice)} />
-      <Stat label="MUSD minted" value={formatMusd(q.musdMinted)} />
-      <Stat label="Swaps" value={String(q.iterations)} />
-    </dl>
-  );
-}
-
-function TxList({ txs }: { txs: TxLink[] }) {
-  if (txs.length === 0) return null;
-  return (
-    <ul className="space-y-1 text-sm">
-      {txs.map((tx) => (
-        <li key={tx.hash}>
-          <a
-            className="underline decoration-border underline-offset-4 hover:decoration-foreground"
-            href={`${EXPLORER}${tx.hash}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {tx.label} · {tx.hash.slice(0, 10)}… on the explorer
-          </a>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 font-[family-name:var(--font-fraunces)] text-lg leading-none">{value}</dd>
+      <dt className="text-[11px] tracking-[0.14em] text-muted-foreground uppercase">{label}</dt>
+      <dd className="mt-1.5 font-serif text-xl leading-none">{children}</dd>
     </div>
   );
 }
 
-function Field({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      <Label>{label}</Label>
-      <Input
-        inputMode="numeric"
-        value={String(value)}
-        onChange={(event) => onChange(Number(event.target.value || 0))}
-      />
-    </div>
-  );
+function wadNumber(value: bigint, digits: number) {
+  const quant = 10n ** BigInt(digits);
+  return Number((value * quant) / 10n ** 18n) / 10 ** digits;
 }
 
-function Empty({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="rounded-xl border border-dashed border-border px-4 py-8">
-      <p className="font-medium">{title}</p>
-      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{body}</p>
-    </div>
-  );
-}
-
-function Banner({
-  title,
-  children,
-  tone,
-}: {
-  title: string;
-  children: string;
-  tone: "warn" | "bad";
-}) {
-  return (
-    <div
-      className={`mb-4 rounded-xl border px-4 py-3 text-sm ${
-        tone === "bad" ? "border-destructive/40 text-destructive" : "border-border"
-      }`}
-    >
-      <p className="font-medium text-foreground">{title}</p>
-      <p className="mt-1 text-muted-foreground">{children}</p>
-    </div>
-  );
-}
-
-function CoilMark() {
-  return (
-    <svg width="36" height="36" viewBox="0 0 36 36" aria-hidden="true">
-      <rect width="36" height="36" rx="10" fill="var(--primary)" />
-      <path
-        d="M18 8c-5 0-8 3-8 7.2 0 3.4 2.2 5.4 5.2 5.4 2.4 0 4-1.3 4-3.2 0-1.6-1.1-2.6-2.7-2.6"
-        fill="none"
-        stroke="var(--primary-foreground)"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-      <path
-        d="M18 28c5 0 8-3 8-7.2 0-3.4-2.2-5.4-5.2-5.4-2.4 0-4 1.3-4 3.2 0 1.6 1.1 2.6 2.7 2.6"
-        fill="none"
-        stroke="var(--primary-foreground)"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function shorten(address?: string) {
-  if (!address) return "";
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+function leverageNumber(cr: bigint) {
+  const wad = 10n ** 18n;
+  if (cr <= wad) return 0;
+  return Number((cr * 100n) / (cr - wad)) / 100;
 }
 
 function rankLabel(rank: bigint) {
