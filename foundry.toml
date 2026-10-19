@@ -1,0 +1,18 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc = "0.8.24"
+evm_version = "shanghai"
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+fs_permissions = [{ access = "read", path = "./" }]
+
+[rpc_endpoints]
+mezo_testnet = "https://rpc.test.mezo.org"
+mezo_mainnet = "https://mezo.drpc.org"
+
+# Mezo blocks do not carry Cancun blob fields. Shanghai keeps Anvil forks usable.
+[profile.default.fuzz]
+runs = 64
