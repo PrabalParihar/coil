@@ -11,8 +11,14 @@ import {ICoilFactory} from "./ICoilFactory.sol";
 /// @dev On Mezo, BTC at 0x7b7c…0000 reports the native balance. The router only
 ///      moves that ERC-20, and BorrowerOperations only accepts msg.value, so
 ///      those are the same coins. Fork tests replace the precompile with a
-///      WETH-style token; the wrap/unwrap branch below exists for that case
-///      and does not run when balanceOf already tracks native BTC.
+///      WETH-style token; the wrap/unwrap branch below exists for that case.
+///      A Mezo transaction may call native precompiles at most 20 times.
+///      PriceFeed.fetchPrice is two of those calls, and each MUSD to BTC swap
+///      is three more (the pool transfers BTC, then reads its balance twice).
+///      Two borrow-and-swap rounds, with the oracle read once here and again
+///      inside each BorrowerOperations call, fill that budget. A third swap
+///      reverts inside the pool. Loop therefore stops after two rounds.
+///      Landing above the target is the intended result.
 contract CoilAccount {
     uint256 public constant WAD = 1e18;
     uint256 public constant MCR = 1.1e18;
@@ -21,6 +27,8 @@ contract CoilAccount {
     uint256 public constant NICR_PRECISION = 1e20;
     uint256 public constant BPS = 10_000;
     uint256 public constant MAX_ITERS = 6;
+    /// @dev Borrow-and-swap rounds that fit in one Mezo transaction. See the contract natspec.
+    uint256 internal constant MAX_SWAPS_PER_TX = 2;
     /// @dev Extra CR we try to keep so the refinance fee cannot cross under the target.
     uint256 public constant CR_BUFFER = 0.003e18;
     /// @dev Open the first trove slightly above the 110% line. Capacity is based on
@@ -169,15 +177,19 @@ contract CoilAccount {
         if (exists && msg.value > 0) _addColl(msg.value);
 
         uint256 pending = exists ? 0 : msg.value;
-        for (uint256 i; i < MAX_ITERS; ++i) {
+        uint256 swaps;
+        for (uint256 i; i < MAX_ITERS && swaps < MAX_SWAPS_PER_TX; ++i) {
             bool stop;
-            (pending, stop) = _leverStep(targetCR, maxSlippageBps, pending);
+            (pending, stop) = _leverStep(targetCR, maxSlippageBps, pending, price, swaps);
             if (stop) break;
+            unchecked {
+                ++swaps;
+            }
         }
         if (pending != 0) revert CannotOpen();
         if (!_active()) revert CannotOpen();
 
-        uint256 endCr = _cr(priceFeed.fetchPrice());
+        uint256 endCr = _cr(price);
         if (endCr < targetCR) revert BelowTarget();
         emit Looped(
             owner, targetCR, troveManager.getTroveColl(address(this)), troveManager.getTroveDebt(address(this)), endCr
@@ -189,7 +201,7 @@ contract CoilAccount {
         if (fractionWad == 0 || fractionWad > WAD) revert BadFraction();
         if (!_active()) revert NoTrove();
         if (fractionWad == WAD) {
-            _unwindAll();
+            _unwindAll(priceFeed.fetchPrice());
             emit Unwound(owner, fractionWad, type(uint256).max);
             return;
         }
@@ -199,10 +211,10 @@ contract CoilAccount {
         uint256 toRepay = net * fractionWad / WAD;
         if (net - toRepay < borrowerOperations.minNetDebt()) revert MinDebt();
 
+        uint256 price = priceFeed.fetchPrice();
         uint256 repaid;
         for (uint256 i; i < MAX_ITERS && repaid < toRepay; ++i) {
             uint256 short = toRepay - repaid;
-            uint256 price = priceFeed.fetchPrice();
             uint256 coll = troveManager.getTroveColl(address(this));
             debt = troveManager.getTroveDebt(address(this));
             uint256 maxW = _maxWithdraw(coll, debt, price);
@@ -215,7 +227,7 @@ contract CoilAccount {
         }
         if (repaid < toRepay && (toRepay - repaid) * 100 > toRepay) revert ShortRepay();
         _sweep();
-        emit Unwound(owner, fractionWad, _active() ? _cr(priceFeed.fetchPrice()) : type(uint256).max);
+        emit Unwound(owner, fractionWad, _active() ? _cr(price) : type(uint256).max);
     }
 
     /// @notice Raise the collateral ratio to `targetCR` by selling collateral for MUSD and repaying.
@@ -230,10 +242,11 @@ contract CoilAccount {
             if (targetCR > guardTargetCR) revert KeeperLimited();
         }
 
-        uint256 beforeCr = _cr(priceFeed.fetchPrice());
+        uint256 price = priceFeed.fetchPrice();
+        uint256 beforeCr = _cr(price);
         if (beforeCr >= targetCR) revert AlreadyAtTarget();
-        _deleverTo(targetCR);
-        uint256 afterCr = _cr(priceFeed.fetchPrice());
+        _deleverTo(targetCR, price);
+        uint256 afterCr = _cr(price);
         if (afterCr <= beforeCr) revert NotSafer();
         _sweep();
         emit Delevered(owner, targetCR, afterCr, troveManager.getTroveDebt(address(this)));
@@ -254,8 +267,8 @@ contract CoilAccount {
         if (!crRisk && !redemptionRisk) return false;
         if (cr >= guardTargetCR) return false;
 
-        _deleverTo(guardTargetCR);
-        uint256 afterCr = _cr(priceFeed.fetchPrice());
+        _deleverTo(guardTargetCR, price);
+        uint256 afterCr = _cr(price);
         if (afterCr <= cr) revert NotSafer();
         _sweep();
         emit GuardTriggered(msg.sender, cr, afterCr);
@@ -330,18 +343,20 @@ contract CoilAccount {
         uint256 coll = collateralIn;
         uint256 debt;
 
-        for (uint256 i; i < MAX_ITERS; ++i) {
+        for (uint256 i; i < MAX_SWAPS_PER_TX; ++i) {
             if (debt != 0 && coll * price / debt <= targetCR) break;
+            bool last = i + 1 == MAX_SWAPS_PER_TX;
+            uint8 feePct = last ? 0 : refiPct;
             uint256 cap = debt == 0 ? coll * price / (MCR + OPEN_HEADROOM) : coll * price / MCR;
             uint256 maxAmt = _amountFromCap(debt, cap, rate);
-            uint256 amount = _borrowAmount(coll, debt, price, targetCR, maxAmt, slippageBps_, rate, refiPct);
+            uint256 amount = _borrowAmount(coll, debt, price, targetCR, maxAmt, slippageBps_, rate, feePct);
             if (amount == 0) break;
             uint256 btcOut = _btcMinOut(amount, slippageBps_);
-            debt = _projectedDebt(debt, amount, rate, true, refiPct);
+            debt = _projectedDebt(debt, amount, rate, !last, feePct);
             coll += btcOut;
             q.musdMinted += amount;
             q.iterations = i + 1;
-            if (coll * price / debt <= targetCR + CR_BUFFER) break;
+            if (last || coll * price / debt <= targetCR + CR_BUFFER) break;
         }
 
         q.collateral = coll;
@@ -367,17 +382,23 @@ contract CoilAccount {
     // Leverage step
     // ---------------------------------------------------------------------
 
-    function _leverStep(uint256 targetCR, uint256 slip, uint256 pending) internal returns (uint256, bool) {
-        uint256 price = priceFeed.fetchPrice();
+    function _leverStep(uint256 targetCR, uint256 slip, uint256 pending, uint256 price, uint256 completedSwaps)
+        internal
+        returns (uint256, bool)
+    {
         uint256 coll = pending > 0 ? pending : troveManager.getTroveColl(address(this));
         uint256 debt = pending > 0 ? 0 : troveManager.getTroveDebt(address(this));
         if (debt != 0 && coll * price / debt <= targetCR) return (0, true);
 
+        // The last round in this transaction is not refinanced, so the sizing
+        // must not reserve a refinance fee it will never pay.
+        bool last = completedSwaps + 1 >= MAX_SWAPS_PER_TX;
         uint256 rate = borrowerOperations.borrowingRate();
         uint8 refiPct = borrowerOperations.refinancingFeePercentage();
+        uint8 feePct = last ? 0 : refiPct;
         uint256 cap = debt == 0 ? coll * price / (MCR + OPEN_HEADROOM) : troveManager.getTroveMaxBorrowingCapacity(address(this));
         uint256 maxAmt = _amountFromCap(debt, cap, rate);
-        uint256 amount = _borrowAmount(coll, debt, price, targetCR, maxAmt, slip, rate, refiPct);
+        uint256 amount = _borrowAmount(coll, debt, price, targetCR, maxAmt, slip, rate, feePct);
         if (amount == 0) {
             if (pending > 0) revert CannotOpen();
             return (0, true);
@@ -403,12 +424,14 @@ contract CoilAccount {
         borrowerOperations.addColl{value: btcGot}(upperAdd, lowerAdd);
 
         uint256 crNow = troveManager.getTroveColl(address(this)) * price / troveManager.getTroveDebt(address(this));
-        if (crNow > targetCR + CR_BUFFER) {
-            (address upperRefi, address lowerRefi) = _hintPair(
-                troveManager.getTroveColl(address(this)), troveManager.getTrovePrincipal(address(this))
-            );
-            borrowerOperations.refinance(upperRefi, lowerRefi);
-        }
+        // Stop while the ratio is still above the target. Another swap would be
+        // the third BTC transfer in this transaction, which Mezo rejects.
+        if (last || crNow <= targetCR + CR_BUFFER) return (0, true);
+
+        (address upperRefi, address lowerRefi) = _hintPair(
+            troveManager.getTroveColl(address(this)), troveManager.getTrovePrincipal(address(this))
+        );
+        borrowerOperations.refinance(upperRefi, lowerRefi);
         return (0, false);
     }
 
@@ -419,9 +442,8 @@ contract CoilAccount {
         borrowerOperations.refinance(upper, lower);
     }
 
-    function _deleverTo(uint256 targetCR) internal {
+    function _deleverTo(uint256 targetCR, uint256 price) internal {
         for (uint256 i; i < MAX_ITERS; ++i) {
-            uint256 price = priceFeed.fetchPrice();
             uint256 coll = troveManager.getTroveColl(address(this));
             uint256 debt = troveManager.getTroveDebt(address(this));
             if (debt <= GAS_COMPENSATION) return;
@@ -435,10 +457,10 @@ contract CoilAccount {
             // sell BTC and leave the MUSD unspent, which drops the ratio.
             _sellAndRepay(sell, type(uint256).max);
         }
-        if (_cr(priceFeed.fetchPrice()) < targetCR) revert Iterations();
+        if (_cr(price) < targetCR) revert Iterations();
     }
 
-    function _unwindAll() internal {
+    function _unwindAll(uint256 price) internal {
         for (uint256 i; i < MAX_ITERS + 2; ++i) {
             uint256 debt = troveManager.getTroveDebt(address(this));
             uint256 need = debt - GAS_COMPENSATION;
@@ -449,7 +471,6 @@ contract CoilAccount {
                 return;
             }
 
-            uint256 price = priceFeed.fetchPrice();
             uint256 coll = troveManager.getTroveColl(address(this));
             uint256 maxW = _maxWithdraw(coll, debt, price);
             if (maxW == 0) revert MinDebt();
@@ -638,15 +659,24 @@ contract CoilAccount {
 
     function _swapMusdToBtc(uint256 amount, uint256 minOut) internal returns (uint256 got) {
         uint256 nativeBefore = address(this).balance;
-        uint256 ercBefore = IERC20(btc).balanceOf(address(this));
         _approve(address(musd), address(router), amount);
-        router.swapExactTokensForTokens(amount, minOut, _route(address(musd), btc), address(this), block.timestamp);
+        IRouter.Route[] memory routes = _route(address(musd), btc);
+        bytes memory payload = abi.encodeCall(
+            IRouter.swapExactTokensForTokens, (amount, minOut, routes, address(this), block.timestamp)
+        );
+        (bool swapOk, bytes memory swapData) = address(router).call(payload);
+        if (!swapOk) {
+            assembly {
+                revert(add(swapData, 32), mload(swapData))
+            }
+        }
 
         uint256 nativeGain = address(this).balance - nativeBefore;
+        // Live Mezo credits native BTC, so this returns before any balanceOf.
+        // The fork mock only credits its ERC-20; unwrap that below.
         if (nativeGain >= minOut) return nativeGain;
 
-        uint256 ercNow = IERC20(btc).balanceOf(address(this));
-        uint256 ercGain = ercNow > ercBefore ? ercNow - ercBefore : 0;
+        uint256 ercGain = IERC20(btc).balanceOf(address(this));
         if (ercGain < minOut) revert Slippage();
         (bool ok,) = btc.call(abi.encodeWithSignature("withdraw(uint256)", ercGain));
         if (!ok) revert Slippage();
@@ -655,12 +685,27 @@ contract CoilAccount {
     }
 
     function _swapBtcToMusd(uint256 amount, uint256 minOut) internal returns (uint256 got) {
-        uint256 erc = IERC20(btc).balanceOf(address(this));
-        if (erc < amount) {
-            uint256 short = amount - erc;
-            if (address(this).balance < short) revert Slippage();
-            (bool ok,) = btc.call{value: short}(abi.encodeWithSignature("deposit()"));
-            if (!ok) revert Slippage();
+        // On the live mirror, native balance and balanceOf are the same number,
+        // and balanceOf spends one of the 20 precompile calls. Skip it.
+        if (_btcMirror()) {
+            if (address(this).balance < amount) revert Slippage();
+        } else {
+            uint256 native = address(this).balance;
+            if (native < amount) {
+                uint256 erc = IERC20(btc).balanceOf(address(this));
+                if (erc < amount) {
+                    uint256 short = amount - erc;
+                    if (native < short) revert Slippage();
+                    (bool ok,) = btc.call{value: short}(abi.encodeWithSignature("deposit()"));
+                    if (!ok) revert Slippage();
+                }
+            } else {
+                uint256 erc = IERC20(btc).balanceOf(address(this));
+                if (erc < amount) {
+                    (bool ok,) = btc.call{value: amount}(abi.encodeWithSignature("deposit()"));
+                    if (!ok) revert Slippage();
+                }
+            }
         }
         _approve(btc, address(router), amount);
         uint256 beforeBal = musd.balanceOf(address(this));
@@ -691,8 +736,20 @@ contract CoilAccount {
         routes[0] = IRouter.Route({from: from, to: to, stable: false, factory: poolFactory});
     }
 
+    /// @dev Codehash of the live BTC precompile bytecode. EXTCODEHASH does not
+    ///      spend a precompile call. The fork test etches a different mock at
+    ///      the same address, so this distinguishes them.
+    bytes32 internal constant BTC_MIRROR_CODEHASH =
+        0x646ced85f3dad5f3a9fa7a920d158620ac616278d1b32b45867d486b40bdd5ef;
+
+    function _btcMirror() internal view returns (bool) {
+        return btc.codehash == BTC_MIRROR_CODEHASH;
+    }
+
     function _hintPair(uint256 coll, uint256 debtForNicr) internal view returns (address upper, address lower) {
         if (coll == 0 || debtForNicr == 0) return (address(0), address(0));
+        // Hints are ordinary contract calls, not precompile calls. An empty hint
+        // makes SortedTroves walk the list and can blow the 10M block gas limit.
         uint256 nicr = coll * NICR_PRECISION / debtForNicr;
         address approx = address(0);
         try hintHelpers.getApproxHint(nicr, 12, uint256(uint160(address(this)))) returns (

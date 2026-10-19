@@ -140,7 +140,7 @@ npm install
 npm run dev
 ```
 
-The dev server listens on port 43123. Without `NEXT_PUBLIC_COIL_FACTORY` the page still quotes a loop from the live oracle, pool reserves, and pool fee, and it tells you that loop and unwind are waiting on a deploy.
+The dev server listens on port 43123. The page defaults to the live testnet factory `0x0bF9984BA4b68Afee3d697b866a2a1d24A5c027c`. Set `NEXT_PUBLIC_COIL_FACTORY` to point at a different factory. Quotes still come from the live oracle, pool reserves, and pool fee.
 
 ```bash
 cd web && npm run build
@@ -161,13 +161,8 @@ cd keeper && npx tsc --noEmit
 - tops up an existing trove
 - gives two users two clones
 
-## Still to do before a live demo
+## Live testnet
 
-1. Faucet BTC at `https://faucet.test.mezo.org` into the deployer wallet.
-2. Broadcast `script/Deploy.s.sol` to `https://rpc.test.mezo.org` with that key.
-3. Put the factory address in `web/.env.local` as `NEXT_PUBLIC_COIL_FACTORY` and in the keeper environment as `COIL_FACTORY`.
-4. From the factory owner, `setKeeper` to the keeper address.
-5. Connect a wallet on chain 31611, create an account, loop, set a guard, and run the keeper once in dry-run and once with `--execute`.
-6. Record the transaction hashes for the submission form.
+Factory `0x0bF9984BA4b68Afee3d697b866a2a1d24A5c027c` on chain 31611. The throwaway deployer looped 0.049 BTC to about 200%, the keeper de-levered that trove, and unwind closed it. Hashes, the abandoned earlier factories, and the precompile-call limit are in [DEPLOYMENTS.md](DEPLOYMENTS.md).
 
 Mainnet is a different address set and a thin pool. This repository does not deploy there.

@@ -23,11 +23,14 @@ export const addr = {
   pool: "0xd16A5Df82120ED8D626a1a15232bFcE2366d6AA9",
 } as const;
 
+/** Live Mezo testnet factory. Override with NEXT_PUBLIC_COIL_FACTORY. */
+const DEPLOYED_FACTORY = "0x0bF9984BA4b68Afee3d697b866a2a1d24A5c027c" as const;
+
 const factoryEnv = process.env.NEXT_PUBLIC_COIL_FACTORY ?? "";
 
 export const factoryAddress = /^0x[a-fA-F0-9]{40}$/.test(factoryEnv)
   ? (factoryEnv as `0x${string}`)
-  : undefined;
+  : DEPLOYED_FACTORY;
 
 export const ZERO = "0x0000000000000000000000000000000000000000" as const;
 

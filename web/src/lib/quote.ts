@@ -6,7 +6,7 @@ const GAS = 200n * WAD;
 const BPS = 10_000n;
 const OPEN_HEADROOM = 5n * 10n ** 15n;
 const CR_BUFFER = 3n * 10n ** 15n;
-const MAX_ITERS = 6;
+const MAX_SWAPS = 2;
 
 export type Market = {
   price: bigint;
@@ -84,15 +84,16 @@ export function quoteLoop(
     return (quoted * (BPS - slippageBps)) / BPS;
   };
 
-  const projectedCR = (amount: bigint) => {
-    const out = btcMinOut(amount);
-    const nextDebt = projectedDebt(debt, amount, market.borrowRate, market.refiPct);
-    if (nextDebt === 0n) return 2n ** 256n - 1n;
-    return ((coll + out) * market.price) / nextDebt;
-  };
-
-  for (let i = 0; i < MAX_ITERS; i++) {
+  for (let i = 0; i < MAX_SWAPS; i++) {
     if (debt !== 0n && (coll * market.price) / debt <= targetCR) break;
+    const last = i + 1 >= MAX_SWAPS;
+    const refiPct = last ? 0n : market.refiPct;
+    const projectedCR = (amount: bigint) => {
+      const out = btcMinOut(amount);
+      const nextDebt = projectedDebt(debt, amount, market.borrowRate, refiPct);
+      if (nextDebt === 0n) return 2n ** 256n - 1n;
+      return ((coll + out) * market.price) / nextDebt;
+    };
     const cap =
       debt === 0n
         ? (coll * market.price) / (MCR + OPEN_HEADROOM)
@@ -127,11 +128,11 @@ export function quoteLoop(
     const afterFee = amount - (amount * market.feeBps) / BPS;
     reserveMusd += afterFee;
     reserveBtc -= quoted;
-    debt = projectedDebt(debt, amount, market.borrowRate, market.refiPct);
+    debt = projectedDebt(debt, amount, market.borrowRate, refiPct);
     coll += received;
     minted += amount;
     iterations += 1;
-    if ((coll * market.price) / debt <= targetCR + CR_BUFFER) break;
+    if (last || (coll * market.price) / debt <= targetCR + CR_BUFFER) break;
   }
 
   if (debt === 0n) {

@@ -11,4 +11,4 @@ npm run dev
 
 The dev server listens on [http://127.0.0.1:43123](http://127.0.0.1:43123).
 
-Set `NEXT_PUBLIC_COIL_FACTORY` in `.env.local` after `CoilFactory` is deployed. Until then the page quotes a loop and leaves the transaction buttons disabled.
+The app defaults to the live testnet factory `0x0bF9984BA4b68Afee3d697b866a2a1d24A5c027c`. Set `NEXT_PUBLIC_COIL_FACTORY` in `.env.local` to use a different one.
