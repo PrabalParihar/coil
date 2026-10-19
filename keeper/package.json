@@ -1,0 +1,17 @@
+{
+  "name": "coil-keeper",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.38.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,16 @@
+cache/
+out/
+broadcast/
+.env
+.env.local
+node_modules/
+web/.next/
+web/tsconfig.tsbuildinfo
+web/node_modules/
+web/.env.local
+keeper/node_modules/
+keeper/dist/
+agent-tools/
+uploads/
+lcov.info
+.vscode/
