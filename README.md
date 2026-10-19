@@ -4,7 +4,7 @@ One transaction turns BTC into a leveraged BTC position on MUSD.
 
 Deposit Bitcoin. Coil opens a Mezo trove, swaps the borrowed MUSD for more BTC on Mezo Pools, and posts that BTC back as collateral until the collateral ratio you pick. De-lever and unwind sell collateral the other way, one sale per transaction, until the position is safer or closed. A keeper can only make a position safer.
 
-Built by [Prabal Pratap Singh](https://prabal.pro) ([GitHub](https://github.com/PrabalParihar), [X](https://x.com/0xPrabalParihar)) for Mezo Buildathon Wave 1.
+Built by [Prabal Pratap Singh](https://prabal.pro) ([GitHub](https://github.com/PrabalParihar/coil), [X](https://x.com/0xPrabalParihar)) for Mezo Buildathon Wave 1. Source: [github.com/PrabalParihar/coil](https://github.com/PrabalParihar/coil).
 
 ## Problem
 
