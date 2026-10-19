@@ -5,6 +5,7 @@ broadcast/
 .env.local
 node_modules/
 web/.next/
+web/out/
 web/tsconfig.tsbuildinfo
 web/node_modules/
 web/.env.local

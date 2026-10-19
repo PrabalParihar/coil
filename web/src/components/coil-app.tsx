@@ -44,11 +44,15 @@ import {
 } from "@/lib/quote";
 
 const WAD = 10n ** 18n;
+const EXPLORER = "https://explorer.test.mezo.org/tx/";
+
+type TxLink = { label: string; hash: `0x${string}` };
 
 export function CoilApp() {
   const [mounted, setMounted] = useState(false);
-  const [btcText, setBtcText] = useState("0.10");
+  const [btcText, setBtcText] = useState("0.04");
   const [targetPct, setTargetPct] = useState(200);
+  const [deleverPct, setDeleverPct] = useState(300);
   const [slippageBps, setSlippageBps] = useState(50);
   const [unwindPct, setUnwindPct] = useState(100);
   const [floorPct, setFloorPct] = useState(170);
@@ -58,6 +62,7 @@ export function CoilApp() {
   const [marketError, setMarketError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [txError, setTxError] = useState<string | null>(null);
+  const [txs, setTxs] = useState<TxLink[]>([]);
   const [busy, setBusy] = useState(false);
 
   const { address, isConnected } = useAccount();
@@ -185,21 +190,113 @@ export function CoilApp() {
     }
   }
 
-  async function run(label: string, action: () => Promise<`0x${string}`>) {
+  async function readPos(clone: `0x${string}`): Promise<Position> {
+    if (!publicClient) throw new Error("Mezo RPC is not ready.");
+    return (await publicClient.readContract({
+      address: clone,
+      abi: coilAccountAbi,
+      functionName: "position",
+    })) as Position;
+  }
+
+  async function send(label: string, action: () => Promise<`0x${string}`>) {
+    if (!publicClient) throw new Error("Mezo RPC is not ready.");
+    await ensureChain();
+    setStatus(label);
+    const hash = await action();
+    setTxs((current) => [...current, { label, hash }]);
+    setStatus(`${label}. Waiting for the Mezo receipt…`);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") throw new Error("The transaction reverted.");
+    await refetchAccount();
+    await refetchPosition();
+  }
+
+  function begin() {
     setBusy(true);
     setTxError(null);
-    setStatus(label);
+    setTxs([]);
+  }
+
+  function fail(error: unknown) {
+    setTxError(error instanceof Error ? error.message : "Transaction failed.");
+  }
+
+  async function delever(clone: `0x${string}`) {
+    begin();
+    const target = percentToCr(deleverPct);
     try {
-      await ensureChain();
-      const hash = await action();
-      setStatus("Waiting for the Mezo receipt…");
-      await publicClient?.waitForTransactionReceipt({ hash });
-      setStatus(`Confirmed ${hash.slice(0, 10)}…`);
-      await refetchAccount();
-      await refetchPosition();
+      for (let step = 1; step <= 4; step++) {
+        const pos = await readPos(clone);
+        if (!pos.active || pos.cr >= target) break;
+        const beforeDebt = pos.debt;
+        try {
+          await send(`De-lever ${step} of the way to ${deleverPct}%`, () =>
+            writeContractAsync({
+              address: clone,
+              abi: coilAccountAbi,
+              functionName: "deleverTo",
+              args: [target],
+              chainId: mezoTestnet.id,
+              gas: 5_000_000n,
+            }),
+          );
+        } catch (error) {
+          if (alreadyThere(error)) break;
+          throw error;
+        }
+        const mid = await readPos(clone);
+        // Stop when the sale did not repay. An oracle tick can lift the ratio
+        // without a sale, and another call would only repeat a no-op.
+        if (!mid.active || mid.debt >= beforeDebt) break;
+      }
+      const end = await readPos(clone);
+      setStatus(
+        !end.active
+          ? "The trove is closed."
+          : end.cr >= target
+            ? `Ratio is now ${formatPercent(end.cr)}.`
+            : `Ratio is now ${formatPercent(end.cr)}. Mezo keeps at least 1,800 MUSD of debt, so this trove cannot go higher without closing.`,
+      );
     } catch (error) {
-      setStatus(null);
-      setTxError(error instanceof Error ? error.message : "Transaction failed.");
+      fail(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unwind(clone: `0x${string}`) {
+    begin();
+    const fraction = (BigInt(unwindPct) * WAD) / 100n;
+    try {
+      const start = await readPos(clone);
+      const goal =
+        unwindPct === 100 ? 0n : start.debt - ((start.debt - 200n * WAD) * BigInt(unwindPct)) / 100n;
+      for (let step = 1; step <= 4; step++) {
+        const pos = await readPos(clone);
+        if (!pos.active) break;
+        if (unwindPct < 100 && pos.debt <= goal) break;
+        const before = pos.debt;
+        await send(
+          unwindPct === 100 ? `Unwind ${step}: closing the trove` : `Unwind ${step}: repaying debt`,
+          () =>
+            writeContractAsync({
+              address: clone,
+              abi: coilAccountAbi,
+              functionName: "unwind",
+              args: [fraction],
+              chainId: mezoTestnet.id,
+              gas: 5_000_000n,
+            }),
+        );
+        const after = await readPos(clone);
+        if (!after.active) break;
+        if (after.debt >= before) break;
+      }
+      const end = await readPos(clone);
+      setStatus(end.active ? `Debt is now ${formatMusd(end.debt)} MUSD.` : "Trove closed. BTC is back in your wallet.");
+    } catch (error) {
+      fail(error);
     } finally {
       setBusy(false);
     }
@@ -242,16 +339,27 @@ export function CoilApp() {
       <section className="grid gap-8 py-8 lg:grid-cols-[1.15fr_0.85fr] lg:items-start">
         <div>
           <p className="text-xs tracking-[0.18em] text-muted-foreground uppercase">
-            Mezo testnet · one transaction
+            Mezo testnet · chain 31611
           </p>
           <h1 className="mt-3 max-w-xl font-[family-name:var(--font-fraunces)] text-4xl leading-[1.05] font-medium tracking-tight sm:text-5xl">
-            Borrow MUSD, buy BTC, and post it back.
+            One transaction turns BTC into a leveraged BTC position.
           </h1>
           <p className="mt-4 max-w-xl text-base leading-relaxed text-muted-foreground">
-            Coil opens a MUSD trove in your own account contract, swaps the borrowed MUSD for BTC
-            on Mezo Pools, and adds that BTC as collateral. It stops at the ratio you choose. A
-            keeper can only make the position safer.
+            Coil borrows MUSD against your Bitcoin, buys more BTC on Mezo Pools, and posts that
+            BTC back as collateral. You pick the ratio. A keeper can only make the position safer.
           </p>
+          <ol className="mt-6 grid max-w-xl gap-3 sm:grid-cols-3">
+            {[
+              ["Post BTC", "Open a MUSD trove"],
+              ["Buy BTC", "Swap the MUSD"],
+              ["Post it back", "Stop at your ratio"],
+            ].map(([title, body]) => (
+              <li key={title} className="rounded-xl border border-border bg-card/60 px-3 py-3">
+                <p className="font-[family-name:var(--font-fraunces)] text-lg leading-none">{title}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{body}</p>
+              </li>
+            ))}
+          </ol>
         </div>
         <Card>
           <CardHeader>
@@ -272,9 +380,18 @@ export function CoilApp() {
         </Banner>
       ) : null}
       {wrongChain ? (
-        <Banner tone="bad" title="Wrong network">
-          Switch to Mezo testnet (chain 31611) before sending a transaction.
-        </Banner>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/40 px-4 py-3 text-sm">
+          <div>
+            <p className="font-medium">Wrong network</p>
+            <p className="mt-1 text-muted-foreground">Coil sends transactions on Mezo testnet, chain 31611.</p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={() => switchChainAsync({ chainId: mezoTestnet.id }).catch(fail)}
+          >
+            Switch to Mezo testnet
+          </Button>
+        </div>
       ) : null}
       {!factoryAddress ? (
         <Banner tone="warn" title="Preview only">
@@ -342,14 +459,19 @@ export function CoilApp() {
                   onClick={() => {
                     const factory = factoryAddress;
                     if (!factory) return;
-                    return run("Creating your Coil account…", () =>
+                    begin();
+                    send("Create account", () =>
                       writeContractAsync({
                         address: factory,
                         abi: coilFactoryAbi,
                         functionName: "createAccount",
                         chainId: mezoTestnet.id,
+                        gas: 800_000n,
                       }),
-                    );
+                    )
+                      .then(() => setStatus("Account created."))
+                      .catch(fail)
+                      .finally(() => setBusy(false));
                   }}
                 >
                   Create account
@@ -367,7 +489,8 @@ export function CoilApp() {
                 }
                 onClick={() => {
                   if (!account || collateral === null) return;
-                  return run("Looping BTC into the trove…", () =>
+                  begin();
+                  send(`Loop to ${targetPct}%`, () =>
                     writeContractAsync({
                       address: account,
                       abi: coilAccountAbi,
@@ -375,14 +498,19 @@ export function CoilApp() {
                       args: [targetCR, BigInt(slippageBps)],
                       value: collateral,
                       chainId: mezoTestnet.id,
+                      gas: 8_000_000n,
                     }),
-                  );
+                  )
+                    .then(() => setStatus("Loop confirmed."))
+                    .catch(fail)
+                    .finally(() => setBusy(false));
                 }}
               >
                 {account ? "Loop" : factoryAddress ? "Create an account first" : "Deploy to enable"}
               </Button>
             </div>
             {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
+            <TxList txs={txs} />
             {txError ? <p className="text-sm text-destructive">{shortError(txError)}</p> : null}
           </CardContent>
         </Card>
@@ -423,8 +551,33 @@ export function CoilApp() {
                     <Stat label="Leverage" value={leverageLabel(position.cr)} />
                     <Stat label="Collateral" value={`${formatBtc(position.collateral)} BTC`} />
                     <Stat label="Debt" value={`${formatMusd(position.debt)} MUSD`} />
-                    <Stat label="Liquidation" value={formatUsd(position.liquidationPrice)} />
+                    <Stat label="Liquidation price" value={formatUsd(position.liquidationPrice)} />
                     <Stat label="Redemption rank" value={rankLabel(position.redemptionRank)} />
+                  </div>
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    {redemptionNote(position.redemptionRank, position.cr)} Liquidation can take the
+                    trove if BTC trades through {formatUsd(position.liquidationPrice)}.
+                  </p>
+                  <div className="space-y-3">
+                    <div className="flex items-baseline justify-between">
+                      <Label>Raise the ratio</Label>
+                      <span className="font-[family-name:var(--font-fraunces)] text-2xl">{deleverPct}%</span>
+                    </div>
+                    <Slider
+                      min={130}
+                      max={400}
+                      step={10}
+                      value={[deleverPct]}
+                      onValueChange={(value) => setDeleverPct(value[0] ?? 300)}
+                    />
+                    <Button
+                      variant="secondary"
+                      className="h-11 w-full"
+                      disabled={busy || !account || percentToCr(deleverPct) <= position.cr}
+                      onClick={() => account && delever(account)}
+                    >
+                      De-lever to {deleverPct}%
+                    </Button>
                   </div>
                   <div className="space-y-3">
                     <div className="flex items-baseline justify-between">
@@ -442,20 +595,9 @@ export function CoilApp() {
                       variant="outline"
                       className="h-11 w-full"
                       disabled={busy || !account}
-                      onClick={() =>
-                        account &&
-                        run("Unwinding…", () =>
-                          writeContractAsync({
-                            address: account,
-                            abi: coilAccountAbi,
-                            functionName: "unwind",
-                            args: [(BigInt(unwindPct) * WAD) / 100n],
-                            chainId: mezoTestnet.id,
-                          }),
-                        )
-                      }
+                      onClick={() => account && unwind(account)}
                     >
-                      Unwind
+                      {unwindPct === 100 ? "Unwind and close" : "Unwind"}
                     </Button>
                   </div>
                 </div>
@@ -480,18 +622,23 @@ export function CoilApp() {
                 variant="secondary"
                 className="h-11 w-full"
                 disabled={busy || !account}
-                onClick={() =>
-                  account &&
-                  run("Saving the guard…", () =>
+                onClick={() => {
+                  if (!account) return;
+                  begin();
+                  send("Set guard", () =>
                     writeContractAsync({
                       address: account,
                       abi: coilAccountAbi,
                       functionName: "setGuard",
                       args: [percentToCr(floorPct), percentToCr(guardPct), zone],
                       chainId: mezoTestnet.id,
+                      gas: 300_000n,
                     }),
                   )
-                }
+                    .then(() => setStatus("Guard saved."))
+                    .catch(fail)
+                    .finally(() => setBusy(false));
+                }}
               >
                 Set guard
               </Button>
@@ -510,10 +657,19 @@ export function CoilApp() {
         </div>
       </div>
 
-      <footer className="mt-10 grid gap-4 border-t border-border py-8 text-sm text-muted-foreground sm:grid-cols-3">
-        <p>Liquidation takes the trove at 110%. Coil will not target below 115%.</p>
-        <p>Redemptions repay the lowest-ratio troves first. A tight coil sits at the front of that queue.</p>
-        <p>Testnet MUSD/BTC is deep. Mainnet’s basic pool is thin, so a live loop there needs a size cap.</p>
+      <footer className="mt-10 border-t border-border py-8 text-sm text-muted-foreground">
+        <div className="grid gap-4 sm:grid-cols-3">
+          <p>Liquidation takes the trove at 110%. Coil will not target below 115%.</p>
+          <p>Redemptions repay the lowest-ratio troves first. A tight coil sits at the front of that queue.</p>
+          <p>
+            A big de-lever or a full unwind can take more than one transaction. Mezo allows 20 precompile
+            calls per transaction, so Coil sells collateral once per call and continues.
+          </p>
+        </div>
+        <p className="mt-6">
+          Built by Prabal Pratap Singh for Mezo Buildathon Wave 1. Factory {shorten(factoryAddress)} on chain
+          31611.
+        </p>
       </footer>
     </div>
   );
@@ -540,6 +696,26 @@ function Preview({
       <Stat label="MUSD minted" value={formatMusd(q.musdMinted)} />
       <Stat label="Swaps" value={String(q.iterations)} />
     </dl>
+  );
+}
+
+function TxList({ txs }: { txs: TxLink[] }) {
+  if (txs.length === 0) return null;
+  return (
+    <ul className="space-y-1 text-sm">
+      {txs.map((tx) => (
+        <li key={tx.hash}>
+          <a
+            className="underline decoration-border underline-offset-4 hover:decoration-foreground"
+            href={`${EXPLORER}${tx.hash}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {tx.label} · {tx.hash.slice(0, 10)}… on the explorer
+          </a>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -634,6 +810,21 @@ function rankLabel(rank: bigint) {
   if (rank === 0n) return "—";
   if (rank > 32n) return "Outside 32";
   return `#${rank.toString()}`;
+}
+
+function redemptionNote(rank: bigint, cr: bigint) {
+  if (rank > 0n && rank <= 8n) {
+    return "This trove is near the front of the redemption queue. A redemption repays MUSD and takes BTC.";
+  }
+  if (cr < 15n * 10n ** 17n) {
+    return "A tight ratio is redeemed before safer troves. Raising it moves you back in the queue.";
+  }
+  return "Redemptions start at the lowest ratios. This trove is not in the first 8.";
+}
+
+function alreadyThere(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("AlreadyAtTarget") || message.includes("0xc9b136fe");
 }
 
 function shortError(message: string) {

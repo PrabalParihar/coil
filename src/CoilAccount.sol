@@ -18,7 +18,9 @@ import {ICoilFactory} from "./ICoilFactory.sol";
 ///      Two borrow-and-swap rounds, with the oracle read once here and again
 ///      inside each BorrowerOperations call, fill that budget. A third swap
 ///      reverts inside the pool. Loop therefore stops after two rounds.
-///      Landing above the target is the intended result.
+///      Landing above the target is the intended result. De-lever and unwind
+///      sell collateral at most once per transaction on the live BTC mirror
+///      and return; the next call continues.
 contract CoilAccount {
     uint256 public constant WAD = 1e18;
     uint256 public constant MCR = 1.1e18;
@@ -197,12 +199,15 @@ contract CoilAccount {
     }
 
     /// @param fractionWad Share of net debt to repay, 1e18 = close the trove and return BTC.
+    ///         On live Mezo one call sells collateral once. A full close that needs a
+    ///         second sale succeeds part-way; call `unwind` again. The app does that.
     function unwind(uint256 fractionWad) external onlyOwner nonReentrant {
         if (fractionWad == 0 || fractionWad > WAD) revert BadFraction();
         if (!_active()) revert NoTrove();
         if (fractionWad == WAD) {
-            _unwindAll(priceFeed.fetchPrice());
-            emit Unwound(owner, fractionWad, type(uint256).max);
+            uint256 price = priceFeed.fetchPrice();
+            _unwindAll(price);
+            emit Unwound(owner, fractionWad, _active() ? _cr(price) : type(uint256).max);
             return;
         }
 
@@ -213,7 +218,8 @@ contract CoilAccount {
 
         uint256 price = priceFeed.fetchPrice();
         uint256 repaid;
-        for (uint256 i; i < MAX_ITERS && repaid < toRepay; ++i) {
+        uint256 saleCap = _saleCap();
+        for (uint256 i; i < saleCap && repaid < toRepay; ++i) {
             uint256 short = toRepay - repaid;
             uint256 coll = troveManager.getTroveColl(address(this));
             debt = troveManager.getTroveDebt(address(this));
@@ -225,7 +231,11 @@ contract CoilAccount {
             if (got == 0) break;
             repaid += got;
         }
-        if (repaid < toRepay && (toRepay - repaid) * 100 > toRepay) revert ShortRepay();
+        // A shortfall larger than 1% reverts on the fork, where several sales fit
+        // in one call. On Mezo the next transaction continues the same unwind.
+        if (repaid < toRepay && (toRepay - repaid) * 100 > toRepay && !(_btcMirror() && repaid > 0)) {
+            revert ShortRepay();
+        }
         _sweep();
         emit Unwound(owner, fractionWad, _active() ? _cr(price) : type(uint256).max);
     }
@@ -233,6 +243,9 @@ contract CoilAccount {
     /// @notice Raise the collateral ratio to `targetCR` by selling collateral for MUSD and repaying.
     ///         The owner can aim anywhere above the current ratio. A keeper can only aim up to the
     ///         guard target the owner configured, and cannot pull funds to itself.
+    ///         On live Mezo each call performs one collateral sale, which fits the 20-precompile
+    ///         budget. If the ratio is still short of `targetCR`, the call succeeds and the next
+    ///         call continues. The app and the keeper send those calls in sequence.
     function deleverTo(uint256 targetCR) external nonReentrant {
         if (!_active()) revert NoTrove();
         if (targetCR < MIN_TARGET_CR || targetCR > 50e18) revert BadCR();
@@ -247,7 +260,10 @@ contract CoilAccount {
         if (beforeCr >= targetCR) revert AlreadyAtTarget();
         _deleverTo(targetCR, price);
         uint256 afterCr = _cr(price);
-        if (afterCr <= beforeCr) revert NotSafer();
+        // A sale that cannot repay (debt is already at the 1,800 MUSD floor) must
+        // not revert the transaction. The caller sees an unchanged ratio and stops.
+        if (afterCr < beforeCr) revert NotSafer();
+        if (afterCr == beforeCr) return;
         _sweep();
         emit Delevered(owner, targetCR, afterCr, troveManager.getTroveDebt(address(this)));
     }
@@ -269,7 +285,8 @@ contract CoilAccount {
 
         _deleverTo(guardTargetCR, price);
         uint256 afterCr = _cr(price);
-        if (afterCr <= cr) revert NotSafer();
+        if (afterCr < cr) revert NotSafer();
+        if (afterCr == cr) return false;
         _sweep();
         emit GuardTriggered(msg.sender, cr, afterCr);
         emit Delevered(owner, guardTargetCR, afterCr, _active() ? troveManager.getTroveDebt(address(this)) : 0);
@@ -442,25 +459,51 @@ contract CoilAccount {
         borrowerOperations.refinance(upper, lower);
     }
 
+    /// @dev Collateral sales that fit in this transaction. Live Mezo allows one:
+    ///      a sale is a withdraw, a BTC swap, and usually a repay, and a second
+    ///      sale crosses the 20-precompile-call cap. The fork mock is not capped.
+    function _saleCap() internal view returns (uint256) {
+        return _btcMirror() ? 1 : MAX_ITERS;
+    }
+
     function _deleverTo(uint256 targetCR, uint256 price) internal {
-        for (uint256 i; i < MAX_ITERS; ++i) {
+        uint256 sales = _saleCap();
+        for (uint256 i; i < sales; ++i) {
             uint256 coll = troveManager.getTroveColl(address(this));
             uint256 debt = troveManager.getTroveDebt(address(this));
             if (debt <= GAS_COMPENSATION) return;
-            if (coll * price / debt >= targetCR) return;
+            uint256 crNow = coll * price / debt;
+            if (crNow >= targetCR) return;
 
             uint256 maxW = _maxWithdraw(coll, debt, price);
-            if (maxW == 0) revert MinDebt();
+            uint256 room = _maxRepay(debt);
+            // At the 1,800 MUSD floor, `room` is zero or a few wei of interest.
+            // Selling collateral that cannot be repaid drops the ratio.
+            if (maxW == 0 || room == 0) {
+                if (_btcMirror()) return;
+                revert MinDebt();
+            }
             uint256 sell = _btcToReach(coll, debt, price, targetCR, maxW, slippageBps);
-            if (sell == 0) revert MinDebt();
-            // Repay the whole swap. Capping at the constant-collateral gap would
-            // sell BTC and leave the MUSD unspent, which drops the ratio.
-            _sellAndRepay(sell, type(uint256).max);
+            // Never sell more BTC than this repay can absorb. Extra MUSD would
+            // be swept to the owner instead of burned, and the ratio would fall.
+            uint256 forRoom = _btcInForMusd(room, slippageBps);
+            if (forRoom != 0 && (sell == 0 || forRoom < sell)) sell = forRoom;
+            if (sell == 0 || sell > maxW) {
+                if (_btcMirror()) return;
+                revert MinDebt();
+            }
+            if (_crAfterCappedRepay(coll, debt, sell, price, slippageBps, room) <= crNow) {
+                if (_btcMirror()) return;
+                revert NotSafer();
+            }
+            _sellAndRepay(sell, room);
         }
-        if (_cr(price) < targetCR) revert Iterations();
+        if (!_btcMirror() && _cr(price) < targetCR) revert Iterations();
     }
 
     function _unwindAll(uint256 price) internal {
+        uint256 sales;
+        uint256 saleCap = _btcMirror() ? 1 : MAX_ITERS + 2;
         for (uint256 i; i < MAX_ITERS + 2; ++i) {
             uint256 debt = troveManager.getTroveDebt(address(this));
             uint256 need = debt - GAS_COMPENSATION;
@@ -470,6 +513,10 @@ contract CoilAccount {
                 _sweep();
                 return;
             }
+            // One sale is committed. Closing in this same call is still inside
+            // the budget when the sale already raised enough MUSD; otherwise the
+            // next transaction continues.
+            if (sales >= saleCap) return;
 
             uint256 coll = troveManager.getTroveColl(address(this));
             uint256 maxW = _maxWithdraw(coll, debt, price);
@@ -479,6 +526,7 @@ contract CoilAccount {
             uint256 btcForShort = _btcInForMusd(short, slippageBps);
             if (btcForShort != 0 && btcForShort <= maxW) {
                 _withdrawAndSwap(btcForShort);
+                sales++;
                 continue;
             }
 
@@ -487,8 +535,9 @@ contract CoilAccount {
             uint256 btcForRepay = _btcInForMusd(maxRepay, slippageBps);
             if (btcForRepay == 0 || btcForRepay > maxW) btcForRepay = maxW;
             _sellAndRepay(btcForRepay, maxRepay);
+            sales++;
         }
-        revert Iterations();
+        if (!_btcMirror()) revert Iterations();
     }
 
     function _withdrawAndSwap(uint256 btcAmount) internal returns (uint256 musdGot) {
@@ -634,6 +683,25 @@ contract CoilAccount {
         uint256 musdOut = _musdMinOut(btcAmt, slip);
         if (musdOut >= debt) return type(uint256).max;
         return (coll - btcAmt) * price / (debt - musdOut);
+    }
+
+    /// @dev Collateral ratio after selling `btcAmt` and repaying at most `room`.
+    ///      Uses the slippage-worsened quote, so a sale that passes this check
+    ///      still raises the ratio when the pool fills at the real price.
+    function _crAfterCappedRepay(
+        uint256 coll,
+        uint256 debt,
+        uint256 btcAmt,
+        uint256 price,
+        uint256 slip,
+        uint256 room
+    ) internal view returns (uint256) {
+        if (btcAmt == 0 || btcAmt >= coll || room == 0) return 0;
+        uint256 musdOut = _musdMinOut(btcAmt, slip);
+        uint256 repaid = musdOut > room ? room : musdOut;
+        if (repaid == 0) return 0;
+        if (repaid >= debt) return type(uint256).max;
+        return (coll - btcAmt) * price / (debt - repaid);
     }
 
     function _btcInForMusd(uint256 musdOut, uint256 slip) internal view returns (uint256) {

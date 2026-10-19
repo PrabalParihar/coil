@@ -150,17 +150,35 @@ async function main() {
     console.log(`  deleverTo ${pct(position.guardTargetCR)} because ${reason}`);
     if (!execute || !wallet) continue;
 
-    const hash = await wallet.writeContract({
-      address: account,
-      abi: accountAbi,
-      functionName: "deleverTo",
-      args: [position.guardTargetCR],
-      account: wallet.account!,
-      chain: mezoTestnet,
-    });
-    console.log(`  tx ${hash}`);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
-    console.log(`  ${receipt.status} block ${receipt.blockNumber}`);
+    let cursor = position;
+    for (let step = 1; step <= 4; step++) {
+      if (!cursor.active || cursor.cr >= cursor.guardTargetCR) break;
+      const freshReason = needsDelever(cursor);
+      if (!freshReason) break;
+      const beforeDebt = cursor.debt;
+      const hash = await wallet.writeContract({
+        address: account,
+        abi: accountAbi,
+        functionName: "deleverTo",
+        args: [cursor.guardTargetCR],
+        account: wallet.account!,
+        chain: mezoTestnet,
+      });
+      console.log(`  step ${step} tx ${hash}`);
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      console.log(`  ${receipt.status} block ${receipt.blockNumber}`);
+      if (receipt.status !== "success") break;
+      cursor = (await publicClient.readContract({
+        address: account,
+        abi: accountAbi,
+        functionName: "position",
+      })) as Position;
+      console.log(`  now CR=${pct(cursor.cr)}`);
+      if (!cursor.active || cursor.debt >= beforeDebt) {
+        console.log("  stopped: another sale cannot repay debt");
+        break;
+      }
+    }
   }
 }
 

@@ -24,7 +24,7 @@ export const addr = {
 } as const;
 
 /** Live Mezo testnet factory. Override with NEXT_PUBLIC_COIL_FACTORY. */
-const DEPLOYED_FACTORY = "0x0bF9984BA4b68Afee3d697b866a2a1d24A5c027c" as const;
+const DEPLOYED_FACTORY = "0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e" as const;
 
 const factoryEnv = process.env.NEXT_PUBLIC_COIL_FACTORY ?? "";
 
