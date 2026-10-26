@@ -7,7 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-instrument), sans-serif;
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
   --font-serif: var(--font-instrument-serif), Georgia, serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
   --font-heading: var(--font-serif);
@@ -52,79 +52,52 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-:root {
-  --background: oklch(0.155 0.008 55);
-  --foreground: oklch(0.96 0.012 85);
-  --card: oklch(0.2 0.01 58);
-  --card-foreground: oklch(0.96 0.012 85);
-  --popover: oklch(0.2 0.01 58);
-  --popover-foreground: oklch(0.96 0.012 85);
-  --primary: oklch(0.8 0.15 72);
-  --primary-foreground: oklch(0.22 0.04 58);
-  --secondary: oklch(0.26 0.012 58);
-  --secondary-foreground: oklch(0.96 0.012 85);
-  --muted: oklch(0.24 0.01 58);
-  --muted-foreground: oklch(0.76 0.02 75);
-  --accent: oklch(0.3 0.03 68);
-  --accent-foreground: oklch(0.96 0.012 85);
-  --destructive: oklch(0.7 0.17 28);
-  --border: oklch(0.86 0.02 80 / 12%);
-  --input: oklch(0.86 0.02 80 / 16%);
-  --ring: oklch(0.8 0.15 72);
-  --filament: oklch(0.8 0.15 72);
-  --safe: oklch(0.8 0.08 165);
-  --ink: oklch(0.22 0.04 58);
-  --chart-1: oklch(0.8 0.15 72);
-  --chart-2: oklch(0.7 0.08 165);
-  --chart-3: oklch(0.7 0.17 28);
+@theme inline {
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-line: var(--line);
+}
+
+:root,
+.dark {
+  --background: oklch(0.135 0.006 60);
+  --foreground: oklch(0.97 0.008 80);
+  --card: oklch(0.175 0.007 60);
+  --card-foreground: oklch(0.97 0.008 80);
+  --popover: oklch(0.19 0.008 60);
+  --popover-foreground: oklch(0.97 0.008 80);
+  --primary: oklch(0.76 0.165 62);
+  --primary-foreground: oklch(0.18 0.03 55);
+  --secondary: oklch(0.235 0.008 60);
+  --secondary-foreground: oklch(0.97 0.008 80);
+  --muted: oklch(0.22 0.007 60);
+  --muted-foreground: oklch(0.72 0.014 75);
+  --accent: oklch(0.28 0.02 62);
+  --accent-foreground: oklch(0.97 0.008 80);
+  --destructive: oklch(0.69 0.19 25);
+  --border: oklch(0.9 0.01 80 / 10%);
+  --input: oklch(0.9 0.01 80 / 14%);
+  --ring: oklch(0.76 0.165 62);
+  --filament: oklch(0.76 0.165 62);
+  --safe: oklch(0.8 0.15 158);
+  --warn: oklch(0.84 0.15 88);
+  --danger: oklch(0.69 0.19 25);
+  --line: oklch(0.9 0.01 80 / 7%);
+  --ink: oklch(0.18 0.03 55);
+  --chart-1: oklch(0.76 0.165 62);
+  --chart-2: oklch(0.8 0.15 158);
+  --chart-3: oklch(0.69 0.19 25);
   --chart-4: oklch(0.55 0.02 70);
   --chart-5: oklch(0.35 0.02 60);
   --radius: 0.9rem;
-  --sidebar: oklch(0.18 0.008 55);
-  --sidebar-foreground: oklch(0.96 0.012 85);
-  --sidebar-primary: oklch(0.8 0.15 72);
-  --sidebar-primary-foreground: oklch(0.22 0.04 58);
-  --sidebar-accent: oklch(0.26 0.012 58);
-  --sidebar-accent-foreground: oklch(0.96 0.012 85);
-  --sidebar-border: oklch(0.86 0.02 80 / 12%);
-  --sidebar-ring: oklch(0.8 0.15 72);
-}
-
-.dark {
-  --background: oklch(0.155 0.008 55);
-  --foreground: oklch(0.96 0.012 85);
-  --card: oklch(0.2 0.01 58);
-  --card-foreground: oklch(0.96 0.012 85);
-  --popover: oklch(0.2 0.01 58);
-  --popover-foreground: oklch(0.96 0.012 85);
-  --primary: oklch(0.8 0.15 72);
-  --primary-foreground: oklch(0.22 0.04 58);
-  --secondary: oklch(0.26 0.012 58);
-  --secondary-foreground: oklch(0.96 0.012 85);
-  --muted: oklch(0.24 0.01 58);
-  --muted-foreground: oklch(0.76 0.02 75);
-  --accent: oklch(0.3 0.03 68);
-  --accent-foreground: oklch(0.96 0.012 85);
-  --destructive: oklch(0.72 0.16 28);
-  --border: oklch(0.86 0.02 80 / 12%);
-  --input: oklch(0.86 0.02 80 / 16%);
-  --ring: oklch(0.8 0.15 72);
-  --filament: oklch(0.8 0.15 72);
-  --safe: oklch(0.8 0.08 165);
-  --ink: oklch(0.22 0.04 58);
-  --chart-1: oklch(0.8 0.15 72);
-  --chart-2: oklch(0.7 0.08 165);
-  --chart-3: oklch(0.7 0.17 28);
-  --chart-4: oklch(0.55 0.02 70);
-  --chart-5: oklch(0.35 0.02 60);
-  --sidebar: oklch(0.18 0.008 55);
-  --sidebar-foreground: oklch(0.96 0.012 85);
-  --sidebar-primary: oklch(0.8 0.15 72);
-  --sidebar-primary-foreground: oklch(0.22 0.04 58);
-  --sidebar-accent: oklch(0.26 0.012 58);
-  --sidebar-accent-foreground: oklch(0.96 0.012 85);
-  --sidebar-border: oklch(0.86 0.02 80 / 12%);
-  --sidebar-ring: oklch(0.8 0.15 72);
+  --sidebar: oklch(0.16 0.006 60);
+  --sidebar-foreground: oklch(0.97 0.008 80);
+  --sidebar-primary: oklch(0.76 0.165 62);
+  --sidebar-primary-foreground: oklch(0.18 0.03 55);
+  --sidebar-accent: oklch(0.235 0.008 60);
+  --sidebar-accent-foreground: oklch(0.97 0.008 80);
+  --sidebar-border: oklch(0.9 0.01 80 / 10%);
+  --sidebar-ring: oklch(0.76 0.165 62);
 }
 
 @layer base {
@@ -133,46 +106,112 @@
   }
   html {
     @apply font-sans;
+    scroll-behavior: smooth;
   }
   body {
     @apply bg-background text-foreground;
-    font-variant-numeric: tabular-nums;
     background-color: var(--background);
+    font-feature-settings: "ss01", "cv11";
   }
   ::selection {
-    background: color-mix(in oklch, var(--filament) 35%, transparent);
+    background: color-mix(in oklch, var(--filament) 40%, transparent);
+  }
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
   }
 }
 
+@layer components {
+/* ---------- backdrop ---------- */
 .atmosphere {
   background:
-    radial-gradient(ellipse 70% 45% at 8% -10%, color-mix(in oklch, var(--filament) 22%, transparent), transparent 58%),
-    radial-gradient(ellipse 40% 32% at 100% 0%, color-mix(in oklch, var(--filament) 10%, transparent), transparent 52%);
+    radial-gradient(ellipse 55% 40% at 72% 8%, color-mix(in oklch, var(--filament) 20%, transparent), transparent 62%),
+    radial-gradient(ellipse 40% 30% at 8% 0%, color-mix(in oklch, var(--filament) 9%, transparent), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 50% 100%, color-mix(in oklch, var(--safe) 4%, transparent), transparent 70%);
 }
-
 .atmosphere::after {
   content: "";
   position: absolute;
   inset: 0;
-  background-image:
-    linear-gradient(to right, color-mix(in oklch, var(--foreground) 4.5%, transparent) 1px, transparent 1px),
-    linear-gradient(to bottom, color-mix(in oklch, var(--foreground) 4.5%, transparent) 1px, transparent 1px);
-  background-size: 88px 88px;
-  mask-image: radial-gradient(ellipse at 50% 0%, black 10%, transparent 68%);
+  background-image: radial-gradient(color-mix(in oklch, var(--foreground) 9%, transparent) 1px, transparent 1px);
+  background-size: 26px 26px;
+  mask-image: radial-gradient(ellipse 80% 60% at 60% 0%, black 0%, transparent 70%);
+}
+.grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
 }
 
+/* ---------- surfaces ---------- */
 .panel {
-  background: color-mix(in oklch, var(--foreground) 3.2%, var(--background));
+  position: relative;
+  background:
+    linear-gradient(180deg, color-mix(in oklch, var(--foreground) 4%, transparent), transparent 40%),
+    color-mix(in oklch, var(--foreground) 2.2%, var(--background));
   border: 1px solid color-mix(in oklch, var(--foreground) 10%, transparent);
-  border-radius: 1.6rem;
-  box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 5%, transparent);
+  border-radius: 1.5rem;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, var(--foreground) 7%, transparent),
+    0 30px 80px -40px rgb(0 0 0 / 0.8);
 }
-
-.meter {
-  background: color-mix(in oklch, black 35%, var(--background));
+.panel-glow::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(140deg, color-mix(in oklch, var(--filament) 65%, transparent), transparent 35%, transparent 70%, color-mix(in oklch, var(--filament) 25%, transparent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.well {
+  background: color-mix(in oklch, black 38%, var(--background));
   border: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
-  border-radius: 1.15rem;
+  border-radius: 1.1rem;
 }
+.meter { /* legacy alias */
+  background: color-mix(in oklch, black 38%, var(--background));
+  border: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
+  border-radius: 1.1rem;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklch, var(--foreground) 12%, transparent);
+  background: color-mix(in oklch, var(--foreground) 3%, transparent);
+  padding: 0.25rem 0.65rem;
+  font-size: 11px;
+  line-height: 1.2;
+}
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.btc-text {
+  background: linear-gradient(100deg, #ffd9a3 0%, #f7931a 45%, #ff6a1a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.btn-btc {
+  background: linear-gradient(180deg, #ffb24d, #f7931a 55%, #e9780b);
+  color: #1a0f02;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.45),
+    0 10px 30px -10px color-mix(in oklch, var(--filament) 70%, transparent);
+}
+.btn-btc:hover { filter: brightness(1.06); }
 
 .link {
   text-decoration: underline;
@@ -180,53 +219,46 @@
   text-underline-offset: 3px;
   text-decoration-color: color-mix(in oklch, var(--filament) 55%, transparent);
 }
+.link:hover { text-decoration-color: var(--filament); }
 
-.link:hover {
-  text-decoration-color: var(--filament);
+/* ratio track with risk zones (110 → 350) */
+.zone-track {
+  background: linear-gradient(90deg,
+    var(--danger) 0%, var(--danger) 17%,
+    var(--warn) 17%, var(--warn) 38%,
+    var(--safe) 38%, var(--safe) 100%);
 }
 
-.coil-draw {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
 }
 
-.rise {
-  animation: rise 0.85s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
+/* ---------- motion ---------- */
+.coil-draw { stroke-dasharray: 1; stroke-dashoffset: 1; }
+.rise { animation: rise 0.85s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .rise-1 { animation-delay: 0.08s; }
 .rise-2 { animation-delay: 0.18s; }
 .rise-3 { animation-delay: 0.3s; }
-
-.filament-line {
-  transform-origin: left center;
-  animation: grow 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-.filament-line-1 { animation-delay: 0.35s; }
-.filament-line-2 { animation-delay: 0.48s; }
-.filament-line-3 { animation-delay: 0.6s; }
+.rise-4 { animation-delay: 0.42s; }
+.spin-slow { animation: spin 40s linear infinite; transform-origin: 50% 50%; transform-box: fill-box; }
+.spin-rev { animation: spin 60s linear infinite reverse; transform-origin: 50% 50%; transform-box: fill-box; }
+.flow-dash { stroke-dasharray: 6 10; animation: flow 1.2s linear infinite; }
+.station-pulse { animation: station 3.6s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
+.station-pulse-2 { animation-delay: 1.2s; }
+.station-pulse-3 { animation-delay: 2.4s; }
+.marquee { animation: marquee 38s linear infinite; }
 
 .skeleton {
   position: relative;
   overflow: hidden;
   background: color-mix(in oklch, var(--foreground) 8%, transparent);
 }
-
 .skeleton::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in oklch, var(--foreground) 16%, transparent),
-    transparent
-  );
+  background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--foreground) 16%, transparent), transparent);
   transform: translateX(-100%);
   animation: shimmer 1.35s ease-in-out infinite;
 }
-
 .spinner {
   width: 12px;
   height: 12px;
@@ -235,11 +267,7 @@
   border-top-color: var(--filament);
   animation: spin 0.7s linear infinite;
 }
-
-.node-live {
-  animation: node-pulse 1.6s ease-out infinite;
-}
-
+.node-live { animation: node-pulse 1.6s ease-out infinite; }
 .busy-bar {
   position: absolute;
   right: 0;
@@ -249,7 +277,6 @@
   overflow: hidden;
   background: color-mix(in oklch, var(--filament) 22%, transparent);
 }
-
 .busy-bar::before {
   content: "";
   position: absolute;
@@ -259,50 +286,41 @@
   animation: busy 1.05s ease-in-out infinite;
 }
 
-@keyframes rise {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: none; }
+.pip-live {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in oklch, var(--filament) 25%, transparent);
+}
+.pip-live::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: var(--filament);
+  animation: busy 1.05s ease-in-out infinite;
 }
 
-@keyframes grow {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes shimmer { to { transform: translateX(100%); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes flow { to { stroke-dashoffset: -16; } }
+@keyframes station {
+  0%, 70%, 100% { transform: scale(1); opacity: 0.12; }
+  20% { transform: scale(1.3); opacity: 0.45; }
 }
-
-@keyframes shimmer {
-  to { transform: translateX(100%); }
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @keyframes node-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--filament) 55%, transparent); }
   100% { box-shadow: 0 0 0 10px transparent; }
 }
-
-@keyframes busy {
-  0% { transform: translateX(-120%); }
-  100% { transform: translateX(380%); }
-}
+@keyframes busy { 0% { transform: translateX(-120%); } 100% { transform: translateX(380%); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .coil-draw {
-    stroke-dashoffset: 0;
+  html { scroll-behavior: auto; }
+  .coil-draw { stroke-dashoffset: 0; }
+  .rise, .skeleton::after, .spinner, .node-live, .busy-bar::before, .pip-live::before, .animate-ping,
+  .spin-slow, .spin-rev, .flow-dash, .station-pulse, .marquee {
+    animation: none !important;
   }
-  .rise,
-  .filament-line,
-  .skeleton::after,
-  .spinner,
-  .node-live,
-  .busy-bar::before,
-  .animate-ping {
-    animation: none;
-  }
-  .rise,
-  .filament-line {
-    opacity: 1;
-    transform: none;
-  }
+  .rise { opacity: 1; transform: none; }
 }
