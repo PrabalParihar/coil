@@ -6,6 +6,8 @@ Deposit Bitcoin. Coil opens a Mezo trove, swaps the borrowed MUSD for more BTC o
 
 Built by [Prabal Pratap Singh](https://prabal.pro) ([GitHub](https://github.com/PrabalParihar/coil), [X](https://x.com/0xPrabalParihar)) for Mezo Buildathon Wave 1. Source: [github.com/PrabalParihar/coil](https://github.com/PrabalParihar/coil).
 
+**Live app:** [coil.up.railway.app](https://coil.up.railway.app) (Mezo testnet, chain 31611).
+
 ## Problem
 
 Looping BTC against MUSD by hand is a sequence of transactions that have to be sized against a moving oracle, a pool, a 110% liquidation line, and a 1,800 MUSD minimum debt. `openTrove` freezes borrowing capacity at the collateral you post in that call. Adding the BTC you just bought does not raise the cap. Only `refinance()` does. Hints have to be real, or `SortedTroves` walks the list and blows the block gas limit. A tight loop also sits at the front of the redemption queue.
