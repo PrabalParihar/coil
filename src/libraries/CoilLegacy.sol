@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-import {IBorrowerOperations, ITroveManager, ISortedTroves, IHintHelpers, IPriceFeed, IRouter, IERC20} from "../interfaces/Mezo.sol";
+import {IBorrowerOperations, ITroveManager, ISortedTroves, IHintHelpers, IPriceFeed, IRouter, IPool, IPoolFactory, IERC20} from "../interfaces/Mezo.sol";
+import {FlashSizer} from "./FlashMath.sol";
+import {CoilPark} from "../CoilPark.sol";
 
 /// @notice Router-based loop, sale unwind, and quotes. Deployed on its own and
 ///         linked into CoilAccount with DELEGATECALL, so `address(this)` stays the
@@ -48,8 +50,12 @@ library CoilLegacy {
     event Looped(address indexed owner, uint256 targetCR, uint256 collateral, uint256 debt, uint256 cr);
     event Unwound(address indexed owner, uint256 fractionWad, uint256 cr);
     event Swept(address indexed to, uint256 btcAmount, uint256 musdAmount);
+    event ReserveDeposited(address indexed owner, uint256 amount);
+    event ReserveWithdrawn(address indexed owner, uint256 amount);
+    event ReserveSpent(uint256 amount);
 
     error AlreadyAtTarget();
+    error BadCR();
     error BelowTarget();
     error CannotOpen();
     error Iterations();
@@ -272,6 +278,192 @@ library CoilLegacy {
             if (!IERC20(e.musd).transfer(e.owner, musdLeft)) revert TransferFailed();
         }
         if (btcBeforeSend > 0 || musdBefore > 0) emit Swept(e.owner, btcBeforeSend, musdBefore);
+    }
+
+    /// @notice Repay `amount` of MUSD already held by this clone. Hints are real.
+    function repayAmount(Env memory e, uint256 amount) public {
+        if (amount == 0) return;
+        uint256 principal = ITroveManager(e.troveManager).getTrovePrincipal(address(this));
+        uint256 hinted = principal > amount ? principal - amount : principal;
+        (address upper, address lower) =
+            hintPair(e, ITroveManager(e.troveManager).getTroveColl(address(this)), hinted);
+        IBorrowerOperations(e.borrowerOperations).repayMUSD(amount, upper, lower);
+    }
+
+    /// @notice MUSD that would lift the current trove to `targetCR` at `price`,
+    ///         capped by the minimum-debt floor. Zero when the trove is already there.
+    function reserveNeed(Env memory e, uint256 targetCR, uint256 price) public view returns (uint256 need) {
+        if (!_active(e) || price == 0 || targetCR == 0) return 0;
+        uint256 coll = ITroveManager(e.troveManager).getTroveColl(address(this));
+        uint256 debt = ITroveManager(e.troveManager).getTroveDebt(address(this));
+        if (coll == 0 || debt == 0) return 0;
+        if (coll * price / debt >= targetCR) return 0;
+        uint256 targetDebt = coll * price / targetCR;
+        if (targetDebt >= debt) return 0;
+        need = debt - targetDebt;
+        uint256 room = maxRepay(e, debt);
+        if (need > room) need = room;
+    }
+
+    /// @notice Absolute gap between the pool's MUSD-per-BTC and the oracle, in bps of the oracle.
+    function deviationBps(uint256 reserveMusd, uint256 reserveBtc, uint256 oraclePrice) public pure returns (uint256) {
+        if (reserveBtc == 0 || oraclePrice == 0) return type(uint256).max;
+        uint256 poolPrice = reserveMusd * WAD / reserveBtc;
+        uint256 diff = poolPrice > oraclePrice ? poolPrice - oraclePrice : oraclePrice - poolPrice;
+        return diff * BPS / oraclePrice;
+    }
+
+    /// @notice How far MUSD sits under $1 in the pool, in bps. Zero when the pool is at or above the oracle.
+    function musdBelowPegBps(uint256 reserveMusd, uint256 reserveBtc, uint256 oraclePrice) public pure returns (uint256) {
+        if (reserveBtc == 0 || oraclePrice == 0) return 0;
+        uint256 poolPrice = reserveMusd * WAD / reserveBtc;
+        if (poolPrice <= oraclePrice) return 0;
+        return (poolPrice - oraclePrice) * BPS / poolPrice;
+    }
+
+    function moveReserve(Env memory e, address park_, uint256 amount, bool withdraw) public {
+        if (amount == 0) revert ZeroAmount();
+        if (withdraw) {
+            CoilPark(park_).withdrawTo(e.owner, amount);
+            emit ReserveWithdrawn(e.owner, amount);
+            return;
+        }
+        if (!IERC20(e.musd).transferFrom(msg.sender, address(this), amount)) revert TransferFailed();
+        if (!IERC20(e.musd).approve(park_, amount)) revert TransferFailed();
+        CoilPark(park_).depositFor(address(this), amount);
+        emit ReserveDeposited(msg.sender, amount);
+    }
+
+    /// @dev Draws parked MUSD and repays. A second draw covers a short first repayment. No BTC sale.
+    function applyReserve(Env memory e, address park_, uint256 targetCR, uint256 price) public returns (uint256 spent) {
+        if (!_active(e)) return 0;
+        CoilPark box = CoilPark(park_);
+        uint256 parked = box.assetsOf(address(this));
+        if (parked == 0) return 0;
+        uint256 need = reserveNeed(e, targetCR, price);
+        if (need == 0) return 0;
+        uint256 take = parked < need ? parked : need;
+        box.draw(take);
+        repayAmount(e, take);
+        spent = take;
+        emit ReserveSpent(take);
+        if (!_active(e)) return spent;
+        uint256 crNow = _cr(e, price);
+        if (crNow >= targetCR) return spent;
+        uint256 left = box.assetsOf(address(this));
+        if (left == 0) return spent;
+        need = reserveNeed(e, targetCR, price);
+        if (need == 0) return spent;
+        take = left < need ? left : need;
+        box.draw(take);
+        repayAmount(e, take);
+        spent += take;
+        emit ReserveSpent(take);
+    }
+
+    function reserveCoverage(Env memory e, address park_, uint256 targetCR)
+        public
+        view
+        returns (uint256 parked, uint256 need, uint256 coveredBps)
+    {
+        parked = CoilPark(park_).assetsOf(address(this));
+        if (!_active(e)) return (parked, 0, parked == 0 ? 0 : 10_000);
+        need = reserveNeed(e, targetCR, IPriceFeed(e.priceFeed).fetchPrice());
+        if (need == 0) return (parked, 0, 10_000);
+        coveredBps = parked >= need ? 10_000 : parked * 10_000 / need;
+    }
+
+    function deviationBpsView(Env memory e, address pool) public view returns (uint256) {
+        uint256 price = IPriceFeed(e.priceFeed).fetchPrice();
+        (uint256 poolMusd, uint256 poolBtc) = _poolReserves(pool, e.btc);
+        return deviationBps(poolMusd, poolBtc, price);
+    }
+
+    function belowPegView(Env memory e, address pool) public view returns (uint256) {
+        uint256 price = IPriceFeed(e.priceFeed).fetchPrice();
+        (uint256 poolMusd, uint256 poolBtc) = _poolReserves(pool, e.btc);
+        return musdBelowPegBps(poolMusd, poolBtc, price);
+    }
+
+    function inRecovery(Env memory e) public view returns (bool) {
+        return ITroveManager(e.troveManager).checkRecoveryMode(IPriceFeed(e.priceFeed).fetchPrice());
+    }
+
+    function reads(
+        Env memory e,
+        address sizer_,
+        address pool,
+        address park_,
+        uint256 collateralIn,
+        uint256 targetCR,
+        uint256 impactCapBps
+    )
+        public
+        view
+        returns (
+            uint256 impact,
+            uint256 sensibleCR,
+            uint256 sensibleImpact,
+            uint256 sensibleLeverage,
+            bool withinCap,
+            uint256 deviation,
+            uint256 belowPeg,
+            bool recovery,
+            uint256 parked,
+            uint256 need,
+            uint256 coveredBps
+        )
+    {
+        if (collateralIn > 0) {
+            (impact, sensibleCR, sensibleImpact, sensibleLeverage, withinCap) =
+                quoteDepth(e, sizer_, pool, collateralIn, targetCR, impactCapBps);
+        }
+        deviation = deviationBpsView(e, pool);
+        belowPeg = belowPegView(e, pool);
+        recovery = inRecovery(e);
+        (parked, need, coveredBps) = reserveCoverage(e, park_, targetCR == 0 ? MIN_TARGET_CR : targetCR);
+    }
+
+    function quoteDepth(
+        Env memory e,
+        address sizer_,
+        address pool,
+        uint256 collateralIn,
+        uint256 targetCR,
+        uint256 impactCapBps
+    )
+        public
+        view
+        returns (uint256 impact, uint256 sensibleCR, uint256 sensibleImpact, uint256 sensibleLeverage, bool withinCap)
+    {
+        if (collateralIn == 0) revert ZeroAmount();
+        if (targetCR < MIN_TARGET_CR || targetCR > 10e18) revert BadCR();
+        uint256 price = IPriceFeed(e.priceFeed).fetchPrice();
+        (uint256 poolMusd, uint256 poolBtc) = _poolReserves(pool, e.btc);
+        uint256 fee = IPoolFactory(e.poolFactory).getFee(pool, IPool(pool).stable());
+        uint256 rate = IBorrowerOperations(e.borrowerOperations).borrowingRate();
+        FlashSizer.Ctx memory c;
+        c.deposit = collateralIn;
+        c.targetCR = targetCR;
+        c.price = price;
+        c.fee = fee;
+        c.reserveMusd = poolMusd;
+        c.reserveBtc = poolBtc;
+        c.rate = rate;
+        c.minAmt = minOpenAmount(e, rate);
+        c.gasComp = GAS_COMPENSATION;
+        c.mcr = MCR;
+        c.openHeadroom = OPEN_HEADROOM;
+        (, uint256 owed,, bool fits) = FlashSizer(sizer_).solve(c);
+        impact = fits ? FlashSizer(sizer_).impactBps(poolMusd, poolBtc, owed, fee) : type(uint256).max;
+        (sensibleCR, sensibleImpact, sensibleLeverage, withinCap) =
+            FlashSizer(sizer_).sensibleTarget(c, impactCapBps);
+    }
+
+    function _poolReserves(address pool, address btc) private view returns (uint256 poolMusd, uint256 poolBtc) {
+        (uint256 r0, uint256 r1,) = IPool(pool).getReserves();
+        if (IPool(pool).token0() == btc) return (r1, r0);
+        return (r0, r1);
     }
 
     function minOpenAmount(Env memory e, uint256 rate) public view returns (uint256) {

@@ -4,6 +4,8 @@ pragma solidity 0.8.24;
 import {Test, console2} from "forge-std/Test.sol";
 import {CoilAccount} from "../src/CoilAccount.sol";
 import {CoilFactory} from "../src/CoilFactory.sol";
+import {CoilPark} from "../src/CoilPark.sol";
+import {FlashSizer} from "../src/libraries/FlashMath.sol";
 import {MezoAddresses} from "../src/MezoAddresses.sol";
 import {IBorrowerOperations, ITroveManager, IPriceFeed, IRouter, IERC20} from "../src/interfaces/Mezo.sol";
 
@@ -16,6 +18,42 @@ interface IPoolView {
 
 /// @dev Stand-in for the Mezo BTC precompile. Anvil cannot execute 0x7b7c…0000,
 ///      so fork tests etch this code in its place and seed the pool's balance.
+/// @dev 1:1 ERC-4626 stand-in. Proves the park can hold sMUSD shares and draw MUSD back.
+contract MockSavings {
+    IERC20 public immutable token;
+    mapping(address => uint256) public sharesOf;
+
+    constructor(address asset_) {
+        token = IERC20(asset_);
+    }
+
+    function asset() external view returns (address) {
+        return address(token);
+    }
+
+    function deposit(uint256 assets, address receiver) external returns (uint256) {
+        require(token.transferFrom(msg.sender, address(this), assets), "deposit");
+        sharesOf[receiver] += assets;
+        return assets;
+    }
+
+    function withdraw(uint256 assets, address receiver, address owner_) external returns (uint256) {
+        require(msg.sender == owner_, "owner");
+        require(sharesOf[owner_] >= assets, "shares");
+        sharesOf[owner_] -= assets;
+        require(token.transfer(receiver, assets), "withdraw");
+        return assets;
+    }
+
+    function convertToAssets(uint256 shares) external pure returns (uint256) {
+        return shares;
+    }
+
+    function previewWithdraw(uint256 assets) external pure returns (uint256) {
+        return assets;
+    }
+}
+
 contract MockWbtc {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -251,6 +289,48 @@ contract CoilForkTest is Test {
         assertFalse(acted);
     }
 
+    /// @dev The testnet pool can sit ~1.4% under the oracle. Rescue and close
+    ///      use rescueSlippageBps (default 200, cap 300), not the 50 bps open default.
+    function test_guardSucceedsWhenPoolIsBelowOracle() public {
+        uint256 rich = spot * 10_000 / 9_860;
+        _mockPrice(rich);
+
+        uint256 target = uint256(4e18) / 3;
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, target, 50);
+        assertEq(account.rescueSlippageBps(), 200);
+        assertEq(account.slippageBps(), 50);
+        assertLt(account.position().cr, 1.4e18);
+
+        vm.prank(user);
+        account.setGuard(1.4e18, 1.5e18, 0);
+        address stranger = makeAddr("rescue-stranger");
+        vm.prank(stranger);
+        vm.expectRevert(CoilAccount.NotOwner.selector);
+        account.setRescueSlippage(200);
+
+        vm.prank(user);
+        vm.expectRevert(CoilAccount.BadSlippage.selector);
+        account.setRescueSlippage(301);
+
+        vm.prank(user);
+        account.setRescueSlippage(50);
+        vm.prank(stranger);
+        vm.expectRevert(CoilAccount.Slippage.selector);
+        account.guard();
+        vm.prank(user);
+        vm.expectRevert(CoilAccount.Slippage.selector);
+        account.flashUnwind(1e18);
+
+        vm.prank(user);
+        account.setRescueSlippage(200);
+        uint256 crBefore = account.position().cr;
+        vm.prank(stranger);
+        bool acted = account.guard();
+        assertTrue(acted);
+        assertGt(account.position().cr, crBefore);
+        assertGe(account.position().cr, 1.5e18);
+    }
+
     function test_topUpExistingTrove() public {
         (address user, CoilAccount account) = _open(0.15 ether, 2.2e18, 50);
         uint256 collBefore = account.position().collateral;
@@ -271,6 +351,8 @@ contract CoilForkTest is Test {
         assertEq(deleverCalls, 10);
         assertEq(guardCalls, 12);
         assertLe(guardCalls, 16);
+        // A reserve repay adds one price fetch (+2). A second top-up adds another. 12 + 4 = 16, under 20.
+        assertLe(guardCalls + 4, 20);
     }
 
     function test_flashLoopReachesThreeTimes() public {
@@ -446,6 +528,164 @@ contract CoilForkTest is Test {
         assertGt(p.collateral, deposit);
     }
 
+    function test_guardRepaysReserveBeforeSellingBtc() public {
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, uint256(4e18) / 3, 50);
+        CoilAccount.Position memory before = account.position();
+        assertLt(before.cr, 1.4e18);
+        uint256 musdNeed = _debtGap(account, 1.5e18) + 2e18;
+        assertGt(musdNeed, 0);
+        deal(MezoAddresses.TESTNET_MUSD, user, musdNeed);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), musdNeed);
+        account.moveReserve(musdNeed, false);
+        account.setRescueSlippage(1);
+        account.setGuard(1.4e18, 1.5e18, 0);
+        vm.stopPrank();
+        assertEq(account.park().assetsOf(address(account)), musdNeed);
+        uint256 coll = before.collateral;
+        vm.prank(makeAddr("reserve-keeper"));
+        assertTrue(account.guard());
+        CoilAccount.Position memory afterP = account.position();
+        assertGe(afterP.cr, 1.5e18);
+        assertEq(afterP.collateral, coll);
+        assertLt(account.park().assetsOf(address(account)), musdNeed);
+        assertLt(afterP.debt, before.debt);
+    }
+
+    function test_guardSellsOnlyTheReserveRemainder() public {
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, uint256(4e18) / 3, 50);
+        uint256 musdNeed = _debtGap(account, 1.5e18) + 2e18;
+        uint256 half = musdNeed / 2;
+        assertGt(half, 0);
+        deal(MezoAddresses.TESTNET_MUSD, user, half);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), half);
+        account.moveReserve(half, false);
+        account.setGuard(1.4e18, 1.5e18, 0);
+        vm.stopPrank();
+        uint256 coll = account.position().collateral;
+        vm.prank(makeAddr("partial-reserve"));
+        assertTrue(account.guard());
+        CoilAccount.Position memory afterP = account.position();
+        assertGe(afterP.cr, 1.5e18);
+        assertLt(afterP.collateral, coll);
+        assertEq(account.park().assetsOf(address(account)), 0);
+    }
+
+    function test_sweepLeavesTheReserve() public {
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, uint256(4e18) / 3, 50);
+        deal(MezoAddresses.TESTNET_MUSD, user, 100e18);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), 100e18);
+        account.moveReserve(100e18, false);
+        account.sweep();
+        vm.stopPrank();
+        assertEq(account.park().assetsOf(address(account)), 100e18);
+        vm.prank(makeAddr("thief"));
+        vm.expectRevert(CoilAccount.NotOwner.selector);
+        account.moveReserve(1e18, true);
+        vm.prank(user);
+        account.moveReserve(40e18, true);
+        assertEq(account.park().assetsOf(address(account)), 60e18);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(user), 40e18);
+    }
+
+    function test_flashLoopRevertsWhenPoolIsOffTheOracle() public {
+        (address user, CoilAccount account) = _openAccount();
+        _mockPrice(spot * 10_300 / 10_000);
+        vm.prank(user);
+        vm.expectRevert(CoilAccount.PegOff.selector);
+        account.flashLoop{value: 0.2 ether}(1.5e18, 200);
+        vm.prank(user);
+        account.setPegBounds(400, 0);
+        vm.prank(user);
+        account.flashLoop{value: 0.2 ether}(1.5e18, 200);
+        assertTrue(account.position().active);
+        _mockPrice(spot);
+    }
+
+    function test_flashLoopRevertsInRecoveryMode() public {
+        (address user, CoilAccount account) = _openAccount();
+        vm.mockCall(
+            MezoAddresses.TESTNET_TROVE_MANAGER,
+            abi.encodeWithSignature("checkRecoveryMode(uint256)"),
+            abi.encode(true)
+        );
+        vm.prank(user);
+        vm.expectRevert(CoilAccount.RecoveryMode.selector);
+        account.flashLoop{value: 0.2 ether}(1.5e18, 200);
+        vm.clearMockedCalls();
+        _mockPrice(spot);
+    }
+
+    function test_pegGuardActsWhenMusdIsUnderOneDollar() public {
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, uint256(4e18) / 3, 50);
+        vm.mockCall(
+            address(account.sortedTroves()),
+            abi.encodeWithSignature("getLast()"),
+            abi.encode(address(account))
+        );
+        assertEq(account.redemptionRank(), 1);
+        vm.prank(user);
+        account.setPegBounds(200, 50);
+        vm.prank(user);
+        account.setGuard(1.15e18, 1.5e18, 0);
+        _mockPrice(spot * 9_700 / 10_000);
+        uint256 beforeCr = account.position().cr;
+        vm.prank(makeAddr("peg-keeper"));
+        bool acted = account.guard();
+        assertTrue(acted);
+        assertGt(account.position().cr, beforeCr);
+        _mockPrice(spot);
+    }
+
+    function test_savingsVaultAdapterRepaysFromShares() public {
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, uint256(4e18) / 3, 50);
+        MockSavings vault = new MockSavings(MezoAddresses.TESTNET_MUSD);
+        vm.prank(address(this));
+        account.park().setVault(address(vault));
+        uint256 musdNeed = _debtGap(account, 1.5e18) + 2e18;
+        deal(MezoAddresses.TESTNET_MUSD, user, musdNeed);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), musdNeed);
+        account.moveReserve(musdNeed, false);
+        account.setRescueSlippage(1);
+        account.setGuard(1.4e18, 1.5e18, 0);
+        vm.stopPrank();
+        assertGt(vault.sharesOf(address(account.park())), 0);
+        uint256 coll = account.position().collateral;
+        vm.prank(makeAddr("vault-keeper"));
+        assertTrue(account.guard());
+        assertGe(account.position().cr, 1.5e18);
+        assertEq(account.position().collateral, coll);
+        CoilPark park = account.park();
+        vm.expectRevert(CoilPark.NotGovernor.selector);
+        vm.prank(makeAddr("not-governor"));
+        park.setVault(address(0));
+    }
+
+    function test_quoteDepthReportsSensibleLeverage() public {
+        FlashSizer sizer = FlashSizer(address(implementation.sizer()));
+        FlashSizer.Ctx memory c;
+        c.deposit = 0.05 ether;
+        c.price = spot;
+        c.fee = 4;
+        c.reserveMusd = reserveMusd;
+        c.reserveBtc = reserveBtc;
+        c.rate = 0.001e18;
+        c.minAmt = 1_800e18;
+        c.gasComp = 200e18;
+        c.mcr = 1.1e18;
+        c.openHeadroom = 0.005e18;
+        c.targetCR = uint256(4e18) / 3;
+        (, uint256 owed,, bool fits) = sizer.solve(c);
+        uint256 impact = fits ? sizer.impactBps(reserveMusd, reserveBtc, owed, 4) : 10_000;
+        (uint256 sensibleCR, uint256 sensibleImpact,, bool withinCap) = sizer.sensibleTarget(c, 100);
+        assertLt(impact, 10_000);
+        assertGt(sensibleCR, 1e18);
+        if (withinCap) assertLe(sensibleImpact, 100);
+    }
+
     function test_twoUsersGetDistinctClones() public {
         (, CoilAccount a) = _open(0.12 ether, 2.5e18, 50);
         (, CoilAccount b) = _open(0.12 ether, 2.5e18, 50);
@@ -463,6 +703,23 @@ contract CoilForkTest is Test {
         (bool ok, bytes memory data) = protocol.staticcall(abi.encodeWithSignature("MUSD_GAS_COMPENSATION()"));
         require(ok, "gas");
         value = abi.decode(data, (uint256));
+    }
+
+    function _debtGap(CoilAccount account, uint256 target) internal view returns (uint256) {
+        CoilAccount.Position memory p = account.position();
+        if (p.collateral == 0 || p.debt == 0) return 0;
+        uint256 targetDebt = p.collateral * spot / target;
+        if (targetDebt >= p.debt) return 0;
+        return p.debt - targetDebt;
+    }
+
+    function _openAccount() internal returns (address user, CoilAccount account) {
+        userNonce++;
+        user = makeAddr(string(abi.encodePacked("acct-", vm.toString(userNonce))));
+        vm.deal(user, 1 ether);
+        vm.prank(user);
+        factory.createAccount();
+        account = CoilAccount(payable(factory.accountOf(user)));
     }
 
     function _open(uint256 collateral, uint256 targetCR, uint256 slip)

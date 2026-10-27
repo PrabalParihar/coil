@@ -7,6 +7,9 @@ evm_version = "shanghai"
 optimizer = true
 optimizer_runs = 200
 via_ir = true
+# Drops the IPFS bytecode hash so CoilAccount stays under EIP-170 after the
+# reserve and peg checks. `forge verify` reads this same setting.
+bytecode_hash = "none"
 fs_permissions = [{ access = "read", path = "./" }]
 
 [rpc_endpoints]

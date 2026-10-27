@@ -1,0 +1,180 @@
+INFO:Detectors:
+Detector: arbitrary-send-erc20
+CoilPark.depositFor(address,uint256) (src/CoilPark.sol#65-76) uses arbitrary from in transferFrom: ! asset.transferFrom(payer,address(this),assets) (src/CoilPark.sol#67)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#arbitrary-from-in-transferfrom
+INFO:Detectors:
+Detector: arbitrary-send-eth
+CoilLegacy.sweep(CoilLegacy.Env) (src/libraries/CoilLegacy.sol#249-281) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = e.owner.call{value: btcBeforeSend}() (src/libraries/CoilLegacy.sol#253)
+	- (ok2,None) = e.owner.call{value: address(this).balance}() (src/libraries/CoilLegacy.sol#268)
+CoilLegacy._leverStep(CoilLegacy.Env,uint256,uint256,uint256,uint256,uint256) (src/libraries/CoilLegacy.sol#482-533) sends eth to arbitrary user
+	Dangerous calls:
+	- IBorrowerOperations(e.borrowerOperations).openTrove{value: pending}(amount,upper,lower) (src/libraries/CoilLegacy.sol#510)
+	- IBorrowerOperations(e.borrowerOperations).addColl{value: btcGot}(upperAdd,lowerAdd) (src/libraries/CoilLegacy.sol#522)
+CoilLegacy._swapBtcToMusd(CoilLegacy.Env,uint256,uint256) (src/libraries/CoilLegacy.sol#733-759) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = e.btc.call{value: short}(abi.encodeWithSignature(deposit())) (src/libraries/CoilLegacy.sol#743)
+	- (ok_scope_1,None) = e.btc.call{value: amount}(abi.encodeWithSignature(deposit())) (src/libraries/CoilLegacy.sol#749)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#functions-that-send-ether-to-arbitrary-destinations
+INFO:Detectors:
+Detector: msg-value-in-nonpayable
+CoilLegacy.runLoop(CoilLegacy.Env,uint256,uint256) (src/libraries/CoilLegacy.sol#70-101) uses msg.value but is not reachable from any payable function
+	Non-payable entry points that can reach this function:
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#msgvalue-in-nonpayable
+INFO:Detectors:
+Detector: reentrancy-balance
+Reentrancy in CoilLegacy._swapBtcToMusd(CoilLegacy.Env,uint256,uint256) (src/libraries/CoilLegacy.sol#733-759):
+	External call allowing reentrancy:
+	- IRouter(e.router).swapExactTokensForTokens(amount,minOut,_route(e,e.btc,e.musd),address(this),block.timestamp) (src/libraries/CoilLegacy.sol#756)
+	Balance read before the call:
+	- beforeBal = IERC20(e.musd).balanceOf(address(this)) (src/libraries/CoilLegacy.sol#755)
+	Possible stale balance used after the call in a condition:
+	- got < minOut (src/libraries/CoilLegacy.sol#758)
+		- stale variable `got`
+Reentrancy in CoilLegacy.runLoop(CoilLegacy.Env,uint256,uint256) (src/libraries/CoilLegacy.sol#70-101):
+	External call allowing reentrancy:
+	- (pending,stop) = _leverStep(e,targetCR,maxSlippageBps,pending,price,swaps) (src/libraries/CoilLegacy.sol#83)
+		- (ok,data) = token.call(abi.encodeWithSelector(IERC20.approve.selector,spender,amount)) (src/libraries/CoilLegacy.sol#784)
+		- (swapOk,swapData) = e.router.call(payload) (src/libraries/CoilLegacy.sol#715)
+		- (ok,None) = e.btc.call(abi.encodeWithSignature(withdraw(uint256),ercGain)) (src/libraries/CoilLegacy.sol#727)
+		- IBorrowerOperations(e.borrowerOperations).openTrove{value: pending}(amount,upper,lower) (src/libraries/CoilLegacy.sol#510)
+		- IBorrowerOperations(e.borrowerOperations).withdrawMUSD(amount,upper_scope_0,lower_scope_1) (src/libraries/CoilLegacy.sol#515)
+		- IBorrowerOperations(e.borrowerOperations).addColl{value: btcGot}(upperAdd,lowerAdd) (src/libraries/CoilLegacy.sol#522)
+		- IBorrowerOperations(e.borrowerOperations).refinance(upperRefi,lowerRefi) (src/libraries/CoilLegacy.sol#531)
+	Balance read before the call:
+	- (pending,stop) = _leverStep(e,targetCR,maxSlippageBps,pending,price,swaps) (src/libraries/CoilLegacy.sol#83)
+	Possible stale balance used after the call in a condition:
+	- pending != 0 (src/libraries/CoilLegacy.sol#89)
+		- stale variable `pending`
+Reentrancy in CoilLegacy.sweep(CoilLegacy.Env) (src/libraries/CoilLegacy.sol#249-281):
+	External call allowing reentrancy:
+	- mirroredMusd > 0 && ! IERC20(e.musd).transfer(e.owner,mirroredMusd) (src/libraries/CoilLegacy.sol#259)
+	Balance read before the call:
+	- mirroredMusd = IERC20(e.musd).balanceOf(address(this)) (src/libraries/CoilLegacy.sol#258)
+	Possible stale balance used after the call in a condition:
+	- mirroredMusd > 0 && ! IERC20(e.musd).transfer(e.owner,mirroredMusd) (src/libraries/CoilLegacy.sol#259)
+		- stale variable `mirroredMusd`
+Reentrancy in CoilLegacy.sweep(CoilLegacy.Env) (src/libraries/CoilLegacy.sol#249-281):
+	External call allowing reentrancy:
+	- (ok_scope_0,None) = e.btc.call(abi.encodeWithSignature(withdraw(uint256),erc)) (src/libraries/CoilLegacy.sol#266)
+	Balance read before the call:
+	- erc = IERC20(e.btc).balanceOf(address(this)) (src/libraries/CoilLegacy.sol#264)
+	Possible stale balance used after the call in a condition:
+	- ! ok3 || (data.length != 0 && ! abi.decode(data,(bool))) (src/libraries/CoilLegacy.sol#273)
+		- stale variable `REF_290`
+Reentrancy in CoilLegacy.sweep(CoilLegacy.Env) (src/libraries/CoilLegacy.sol#249-281):
+	External call allowing reentrancy:
+	- (ok3,data) = e.btc.call(abi.encodeWithSelector(IERC20.transfer.selector,e.owner,erc)) (src/libraries/CoilLegacy.sol#271-272)
+	Balance read before the call:
+	- erc = IERC20(e.btc).balanceOf(address(this)) (src/libraries/CoilLegacy.sol#264)
+	Possible stale balance used after the call in a condition:
+	- ! ok3 || (data.length != 0 && ! abi.decode(data,(bool))) (src/libraries/CoilLegacy.sol#273)
+		- stale variable `REF_290`
+Reentrancy in CoilLegacy.unwindSale(CoilLegacy.Env,uint256,uint256,uint256,uint256) (src/libraries/CoilLegacy.sol#137-157):
+	External call allowing reentrancy:
+	- got = _sellAndRepay(e,sell,short,slippageBps) (src/libraries/CoilLegacy.sol#148)
+		- (ok,data) = token.call(abi.encodeWithSelector(IERC20.approve.selector,spender,amount)) (src/libraries/CoilLegacy.sol#784)
+		- IBorrowerOperations(e.borrowerOperations).withdrawColl(btcAmount,upper,lower) (src/libraries/CoilLegacy.sol#688)
+		- (ok,None) = e.btc.call{value: short}(abi.encodeWithSignature(deposit())) (src/libraries/CoilLegacy.sol#743)
+		- IBorrowerOperations(e.borrowerOperations).repayMUSD(repaid,upper,lower) (src/libraries/CoilLegacy.sol#705)
+		- (ok_scope_1,None) = e.btc.call{value: amount}(abi.encodeWithSignature(deposit())) (src/libraries/CoilLegacy.sol#749)
+		- IRouter(e.router).swapExactTokensForTokens(amount,minOut,_route(e,e.btc,e.musd),address(this),block.timestamp) (src/libraries/CoilLegacy.sol#756)
+	Balance read before the call:
+	- got = _sellAndRepay(e,sell,short,slippageBps) (src/libraries/CoilLegacy.sol#148)
+	Possible stale balance used after the call in a condition:
+	- repaid < toRepay && (toRepay - repaid) * 100 > toRepay && ! (_btcMirror(e) && repaid > 0) (src/libraries/CoilLegacy.sol#152)
+		- stale variable `repaid`
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities
+INFO:Detectors:
+Detector: divide-before-multiply
+CoilAccount.quoteFlashLoop(uint256,uint256,uint256) (src/CoilAccount.sol#469-497) performs a multiplication on the result of a division:
+	- fair = flash * price / WAD (src/CoilAccount.sol#482)
+	- fair == 0 || owed > fair * (BPS + slippageBps_) / BPS (src/CoilAccount.sol#483)
+CoilAccount._flashLoop(uint256,uint256) (src/CoilAccount.sol#620-655) performs a multiplication on the result of a division:
+	- fair = flashBtc * price / WAD (src/CoilAccount.sol#635)
+	- fair == 0 || owed > fair * (BPS + slip) / BPS (src/CoilAccount.sol#636)
+CoilAccount._checkOracleSlip(uint256,uint256,uint256) (src/CoilAccount.sol#801-806) performs a multiplication on the result of a division:
+	- fairBtc = musdOut * WAD / price (src/CoilAccount.sol#803)
+	- cap = fairBtc * (BPS + rescueSlippageBps) / BPS (src/CoilAccount.sol#804)
+CoilAccount._projectedDebt(uint256,uint256,uint256,bool,uint8) (src/CoilAccount.sol#873-884) performs a multiplication on the result of a division:
+	- refiBase = (newDebt - GAS_COMPENSATION) * refiPct / 100 (src/CoilAccount.sol#881)
+	- newDebt += refiBase * rate / WAD (src/CoilAccount.sol#882)
+CoilLegacy._projectedDebt(uint256,uint256,uint256,bool,uint8) (src/libraries/CoilLegacy.sol#578-589) performs a multiplication on the result of a division:
+	- refiBase = (newDebt - GAS_COMPENSATION) * refiPct / 100 (src/libraries/CoilLegacy.sol#586)
+	- newDebt += refiBase * rate / WAD (src/libraries/CoilLegacy.sol#587)
+CoilLegacy._btcInForMusd(CoilLegacy.Env,uint256,uint256) (src/libraries/CoilLegacy.sol#663-678) performs a multiplication on the result of a division:
+	- hi *= 2 (src/libraries/CoilLegacy.sol#669)
+	- mid = (lo + hi) / 2 (src/libraries/CoilLegacy.sol#673)
+	- hi = mid (src/libraries/CoilLegacy.sol#674)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#divide-before-multiply
+INFO:Detectors:
+Detector: incorrect-equality
+CoilAccount._beginRepay(uint256,uint256) (src/CoilAccount.sol#610-618) uses a dangerous strict equality:
+	- btcOwed == 0 || btcOwed >= coll (src/CoilAccount.sol#614)
+CoilLegacy._btcInForMusd(CoilLegacy.Env,uint256,uint256) (src/libraries/CoilLegacy.sol#663-678) uses a dangerous strict equality:
+	- musdOut == 0 (src/libraries/CoilLegacy.sol#664)
+CoilAccount._checkOracleSlip(uint256,uint256,uint256) (src/CoilAccount.sol#801-806) uses a dangerous strict equality:
+	- btcIn == 0 || price == 0 (src/CoilAccount.sol#802)
+CoilAccount._flashClose(uint256) (src/CoilAccount.sol#588-608) uses a dangerous strict equality:
+	- btcOwed == 0 || btcOwed >= coll (src/CoilAccount.sol#604)
+CoilAccount._payTip(address) (src/CoilAccount.sol#847-854) uses a dangerous strict equality:
+	- to == address(0) || tipMezo == 0 || block.number == lastTipBlock (src/CoilAccount.sol#848)
+CoilAccount._payTip(address) (src/CoilAccount.sol#847-854) uses a dangerous strict equality:
+	- paid == 0 (src/CoilAccount.sol#851)
+CoilLegacy._sellAndRepay(CoilLegacy.Env,uint256,uint256,uint256) (src/libraries/CoilLegacy.sol#692-706) uses a dangerous strict equality:
+	- repaid == 0 (src/libraries/CoilLegacy.sol#701)
+CoilLegacy.hintPair(CoilLegacy.Env,uint256,uint256) (src/libraries/CoilLegacy.sol#237-247) uses a dangerous strict equality:
+	- coll == 0 || debtForNicr == 0 (src/libraries/CoilLegacy.sol#238)
+CoilLegacy.sweep(CoilLegacy.Env) (src/libraries/CoilLegacy.sol#249-281) uses a dangerous strict equality:
+	- erc > 0 && address(this).balance == 0 (src/libraries/CoilLegacy.sol#265)
+CoilLegacy.unwindSale(CoilLegacy.Env,uint256,uint256,uint256,uint256) (src/libraries/CoilLegacy.sol#137-157) uses a dangerous strict equality:
+	- got == 0 (src/libraries/CoilLegacy.sol#149)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#dangerous-strict-equalities
+INFO:Detectors:
+Detector: reentrancy-no-eth
+Reentrancy in CoilAccount._payTip(address) (src/CoilAccount.sol#847-854):
+	External calls:
+	- _transferToken(address(mezo),to,paid) (src/CoilAccount.sol#852)
+		- (ok,data) = token.call(abi.encodeWithSelector(IERC20.transfer.selector,to,amount)) (src/CoilAccount.sol#906)
+	State variables written after the call(s):
+	- lastTipBlock = block.number (src/CoilAccount.sol#853)
+	CoilAccount.lastTipBlock (src/CoilAccount.sol#99) can be used in cross function reentrancies:
+	- CoilAccount.lastTipBlock (src/CoilAccount.sol#99)
+Reentrancy in CoilFactory.createAccount() (src/CoilFactory.sol#31-38):
+	External calls:
+	- CoilAccount(address(account)).initialize(msg.sender) (src/CoilFactory.sol#34)
+	State variables written after the call(s):
+	- accountOf[msg.sender] = account (src/CoilFactory.sol#35)
+	CoilFactory.accountOf (src/CoilFactory.sol#13) can be used in cross function reentrancies:
+	- CoilFactory.accountOf (src/CoilFactory.sol#13)
+	- CoilFactory.createAccount() (src/CoilFactory.sol#31-38)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-2
+INFO:Detectors:
+Detector: uninitialized-local
+CoilLegacy.quoteDepth(CoilLegacy.Env,address,address,uint256,uint256,uint256).c (src/libraries/CoilLegacy.sol#445) is a local variable never initialized
+CoilAccount._solveFlash(uint256,uint256,uint256,bool,uint256,uint256).c (src/CoilAccount.sol#736) is a local variable never initialized
+CoilLegacy._btcInForMusd(CoilLegacy.Env,uint256,uint256).lo (src/libraries/CoilLegacy.sol#665) is a local variable never initialized
+FlashSizer.solve(FlashSizer.Ctx).best (src/libraries/FlashMath.sol#61) is a local variable never initialized
+CoilLegacy.quoteLoop(CoilLegacy.Env,uint256,uint256,uint256).debt (src/libraries/CoilLegacy.sol#113) is a local variable never initialized
+FlashSizer.solve(FlashSizer.Ctx).lo (src/libraries/FlashMath.sol#60) is a local variable never initialized
+FlashSizer.sizeRepay(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256).lo (src/libraries/FlashMath.sol#118) is a local variable never initialized
+CoilLegacy.runLoop(CoilLegacy.Env,uint256,uint256).swaps (src/libraries/CoilLegacy.sol#80) is a local variable never initialized
+CoilLegacy.unwindAll(CoilLegacy.Env,uint256,uint256).sales (src/libraries/CoilLegacy.sol#191) is a local variable never initialized
+CoilLegacy._btcToReach(CoilLegacy.Env,uint256,uint256,uint256,uint256,uint256,uint256).lo (src/libraries/CoilLegacy.sol#625) is a local variable never initialized
+CoilAccount.previewRedemptionRank(uint256,uint256).ahead (src/CoilAccount.sol#443) is a local variable never initialized
+CoilLegacy.unwindSale(CoilLegacy.Env,uint256,uint256,uint256,uint256).repaid (src/libraries/CoilLegacy.sol#138) is a local variable never initialized
+FlashSizer.sizeRepay(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256).best (src/libraries/FlashMath.sol#119) is a local variable never initialized
+FlashSizer.sensibleTarget(FlashSizer.Ctx,uint256).bestCR (src/libraries/FlashMath.sol#199) is a local variable never initialized
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#uninitialized-local-variables
+INFO:Detectors:
+Detector: unused-return
+CoilAccount._deleverFlash(uint256,uint256) (src/CoilAccount.sol#576-586) ignores return value by CoilLegacy.applyReserve(_env(),address(park),targetCR,price) (src/CoilAccount.sol#577)
+CoilAccount._reserves() (src/CoilAccount.sol#783-787) ignores return value by (r0,r1,None) = pool.getReserves() (src/CoilAccount.sol#784)
+CoilPark._draw(address,uint256) (src/CoilPark.sol#88-103) ignores return value by ISavingsVault(vault).withdraw(assets,to,address(this)) (src/CoilPark.sol#100)
+CoilLegacy.hintPair(CoilLegacy.Env,uint256,uint256) (src/libraries/CoilLegacy.sol#237-247) ignores return value by (hint) = IHintHelpers(e.hintHelpers).getApproxHint(nicr,12,uint256(uint160(address(this)))) (src/libraries/CoilLegacy.sol#241-245)
+CoilLegacy.quoteDepth(CoilLegacy.Env,address,address,uint256,uint256,uint256) (src/libraries/CoilLegacy.sol#427-461) ignores return value by (None,owed,None,fits) = FlashSizer(sizer_).solve(c) (src/libraries/CoilLegacy.sol#457)
+CoilLegacy._poolReserves(address,address) (src/libraries/CoilLegacy.sol#463-467) ignores return value by (r0,r1,None) = IPool(pool).getReserves() (src/libraries/CoilLegacy.sol#464)
+CoilLegacy._swapBtcToMusd(CoilLegacy.Env,uint256,uint256) (src/libraries/CoilLegacy.sol#733-759) ignores return value by IRouter(e.router).swapExactTokensForTokens(amount,minOut,_route(e,e.btc,e.musd),address(this),block.timestamp) (src/libraries/CoilLegacy.sol#756)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-return
+INFO:Slither:. analyzed (19 contracts with 64 detectors), 50 result(s) found

@@ -35,11 +35,13 @@ contract SizeTest is Test {
         assertGt(address(impl).code.length, 0);
         assertGt(address(factory).code.length, 0);
         assertGt(address(impl.sizer()).code.length, 0);
+        assertGt(address(impl.park()).code.length, 0);
         assertGt(legacy.code.length, 0);
 
         assertLe(address(impl).code.length, EIP_170, "CoilAccount");
         assertLe(address(factory).code.length, EIP_170, "CoilFactory");
         assertLe(address(impl.sizer()).code.length, EIP_170, "FlashSizer");
+        assertLe(address(impl.park()).code.length, EIP_170, "CoilPark");
         assertLe(legacy.code.length, EIP_170, "CoilLegacy");
     }
 

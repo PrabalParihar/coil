@@ -5,7 +5,8 @@ import { useEffect, useState } from "react";
 import { formatUnits, type Address } from "viem";
 import { usePublicClient } from "wagmi";
 import { CoilMark, shorten } from "@/components/shell";
-import { coilAccountAbi, coilFactoryAbi, factoryAddress, mezoTestnet } from "@/lib/mezo";
+import { coilAccountAbi, coilFactoryAbi, FACTORY_DEPLOY_BLOCK, factoryAddress, mezoTestnet } from "@/lib/mezo";
+import { getLogsChunked } from "@/lib/logs";
 
 const EXPLORER = "https://explorer.test.mezo.org";
 
@@ -21,7 +22,6 @@ export default function GuardPage() {
   const publicClient = usePublicClient({ chainId: mezoTestnet.id });
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [factoryNote, setFactoryNote] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -29,7 +29,7 @@ export default function GuardPage() {
       if (!publicClient || !factoryAddress) return;
       try {
         const latest = await publicClient.getBlockNumber();
-        const from = latest > 80_000n ? latest - 80_000n : 0n;
+        const from = latest > FACTORY_DEPLOY_BLOCK ? FACTORY_DEPLOY_BLOCK : latest > 0n ? 0n : latest;
         const length = await publicClient.readContract({
           address: factoryAddress,
           abi: coilFactoryAbi,
@@ -49,79 +49,70 @@ export default function GuardPage() {
         }
 
         const next: Row[] = [];
-        try {
-          const beats = await publicClient.getLogs({
-            address: factoryAddress,
-            event: coilFactoryAbi.find((item) => item.type === "event" && item.name === "Heartbeat")!,
-            fromBlock: from,
-            toBlock: latest,
+        const problems: string[] = [];
+        const heartbeat = coilFactoryAbi.find((item) => item.type === "event" && item.name === "Heartbeat")!;
+        const beats = await getLogsChunked(publicClient, {
+          address: factoryAddress,
+          event: heartbeat,
+          fromBlock: from,
+          toBlock: latest,
+        });
+        problems.push(...beats.errors);
+        for (const log of beats.logs) {
+          const keeper = (log.args as { keeper?: Address }).keeper;
+          const timestamp = (log.args as { timestamp?: bigint }).timestamp;
+          next.push({
+            kind: "heartbeat",
+            block: log.blockNumber ?? 0n,
+            tx: log.transactionHash ?? "0x",
+            detail: `Heartbeat from ${keeper ? shorten(keeper) : "keeper"}${timestamp ? ` · ${new Date(Number(timestamp) * 1000).toISOString()}` : ""}`,
           });
-          for (const log of beats) {
-            const keeper = (log.args as { keeper?: Address }).keeper;
-            const timestamp = (log.args as { timestamp?: bigint }).timestamp;
-            next.push({
-              kind: "heartbeat",
-              block: log.blockNumber ?? 0n,
-              tx: log.transactionHash ?? "0x",
-              detail: `Heartbeat from ${keeper ? shorten(keeper) : "keeper"}${timestamp ? ` · ${new Date(Number(timestamp) * 1000).toISOString()}` : ""}`,
-            });
-          }
-        } catch {
-          setFactoryNote(
-            "This factory has no heartbeat log. Wave 1 stays the default until a Wave 2 factory is deployed and NEXT_PUBLIC_COIL_FACTORY points at it.",
-          );
         }
 
         if (accounts.length > 0) {
           const guarded = coilAccountAbi.find((item) => item.type === "event" && item.name === "Guarded")!;
           const delevered = coilAccountAbi.find((item) => item.type === "event" && item.name === "Delevered")!;
-          try {
-            const rescues = await publicClient.getLogs({
-              address: accounts,
-              event: guarded,
-              fromBlock: from,
-              toBlock: latest,
+          const rescues = await getLogsChunked(publicClient, {
+            address: accounts,
+            event: guarded,
+            fromBlock: from,
+            toBlock: latest,
+          });
+          problems.push(...rescues.errors);
+          for (const log of rescues.logs) {
+            const args = log.args as { caller?: Address; crBefore?: bigint; crAfter?: bigint; tip?: bigint };
+            const tip = args.tip ?? 0n;
+            next.push({
+              kind: "rescue",
+              block: log.blockNumber ?? 0n,
+              tx: log.transactionHash ?? "0x",
+              account: log.address,
+              detail: `${args.caller ? shorten(args.caller) : "caller"} raised ${pct(args.crBefore)} → ${pct(args.crAfter)} · tip ${formatUnits(tip, 18)} MEZO`,
             });
-            for (const log of rescues) {
-              const args = log.args as { caller?: Address; crBefore?: bigint; crAfter?: bigint; tip?: bigint };
-              const tip = args.tip ?? 0n;
-              next.push({
-                kind: "rescue",
-                block: log.blockNumber ?? 0n,
-                tx: log.transactionHash ?? "0x",
-                account: log.address,
-                detail: `${args.caller ? shorten(args.caller) : "caller"} raised ${pct(args.crBefore)} → ${pct(args.crAfter)} · tip ${formatUnits(tip, 18)} MEZO`,
-              });
-            }
-          } catch {
-            // Wave 1 clones do not emit Guarded.
           }
-          try {
-            const moves = await publicClient.getLogs({
-              address: accounts,
-              event: delevered,
-              fromBlock: from,
-              toBlock: latest,
+          const moves = await getLogsChunked(publicClient, {
+            address: accounts,
+            event: delevered,
+            fromBlock: from,
+            toBlock: latest,
+          });
+          problems.push(...moves.errors);
+          for (const log of moves.logs) {
+            const args = log.args as { cr?: bigint; targetCR?: bigint; debt?: bigint };
+            next.push({
+              kind: "delever",
+              block: log.blockNumber ?? 0n,
+              tx: log.transactionHash ?? "0x",
+              account: log.address,
+              detail: `De-lever toward ${pct(args.targetCR)}, landed at ${pct(args.cr)}`,
             });
-            for (const log of moves) {
-              const args = log.args as { cr?: bigint; targetCR?: bigint; debt?: bigint };
-              next.push({
-                kind: "delever",
-                block: log.blockNumber ?? 0n,
-                tx: log.transactionHash ?? "0x",
-                account: log.address,
-                detail: `De-lever toward ${pct(args.targetCR)}, landed at ${pct(args.cr)}`,
-              });
-            }
-          } catch {
-            // Older clones may use a different event shape. Skip rather than fail the page.
           }
         }
 
         next.sort((a, b) => (a.block < b.block ? 1 : -1));
         if (!cancelled) {
           setRows(next.slice(0, 80));
-          setError(null);
+          setError(problems.length > 0 ? problems[0] : null);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Could not read Mezo.");
@@ -161,16 +152,16 @@ export default function GuardPage() {
             {factoryAddress}
           </a>
         </p>
-        {factoryNote ? <p className="mt-4 text-sm text-muted-foreground">{factoryNote}</p> : null}
         {error ? (
           <p className="mt-6 text-sm text-danger" role="alert">
             {error}
           </p>
-        ) : rows === null ? (
-          <p className="mt-8 text-sm text-muted-foreground">Reading Mezo testnet…</p>
+        ) : null}
+        {rows === null ? (
+          error ? null : <p className="mt-8 text-sm text-muted-foreground">Reading Mezo testnet…</p>
         ) : rows.length === 0 ? (
           <p className="mt-8 text-sm text-muted-foreground">
-            No rescues in the recent window. A Wave 2 factory emits <span className="font-mono">Guarded</span> and <span className="font-mono">Heartbeat</span>. The Wave 1 factory does not.
+            No rescues or heartbeats since block {FACTORY_DEPLOY_BLOCK.toString()}. A Wave 2 factory emits <span className="font-mono">Guarded</span> and <span className="font-mono">Heartbeat</span>.
           </p>
         ) : (
           <ol className="mt-8 divide-y divide-border">

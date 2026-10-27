@@ -27,6 +27,9 @@ The owner can always unwind and close.
 | Invariant: handler calls (`guard`, `deleverTo`, `flashDeleverTo`, and forbidden calls) never lower the ratio at a constant oracle, never send BTC or MUSD to the caller, and conserve MEZO | `invariant_keeperOnlyReducesRisk` |
 | A spoofed pool callback reverts | `test_hookRejectsSpoof` |
 | Tight slippage reverts instead of opening under the quote | `test_tightSlippageReverts` |
+| Pool about 1.4% under the oracle: `guard()` reverts at 50 bps and succeeds at the 200 bps rescue default; 301 bps reverts; a stranger cannot set the cap | `test_guardSucceedsWhenPoolIsBelowOracle` |
+
+Rescue and close use `rescueSlippageBps` (default 200, hard cap 300). Only the owner can set it. The check still reverts `Slippage` when the BTC sold is worse than `fair * (1 + rescueSlippageBps)` against `PriceFeed`, so a keeper cannot push a rescue through a pool past that cap. Open uses `slippageBps` and is unchanged.
 
 `position()` keeps the Wave 1 tuple so existing decoders still work.
 

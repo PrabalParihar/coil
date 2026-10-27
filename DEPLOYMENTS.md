@@ -4,7 +4,7 @@ Chain **31611** (matsnet). RPC `https://rpc.test.mezo.org`. Explorer `https://ex
 
 Throwaway deployer, testnet only: `0xFc58045fFB104D983de0e78F748Ab8e9cb6Bfc61`. The private key is in gitignored `.env` and is not in this repository. Do not reuse it on mainnet.
 
-The factory the frontend and keeper use is **`0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e`**.
+The factory the frontend and keeper use is the Wave 2 factory **`0x6A38f560cF8612cc81cF966831890DBb310e31F7`**. Live app: https://coil.up.railway.app. The Wave 1 factory `0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e` is still on chain and is not what the app defaults to.
 
 `eth_getTransactionReceipt` on this RPC sometimes returns null for a transaction that is already in a block. Hashes below were read back out of their blocks. Gas figures that came back as a round half of the gas limit are omitted. This RPC has done that.
 
@@ -17,7 +17,7 @@ The factory the frontend and keeper use is **`0xE29fAf17ed44B43c94D2Ff0e43E289aE
 
 The Wave 1 contracts do not spend MEZO. Wave 2 pays a keeper tip in MEZO. Gas on this chain is hundreds of wei.
 
-## Current factory
+## Wave 1 factory (not the app default)
 
 Deployed after the one-sale de-lever fix. A sale is skipped when the repay room cannot raise the collateral ratio, including when only a few wei sit above the 1,800 MUSD floor.
 
@@ -141,13 +141,42 @@ BTC at `0x7b7C000000000000000000000000000000000000` has no `deposit()` or `withd
 
 `forge create` on this RPC tries `http://localhost:8545`. The Wave 1 contracts were deployed with `cast send --create`. The next factory has to be `forge script script/Deploy.s.sol --rpc-url https://rpc.test.mezo.org --broadcast`. That one broadcast also deploys and links `CoilLegacy`. Raw creation bytecode is not linked.
 
-## Wave 2 factory
+## Wave 2 factory (live)
 
-Not deployed. The first broadcast reverted in `eth_estimateGas` with `CoilAccount` at 33,413 bytes, over EIP-170's 24,576. Clones of `0x1bc9Ba4c62D62296aba1441fBB16BC9651a460Ce` are not upgradeable. Deploy a new implementation and factory from `script/Deploy.s.sol` (it links `CoilLegacy`), verify with `script/verify.sh`, then set `NEXT_PUBLIC_COIL_FACTORY` and `COIL_FACTORY`.
+Deployed 27 October 2026, blocks **16400159–16400160**, with `forge script script/Deploy.s.sol --broadcast`. Deployer `0xf74E746a8d7A46A8b0f745C6d5944Ee672c1a3AF`. Keeper `0x1D2621480011C44693a47801C1158E70b25b4B4F`. The private keys are not in this repository.
 
-`CoilLegacy` holds the router loop, sale unwind, quotes, hints, and sweep, and `CoilAccount` reaches it with `DELEGATECALL`. That is not a precompile call. `precompileBudget()` is still on the account. `forge build --sizes` is the size gate.
+An earlier broadcast reverted in `eth_estimateGas` because `CoilAccount` was 33,413 bytes, over EIP-170's 24,576. The deployed implementation is 23,101 bytes. `CoilLegacy` holds the router loop, sale unwind, quotes, hints, and sweep. `CoilAccount` reaches it with `DELEGATECALL`, which is not a precompile call. `precompileBudget()` is still on the account. `FlashSizer` is created in the implementation constructor (nonce 1), so it has no separate transaction.
 
-What the new bytecode adds, measured on a fork of this RPC rather than a new broadcast:
+| Step | Address | Hash | Block |
+| --- | --- | --- | --- |
+| `CoilLegacy` | `0xdb2e13c3199C28E69f6EaF39fb6df05900Dd7969` | [`0x6baa682e4972ad287a493c4b87d40127b45efda7f26476cdbae42ab03a9bc4d6`](https://explorer.test.mezo.org/tx/0x6baa682e4972ad287a493c4b87d40127b45efda7f26476cdbae42ab03a9bc4d6) | 16400159 |
+| `CoilAccount` implementation | `0x522DED4F0cF62cfc12456A28FbF82b044178564b` | [`0x5e32f0d0a591f768907fc3bc9e5d3e6623f522e0871f5616f0aaf3e1dba3ec5d`](https://explorer.test.mezo.org/tx/0x5e32f0d0a591f768907fc3bc9e5d3e6623f522e0871f5616f0aaf3e1dba3ec5d) | 16400159 |
+| `FlashSizer` | `0x3d1006Ec18E64238aFD2a176b438F40FBfa6F326` | created inside the implementation constructor | 16400159 |
+| `CoilFactory` | `0x6A38f560cF8612cc81cF966831890DBb310e31F7` | [`0xaaaae8e3f0f8390f7595f7b2629159fa50893a219e652ba7e301367d76272f6b`](https://explorer.test.mezo.org/tx/0xaaaae8e3f0f8390f7595f7b2629159fa50893a219e652ba7e301367d76272f6b) | 16400160 |
+
+`script/verify.sh` was run. Blockscout returned “Fail - Unable to verify” / “Pending in queue”. The local creation bytecode of this deployed build matched the on-chain factory. Wave 1 is also unverified. Do not treat these addresses as verified source.
+
+### End-to-end, 27 October 2026
+
+User `0x52D21D3FE99C6CF66fBa07a8342015FEB9a57756`. Clone `0xEeE34fbAD36f46d648453914d658AbE314cA710c`. The trove was closed at the end.
+
+| Step | Result | Hash |
+| --- | --- | --- |
+| `createAccount` | clone above | [`0x21e4960535628d16d67b02a833d814d82ede3957e94ea8130421b4970b313d49`](https://explorer.test.mezo.org/tx/0x21e4960535628d16d67b02a833d814d82ede3957e94ea8130421b4970b313d49) |
+| `flashLoop(133.33%, 50 bps)` + 0.015 BTC | 0.05183 BTC collateral, 3,100.8 MUSD debt, CR 133.33% | [`0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef`](https://explorer.test.mezo.org/tx/0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef) |
+| `approve` MEZO | | [`0xd7c8df63a14100dbfc4b34611543417b746c3d1d08477734e40c871a398b7cb5`](https://explorer.test.mezo.org/tx/0xd7c8df63a14100dbfc4b34611543417b746c3d1d08477734e40c871a398b7cb5) |
+| `fundTips` 5 MEZO | | [`0xdc1ca051be38054aa0343ae074340e6b1920ee8a4fcb8b6c3a44b508615dc7a4`](https://explorer.test.mezo.org/tx/0xdc1ca051be38054aa0343ae074340e6b1920ee8a4fcb8b6c3a44b508615dc7a4) |
+| `setGuard` floor 140%, target 150%, tip 1 MEZO | | [`0x058ccf26ff27c8a5d69a3232943de41a74e382be450014d9fb08cdad14233d20`](https://explorer.test.mezo.org/tx/0x058ccf26ff27c8a5d69a3232943de41a74e382be450014d9fb08cdad14233d20) |
+| `setSlippage(200)` | required; keeper `guard()` had reverted `Slippage()` (`0x7dd37f70`) at 50 bps | [`0xf0db4179b8d6101e3fe7df63bf2ea2dfa55ef6147fafa06c0854468380ad25fb`](https://explorer.test.mezo.org/tx/0xf0db4179b8d6101e3fe7df63bf2ea2dfa55ef6147fafa06c0854468380ad25fb) |
+| keeper `guard()` | CR 133.30% → 150.00%, 1 MEZO tip, block 16401501 | [`0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a`](https://explorer.test.mezo.org/tx/0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a) |
+| `flashUnwind` | trove closed, about 0.014934 BTC returned, round-trip cost about 0.000066 BTC | [`0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2`](https://explorer.test.mezo.org/tx/0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2) |
+| `withdrawTips` | | [`0x7304d1c9b4655dee674128adda78b5f59b5c2d66ccee448c4b3433378f324e0e`](https://explorer.test.mezo.org/tx/0x7304d1c9b4655dee674128adda78b5f59b5c2d66ccee448c4b3433378f324e0e) |
+
+The pool price was about 78,646 MUSD per BTC and the oracle about 79,744, roughly 1.4% under the oracle. Buying BTC on the open is the favorable direction, so 50 bps was enough to open. Selling BTC to repay was not.
+
+### Next factory
+
+This branch adds `rescueSlippageBps` (default 200 bps, owner-set, hard cap 300) and uses it for `guard`, `flashUnwind`, and `flashDeleverTo`. Clones of `0x522DED4F0cF62cfc12456A28FbF82b044178564b` are not upgradeable, so the split needs a new implementation and a new factory from the same `script/Deploy.s.sol`. That script's behaviour is unchanged. Until that broadcast, the live accounts still share one slippage, and the app's slippage control calls `setSlippage` on them.
 
 | Path | Precompile calls | One transaction |
 | --- | --- | --- |
@@ -156,4 +185,6 @@ What the new bytecode adds, measured on a fork of this RPC rather than a new bro
 | `flashDeleverTo` | 10 | whole raise |
 | `guard()` plus MEZO tip | 12 | rescue, tip only if the ratio rose |
 
-The testnet MUSD/BTC pool is `0xd16A5Df82120ED8D626a1a15232bFcE2366d6AA9` (volatile, fee 4 bps, MUSD is token0). MEZO is `0x7B7c000000000000000000000000000000000001`. Faucet: https://faucet.test.mezo.org. A captcha can block an unattended agent, so the deploy commands are in the README and were not broadcast from this branch.
+The rescue slippage check is local arithmetic on the oracle price. It does not add a precompile call.
+
+The testnet MUSD/BTC pool is `0xd16A5Df82120ED8D626a1a15232bFcE2366d6AA9` (volatile, fee 4 bps, MUSD is token0). MEZO is `0x7B7c000000000000000000000000000000000001`. Faucet: https://faucet.test.mezo.org.

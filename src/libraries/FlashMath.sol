@@ -167,6 +167,60 @@ contract FlashSizer {
         return cr;
     }
 
+    /// @notice Price impact of selling `amountIn` of the input reserve, in bps of the spot output.
+    function impactBps(uint256 reserveIn, uint256 reserveOut, uint256 amountIn_, uint256 feeBps)
+        public
+        pure
+        returns (uint256)
+    {
+        if (amountIn_ == 0 || reserveIn == 0 || reserveOut == 0 || feeBps >= BPS) return 0;
+        uint256 spot = amountIn_ * reserveOut / reserveIn;
+        if (spot == 0) return BPS;
+        uint256 fee = amountIn_ * feeBps / BPS;
+        if (fee >= amountIn_) return BPS;
+        uint256 kept = amountIn_ - fee;
+        uint256 outAmt = reserveOut * kept / (reserveIn + kept);
+        if (outAmt >= spot) return 0;
+        return (spot - outAmt) * BPS / spot;
+    }
+
+    /// @notice Highest leverage whose flash sale stays within `maxImpactBps`.
+    ///         Tries 4×, 3×, 2×, 1.5×, then 1.33×. When none fit under the cap,
+    ///         `capped` is false and the return is the gentlest size that still opens
+    ///         (so the UI can show that impact instead of pretending 4× is fine).
+    ///         A zero `targetCR` means no leverage clears the debt floor.
+    function sensibleTarget(Ctx memory c, uint256 maxImpactBps)
+        public
+        pure
+        returns (uint256 targetCR, uint256 impact, uint256 leverageWad, bool capped)
+    {
+        uint256[5] memory targets = [uint256(4e18) / 3, 1.5e18, 2e18, 3e18, 4e18];
+        uint256 bestImpact = type(uint256).max;
+        uint256 bestCR;
+        for (uint256 i; i < targets.length; ++i) {
+            c.targetCR = targets[i];
+            (, uint256 owed,, bool fitsOk) = solve(c);
+            if (!fitsOk) continue;
+            uint256 bps = impactBps(c.reserveMusd, c.reserveBtc, owed, c.fee);
+            if (bps < bestImpact) {
+                bestImpact = bps;
+                bestCR = targets[i];
+            }
+            if (bps <= maxImpactBps) {
+                targetCR = targets[i];
+                impact = bps;
+                capped = true;
+                break;
+            }
+        }
+        if (!capped) {
+            targetCR = bestCR;
+            impact = bestImpact;
+        }
+        if (targetCR <= WAD) return (targetCR, impact, 0, capped);
+        leverageWad = targetCR * WAD / (targetCR - WAD);
+    }
+
     function _debt(uint256 debt, uint256 amount, uint256 rate, uint256 gasComp) private pure returns (uint256) {
         uint256 fee = amount * rate / WAD;
         return (debt == 0 ? gasComp : debt) + amount + fee;
