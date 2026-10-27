@@ -154,25 +154,27 @@ anvil --fork-url https://rpc.test.mezo.org --hardfork shanghai --port 18545
 
 ### Deploy
 
-`forge create` against `https://rpc.test.mezo.org` tries `http://localhost:8545`. The live deploy used `forge inspect` bytecode and `cast send --create`. Copy `.env.example`. Put a testnet key in `PRIVATE_KEY`. Do not commit it.
+Copy `.env.example`. Put a testnet key in `PRIVATE_KEY`. Do not commit it. Mezo testnet enforces EIP-170 (24,576 bytes). `CoilAccount` calls `CoilLegacy` by delegatecall so the implementation fits. Foundry deploys and links that library inside the one broadcast below. `cast send --create` of `forge inspect` bytecode does not link it, so use `forge script`.
 
 ```bash
-# local fork
-PRIVATE_KEY=0x… forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:18545 --broadcast
+# local fork, not a Mezo broadcast
+anvil --fork-url https://rpc.test.mezo.org --hardfork shanghai --port 18545
+PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+  forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:18545 --broadcast
 ```
 
-The script deploys `CoilAccount` with the testnet addresses in `src/MezoAddresses.sol`, including the MUSD/BTC pool, then `CoilFactory(implementation, deployer)`. `CoilAccount` deploys its own `FlashSizer` in the constructor.
+The script needs only `PRIVATE_KEY`. It deploys `CoilAccount` with the testnet addresses in `src/MezoAddresses.sol`, including the MUSD/BTC pool, then `CoilFactory(implementation, deployer)`. Foundry deploys `CoilLegacy` in that same broadcast and links it. `CoilAccount`'s constructor deploys `FlashSizer`. The log lines are `legacy`, `sizer`, `implementation`, and `factory`.
 
-Against the public RPC, `forge script` is the path that takes `--rpc-url`. `forge create` on this RPC has been seen talking to `localhost:8545` instead. A live broadcast also works as `cast send --create` with the bytecode from `forge inspect`. Fund the deployer from [faucet.test.mezo.org](https://faucet.test.mezo.org) (the faucet can require a captcha). Then:
+`forge create` against `https://rpc.test.mezo.org` has been seen talking to `http://localhost:8545`. `forge script` is the path that takes `--rpc-url`. Fund the deployer from [faucet.test.mezo.org](https://faucet.test.mezo.org) (the faucet can require a captcha). Then:
 
 ```bash
 # copy .env.example to .env and set PRIVATE_KEY. Do not commit .env.
 set -a && source .env && set +a
 forge script script/Deploy.s.sol --rpc-url "$MEZO_TESTNET_RPC" --broadcast
-OWNER=0xYourDeployer IMPL=0x… FACTORY=0x… ./script/verify.sh
+LEGACY=0x… SIZER=0x… IMPL=0x… FACTORY=0x… OWNER=0xYourDeployer ./script/verify.sh
 ```
 
-`script/verify.sh` submits the implementation and the factory to Blockscout at `https://api.explorer.test.mezo.org/api`. After the factory exists, set `NEXT_PUBLIC_COIL_FACTORY` and `COIL_FACTORY` to it and redeploy the web app and the keeper. The Wave 1 clones stay on the old factory. They are not upgraded.
+`script/verify.sh` submits `CoilLegacy`, `FlashSizer`, the implementation (with `--libraries`), and the factory to Blockscout at `https://api.explorer.test.mezo.org/api`. After the factory exists, set `NEXT_PUBLIC_COIL_FACTORY` and `COIL_FACTORY` to it and redeploy the web app and the keeper. The Wave 1 clones stay on the old factory. They are not upgraded. `forge build --sizes` fails the build when a runtime exceeds 24,576 bytes, and CI dry-runs the script on a local fork.
 
 ### Keeper
 

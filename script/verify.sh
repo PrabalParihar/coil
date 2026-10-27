@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Verify Coil Labs contracts on the Mezo testnet Blockscout explorer.
 # Usage:
-#   IMPL=0x… FACTORY=0x… ./script/verify.sh
-# Requires Foundry. No private key.
+#   LEGACY=0x… SIZER=0x… IMPL=0x… FACTORY=0x… OWNER=0x… ./script/verify.sh
+# Addresses are the ones script/Deploy.s.sol prints (legacy, sizer, implementation, factory).
+# Requires Foundry. No private key. One forge script broadcast is still the deploy.
 set -euo pipefail
 
+: "${LEGACY:?Set LEGACY to the CoilLegacy address printed by the deploy script}"
+: "${SIZER:?Set SIZER to the FlashSizer address printed by the deploy script}"
 : "${IMPL:?Set IMPL to the CoilAccount implementation address}"
 : "${FACTORY:?Set FACTORY to the CoilFactory address}"
 
@@ -36,11 +39,25 @@ fi
 
 FACTORY_ARGS="$(cast abi-encode "constructor(address,address)" "$IMPL" "$OWNER")"
 
+# Library first. CoilAccount's bytecode points at this address.
+forge verify-contract "$LEGACY" src/libraries/CoilLegacy.sol:CoilLegacy \
+  --chain "$CHAIN" \
+  --verifier blockscout \
+  --verifier-url "$VERIFIER_URL" \
+  --watch
+
+forge verify-contract "$SIZER" src/libraries/FlashMath.sol:FlashSizer \
+  --chain "$CHAIN" \
+  --verifier blockscout \
+  --verifier-url "$VERIFIER_URL" \
+  --watch
+
 forge verify-contract "$IMPL" src/CoilAccount.sol:CoilAccount \
   --chain "$CHAIN" \
   --verifier blockscout \
   --verifier-url "$VERIFIER_URL" \
   --constructor-args "$IMPL_ARGS" \
+  --libraries "src/libraries/CoilLegacy.sol:CoilLegacy:${LEGACY}" \
   --watch
 
 forge verify-contract "$FACTORY" src/CoilFactory.sol:CoilFactory \

@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  foundry:
+    name: size, tests, deploy dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      # Exits non-zero when any contract runtime exceeds EIP-170 (24,576 bytes).
+      - name: contract sizes
+        run: forge build --sizes
+
+      - name: tests
+        run: forge test
+
+      # Broadcasts only to a local anvil fork. The anvil key is the public
+      # default account and is not a deployer key. Do not point this at Mezo.
+      - name: deploy dry-run
+        run: |
+          set -euo pipefail
+          anvil --fork-url https://rpc.test.mezo.org --hardfork shanghai --port 18545 > /tmp/anvil.log 2>&1 &
+          ANVIL_PID=$!
+          trap 'kill "$ANVIL_PID" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 60); do
+            if cast block-number --rpc-url http://127.0.0.1:18545 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          cast block-number --rpc-url http://127.0.0.1:18545
+          PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+            forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:18545 --broadcast

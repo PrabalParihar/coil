@@ -139,11 +139,13 @@ A Mezo transaction may call native precompiles **20 times**. Call 21 reverts wit
 
 BTC at `0x7b7C000000000000000000000000000000000000` has no `deposit()` or `withdraw()`. The router’s transfer credits native BTC, and `balanceOf` matches `address.balance`. The MUSD→BTC path returns that native gain and does not also call `balanceOf`. The reverse path skips `balanceOf` when the codehash is the live mirror. Fork tests etch a WETH-style token at the BTC address and still wrap.
 
-`forge create` on this RPC tries `http://localhost:8545`. Contracts were deployed with `cast send --create`. `forge script script/Deploy.s.sol --rpc-url https://rpc.test.mezo.org --broadcast` is the path for the next factory.
+`forge create` on this RPC tries `http://localhost:8545`. The Wave 1 contracts were deployed with `cast send --create`. The next factory has to be `forge script script/Deploy.s.sol --rpc-url https://rpc.test.mezo.org --broadcast`. That one broadcast also deploys and links `CoilLegacy`. Raw creation bytecode is not linked.
 
 ## Wave 2 factory
 
-Not deployed. Clones of `0x1bc9Ba4c62D62296aba1441fBB16BC9651a460Ce` are not upgradeable. Deploy a new implementation and factory from `script/Deploy.s.sol`, verify with `script/verify.sh`, then set `NEXT_PUBLIC_COIL_FACTORY` and `COIL_FACTORY`.
+Not deployed. The first broadcast reverted in `eth_estimateGas` with `CoilAccount` at 33,413 bytes, over EIP-170's 24,576. Clones of `0x1bc9Ba4c62D62296aba1441fBB16BC9651a460Ce` are not upgradeable. Deploy a new implementation and factory from `script/Deploy.s.sol` (it links `CoilLegacy`), verify with `script/verify.sh`, then set `NEXT_PUBLIC_COIL_FACTORY` and `COIL_FACTORY`.
+
+`CoilLegacy` holds the router loop, sale unwind, quotes, hints, and sweep, and `CoilAccount` reaches it with `DELEGATECALL`. That is not a precompile call. `precompileBudget()` is still on the account. `forge build --sizes` is the size gate.
 
 What the new bytecode adds, measured on a fork of this RPC rather than a new broadcast:
 
