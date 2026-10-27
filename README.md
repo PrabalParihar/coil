@@ -8,7 +8,7 @@ Built by [Prabal Pratap Singh](https://prabal.pro) ([GitHub](https://github.com/
 
 **Live app:** [coil.up.railway.app](https://coil.up.railway.app) (Mezo testnet, chain 31611). The product name is Coil Labs. A different Wave 1 project also used the name Coil.
 
-Clones are EIP-1167 and are not upgradeable. The live app and keeper use the Wave 2 factory `0x2218D33d2f9279A4266b49dB572F5b1343d09De5` (block 16407578). This branch changes close and partial-rescue behaviour, so that factory does not pick the change up. A new implementation and factory are required. `NEXT_PUBLIC_COIL_FACTORY` selects the factory. The code default is the current live factory. Nothing in this branch is deployed to Mezo mainnet.
+Clones are EIP-1167 and are not upgradeable. The live app and keeper use factory `0xff3335576f998EE872596d4EB7ABECb71a0D5BC8` (block 16408314). This branch makes an empty-park `guard()` return false instead of reverting `Slippage()`, so that factory does not pick the change up. A new implementation and factory are required. `NEXT_PUBLIC_COIL_FACTORY` selects the factory. The code default is the current live factory. Nothing in this branch is deployed to Mezo mainnet.
 
 ## Problem
 
@@ -73,17 +73,17 @@ Documented budgets, from `precompileBudget()`: flash loop 7, unwind 8, de-lever 
 
 ## Live testnet (Wave 2 factory)
 
-Chain 31611, RPC `https://rpc.test.mezo.org`, explorer `https://explorer.test.mezo.org`. Deployed 27 October 2026 at block 16407578. The app at [coil.up.railway.app](https://coil.up.railway.app) and the Railway keeper should use this factory. Blockscout verification is still outstanding. This branch's close fixes are not in that bytecode. A new factory is required before they are live. No storage variables and no constructor arguments change; clones of the factory below are not upgraded.
+Chain 31611, RPC `https://rpc.test.mezo.org`, explorer `https://explorer.test.mezo.org`. Deployed 27 October 2026 at block 16408314. The app at [coil.up.railway.app](https://coil.up.railway.app) and the Railway keeper should use this factory. Blockscout verification is still outstanding. Partial rescue, full rescue, and `flashUnwind` at the default 200 bps were exercised on it while the pool sat about 252 bps off the oracle. This branch's quiet `guard()` is not in that bytecode. A new factory is required before it is live. No storage variables and no constructor arguments change; clones of the factory below are not upgraded.
 
 | | Address |
 | --- | --- |
-| Factory (frontend and keeper) | [`0x2218D33d2f9279A4266b49dB572F5b1343d09De5`](https://explorer.test.mezo.org/address/0x2218D33d2f9279A4266b49dB572F5b1343d09De5) |
-| CoilAccount implementation | [`0x31D5964A2bc4CA86c0807Ea5e95882fF72693076`](https://explorer.test.mezo.org/address/0x31D5964A2bc4CA86c0807Ea5e95882fF72693076) |
-| CoilLegacy | [`0xb75d1F6Fe5D9Ab999CbcdDE99589976e66B25eC4`](https://explorer.test.mezo.org/address/0xb75d1F6Fe5D9Ab999CbcdDE99589976e66B25eC4) |
-| FlashSizer | [`0x6359EF81A7F535b04E0Abfb28FA4565951a5F2fd`](https://explorer.test.mezo.org/address/0x6359EF81A7F535b04E0Abfb28FA4565951a5F2fd) |
-| CoilPark | [`0x87b2E191232DD09510dE1885198375F6450dd5D8`](https://explorer.test.mezo.org/address/0x87b2E191232DD09510dE1885198375F6450dd5D8) |
+| Factory (frontend and keeper) | [`0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`](https://explorer.test.mezo.org/address/0xff3335576f998EE872596d4EB7ABECb71a0D5BC8) |
+| CoilAccount implementation | [`0xD4495f969995B3e48998573B5ADC6F3106672B80`](https://explorer.test.mezo.org/address/0xD4495f969995B3e48998573B5ADC6F3106672B80) |
+| CoilExit | [`0x43D76243f5E5383c37557a364647F16DfBe8D03a`](https://explorer.test.mezo.org/address/0x43D76243f5E5383c37557a364647F16DfBe8D03a) |
 | MUSD | `0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503` |
 | MUSD/BTC pool | `0xd16A5Df82120ED8D626a1a15232bFcE2366d6AA9` |
+
+The previous factory was [`0x2218D33d2f9279A4266b49dB572F5b1343d09De5`](https://explorer.test.mezo.org/address/0x2218D33d2f9279A4266b49dB572F5b1343d09De5) at block 16407578 (implementation `0x31D5964A2bc4CA86c0807Ea5e95882fF72693076`, legacy `0xb75d1F6Fe5D9Ab999CbcdDE99589976e66B25eC4`, sizer `0x6359EF81A7F535b04E0Abfb28FA4565951a5F2fd`, park `0x87b2E191232DD09510dE1885198375F6450dd5D8`).
 
 The previous Wave 2 factory was [`0x6A38f560cF8612cc81cF966831890DBb310e31F7`](https://explorer.test.mezo.org/address/0x6A38f560cF8612cc81cF966831890DBb310e31F7) in blocks 16400159–16400160. The hashes below are that deploy and its end-to-end run. The full log is in [DEPLOYMENTS.md](DEPLOYMENTS.md).
 
@@ -96,7 +96,7 @@ The previous Wave 2 factory was [`0x6A38f560cF8612cc81cF966831890DBb310e31F7`](h
 | Keeper `guard()`, 133.30% → 150.00%, 1 MEZO | [`0xcb90da85…`](https://explorer.test.mezo.org/tx/0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a) |
 | `flashUnwind`, trove closed | [`0x296bb52c…`](https://explorer.test.mezo.org/tx/0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2) |
 
-That rescue needed `setSlippage(200)` first ([`0xf0db4179…`](https://explorer.test.mezo.org/tx/0xf0db4179b8d6101e3fe7df63bf2ea2dfa55ef6147fafa06c0854468380ad25fb)) because `guard()` reused the 0.5% open slippage while the pool sat about 1.4% under the oracle. The live factory splits that cap. Close on the live factory still reverts `Slippage` past it; this branch removes that dead end for the owner.
+That rescue needed `setSlippage(200)` first ([`0xf0db4179…`](https://explorer.test.mezo.org/tx/0xf0db4179b8d6101e3fe7df63bf2ea2dfa55ef6147fafa06c0854468380ad25fb)) because `guard()` reused the 0.5% open slippage while the pool sat about 1.4% under the oracle. The live factory splits that cap. Owner close spends parked MUSD first and is not stuck on it.
 
 ### Wave 1 factory
 
@@ -231,14 +231,14 @@ LEGACY=0x… EXIT=0x… SIZER=0x… PARK=0x… IMPL=0x… FACTORY=0x… OWNER=0x
 cd keeper
 npm install
 # dry run against the live Wave 2 factory, no key, no Telegram
-COIL_FACTORY=0x2218D33d2f9279A4266b49dB572F5b1343d09De5 npm start
+COIL_FACTORY=0xff3335576f998EE872596d4EB7ABECb71a0D5BC8 npm start
 # poll until you stop it
-COIL_FACTORY=0x2218D33d2f9279A4266b49dB572F5b1343d09De5 npm start -- --watch
+COIL_FACTORY=0xff3335576f998EE872596d4EB7ABECb71a0D5BC8 npm start -- --watch
 # send guard()
 COIL_FACTORY=0x… KEEPER_PRIVATE_KEY=0x… npm start -- --execute
 ```
 
-Railway: the keeper service is already running against the live Wave 2 factory. From `keeper/`, the Dockerfile and `railway.json` are the service shape. Set `COIL_FACTORY`, `MEZO_TESTNET_RPC`, `KEEPER_PRIVATE_KEY`, `COIL_EXECUTE=true`, and `KEEPER_WATCH=true`. Do not put the key in the repo. A failed `guard()` simulation logs the decoded revert, for example `Slippage()`. The Wave 1 “owner/keeper only” line is printed only when the revert is `NotKeeper()`. Rebuilding the Railway service is what picks that logging up. On the Wave 1 factory, `guard()` is still the owner or the factory keeper.
+Railway: the keeper service is already running against the live factory. From `keeper/`, the Dockerfile and `railway.json` are the service shape. Set `COIL_FACTORY`, `MEZO_TESTNET_RPC`, `KEEPER_PRIVATE_KEY`, `COIL_EXECUTE=true`, and `KEEPER_WATCH=true`. Do not put the key in the repo. A `guard()` simulation that returns false is nothing to do: the keeper does not send a transaction and does not alert. It skips that account until the collateral ratio changes or `KEEPER_QUIET_MS` elapses (default 5 minutes). A reverted simulation still logs the decoded revert and sends one alert. The Wave 1 “owner/keeper only” line is printed only when the revert is `NotKeeper()`. Rebuilding the Railway service is what picks that up. On the Wave 1 factory, `guard()` is still the owner or the factory keeper.
 
 Telegram is optional and off when either variable is empty. Set both on Railway later. Do not commit the token.
 
@@ -258,7 +258,7 @@ npm run dev          # http://127.0.0.1:43123
 npm run build        # static export in web/out
 ```
 
-The page defaults to factory `0x2218D33d2f9279A4266b49dB572F5b1343d09De5`. Override with `NEXT_PUBLIC_COIL_FACTORY`. Open slippage defaults to 1%. Rescue uses a separate 2% cap (`rescueSlippageBps`, hard cap 3%). Owner close spends parked MUSD first and is not stuck on that cap. The desk shows the live pool-versus-oracle gap and `setPegBounds` (open cap up to 500 bps) when the account exposes it. `/guard` and `/stats` read logs from block 16407578 in chunks of 9,999 blocks and show an RPC error instead of an empty page.
+The page defaults to factory `0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`. Override with `NEXT_PUBLIC_COIL_FACTORY`. Open slippage defaults to 1%. Rescue uses a separate 2% cap (`rescueSlippageBps`, hard cap 3%). Owner close spends parked MUSD first and is not stuck on that cap. The desk shows the live pool-versus-oracle gap and `setPegBounds` (open cap up to 500 bps) when the account exposes it. `/guard` and `/stats` read logs from block 16408314 in chunks of 9,999 blocks and show an RPC error instead of an empty page.
 
 Wallet connect uses the Unisat, OKX, and Xverse connectors from `@mezo-org/orangekit`, which is what Mezo Passport 0.17.2 ships, plus an injected wallet and WalletConnect. Passport itself does not compile: `dist/src/constants.js` imports `mezoTestnet` from `@mezo-org/orangekit`, and orangekit 1.0.0-beta.40 (the version Passport depends on) does not re-export it. The desk still offers those Bitcoin wallets next to EVM wallets.
 
@@ -277,7 +277,7 @@ Deployed on Mezo testnet and exercised end to end. See the table above and [DEPL
 - Keeper on Railway, optional Telegram, and a public `/guard` log.
 - OrangeKit wallet connect, a redemption-rank preview, `script/verify.sh`, and the Coil Labs name.
 
-Live on factory `0x2218D33d2f9279A4266b49dB572F5b1343d09De5`, and not changed by the close fixes except where noted:
+Live on factory `0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`:
 
 - `rescueSlippageBps`, owner-set, default 2%, hard cap 3%. `guard` and `flashDeleverTo` use it. Open keeps `slippageBps`.
 - MUSD reserve in `CoilPark`. `guard` repays from it before selling BTC. Optional ERC-4626 adapter, no sMUSD address configured.
@@ -287,8 +287,7 @@ Live on factory `0x2218D33d2f9279A4266b49dB572F5b1343d09De5`, and not changed by
 
 This branch, not on that factory until a new deploy:
 
-- Owner `unwind` / `flashUnwind` spends parked MUSD first. If the oracle cap would reject the BTC sale, the flash still runs when the BTC owed is under the collateral. A full close returns leftover park MUSD to the owner.
-- If a rescue's BTC sale would fail the oracle cap, `guard` keeps the reserve repayment and emits `PartialRescue` instead of reverting the whole call.
+- When a rescue spends no parked MUSD and the oracle cap blocks the BTC sale, `guard` returns false and emits `RescueBlocked`. It does not revert `Slippage`. The keeper backs off instead of paging every poll.
 
 No storage layout change and no constructor change. The new bytecode still needs a new factory because clones are not upgradeable. `script/Deploy.s.sol` is still one broadcast.
 

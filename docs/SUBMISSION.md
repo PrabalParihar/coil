@@ -49,7 +49,7 @@ Track 1, DeFi (Borrowing, Lending, Looping, and Yield)
 
 ## Chain
 
-Mezo testnet (matsnet), chain id 31611. The factory this submission exercised was [`0x6A38f560cF8612cc81cF966831890DBb310e31F7`](https://explorer.test.mezo.org/address/0x6A38f560cF8612cc81cF966831890DBb310e31F7). The app default is now [`0x2218D33d2f9279A4266b49dB572F5b1343d09De5`](https://explorer.test.mezo.org/address/0x2218D33d2f9279A4266b49dB572F5b1343d09De5) (block 16407578).
+Mezo testnet (matsnet), chain id 31611. The factory this submission exercised was [`0x6A38f560cF8612cc81cF966831890DBb310e31F7`](https://explorer.test.mezo.org/address/0x6A38f560cF8612cc81cF966831890DBb310e31F7). The app default is now [`0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`](https://explorer.test.mezo.org/address/0xff3335576f998EE872596d4EB7ABECb71a0D5BC8) (block 16408314).
 
 ## Status
 

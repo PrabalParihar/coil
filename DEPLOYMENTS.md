@@ -4,7 +4,7 @@ Chain **31611** (matsnet). RPC `https://rpc.test.mezo.org`. Explorer `https://ex
 
 Throwaway deployer, testnet only: `0xFc58045fFB104D983de0e78F748Ab8e9cb6Bfc61`. The private key is in gitignored `.env` and is not in this repository. Do not reuse it on mainnet.
 
-The factory the frontend and keeper use is **`0x2218D33d2f9279A4266b49dB572F5b1343d09De5`** (block 16407578). Live app: https://coil.up.railway.app. The Wave 1 factory `0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e` is still on chain and is not what the app defaults to. Close fixes after the end-to-end run on this factory are not deployed.
+The factory the frontend and keeper use is **`0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`** (block 16408314). Live app: https://coil.up.railway.app. The Wave 1 factory `0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e` is still on chain and is not what the app defaults to. The quiet-guard change in this branch is not on the live factory.
 
 `eth_getTransactionReceipt` on this RPC sometimes returns null for a transaction that is already in a block. Hashes below were read back out of their blocks. Gas figures that came back as a round half of the gas limit are omitted. This RPC has done that.
 
@@ -141,9 +141,19 @@ BTC at `0x7b7C000000000000000000000000000000000000` has no `deposit()` or `withd
 
 `forge create` on this RPC tries `http://localhost:8545`. The Wave 1 contracts were deployed with `cast send --create`. The next factory has to be `forge script script/Deploy.s.sol --rpc-url https://rpc.test.mezo.org --broadcast`. That one broadcast also deploys and links `CoilLegacy`. Raw creation bytecode is not linked.
 
-## Reserve factory (app default)
+## Close-fix factory (app default)
 
-Deployed at block **16407578**. This is the factory in `web/src/lib/mezo.ts` and `.env.example`. It includes the MUSD reserve, the peg gate, and the rescue-slippage split. An end-to-end run on it found three bugs (close stuck on rescue slippage and ignoring `CoilPark`, a partial reserve repayment rolled back when the BTC sale reverted, and the 200 bps open cap blocking a loop while the pool sat about 234–236 bps off the oracle). Those fixes are in source and need another factory. No storage or constructor arguments change.
+Deployed at block **16408314**. This is the factory in `web/src/lib/mezo.ts` and `.env.example`. Partial rescue, full rescue, and `flashUnwind` at the default 200 bps passed on it while the pool sat about 252 bps off the oracle. No transaction hashes were recorded for this deploy. The quiet-guard fix (an empty park returns false instead of reverting `Slippage`) is not in this bytecode and needs another factory. No storage or constructor arguments change.
+
+| Step | Address |
+| --- | --- |
+| `CoilFactory` | `0xff3335576f998EE872596d4EB7ABECb71a0D5BC8` |
+| `CoilAccount` implementation | `0xD4495f969995B3e48998573B5ADC6F3106672B80` |
+| `CoilExit` | `0x43D76243f5E5383c37557a364647F16DfBe8D03a` |
+
+## Reserve factory
+
+Deployed at block **16407578**. An end-to-end run on it found three bugs (close stuck on rescue slippage and ignoring `CoilPark`, a partial reserve repayment rolled back when the BTC sale reverted, and the 200 bps open cap blocking a loop while the pool sat about 234–236 bps off the oracle). Those fixes shipped on the factory above. No storage or constructor arguments change.
 
 | Step | Address |
 | --- | --- |

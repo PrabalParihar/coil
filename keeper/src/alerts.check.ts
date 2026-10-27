@@ -1,4 +1,12 @@
-import { deviationBps, musdBelowPegBps, needsGuard, notify, telegramFromEnv, type GuardPosition } from "./alerts.js";
+import {
+  deviationBps,
+  musdBelowPegBps,
+  needsGuard,
+  notify,
+  saleBackoffActive,
+  telegramFromEnv,
+  type GuardPosition,
+} from "./alerts.js";
 
 function assertEq<T>(actual: T, expected: T, label: string) {
   if (actual !== expected) throw new Error(`${label}: expected ${String(expected)}, got ${String(actual)}`);
@@ -64,5 +72,11 @@ if (lines.length !== 1 || lines[0]?.includes("secret") || lines[0]?.includes(fet
 await notify(null, "nope", async () => {
   throw new Error("fetch should not run");
 });
+
+const quiet = { until: 1_000_000, cr: base.cr };
+assertEq(saleBackoffActive(quiet, base.cr, 999_999), true, "quiet while the ratio is unchanged");
+assertEq(saleBackoffActive(quiet, base.cr, 1_000_000), false, "quiet period ended");
+assertEq(saleBackoffActive(quiet, base.cr + 1n, 1), false, "a new ratio ends the wait");
+assertEq(saleBackoffActive(undefined, base.cr, 1), false, "no prior no-op");
 
 console.log("alerts ok");

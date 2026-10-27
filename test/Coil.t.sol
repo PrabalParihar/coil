@@ -316,8 +316,7 @@ contract CoilForkTest is Test {
         vm.prank(user);
         account.setRescueSlippage(50);
         vm.prank(stranger);
-        vm.expectRevert(CoilAccount.Slippage.selector);
-        account.guard();
+        assertFalse(account.guard());
 
         vm.prank(user);
         account.setRescueSlippage(200);
@@ -705,8 +704,55 @@ contract CoilForkTest is Test {
         assertTrue(found, "partial rescue");
 
         vm.prank(makeAddr("no-reserve"));
-        vm.expectRevert(CoilAccount.Slippage.selector);
-        bare.guard();
+        assertFalse(bare.guard());
+        _mockPrice(spot);
+    }
+
+    /// @dev Park is drained while the ratio is still under the floor and the pool is outside the rescue cap.
+    ///      The next guard returns false. It must not revert Slippage, or the keeper retries the revert every poll.
+    function test_guardReturnsFalseAfterPartialRescueEmptiesThePark() public {
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, uint256(4e18) / 3, 50);
+        vm.prank(user);
+        account.setGuard(1.5e18, 2.2e18, 0);
+
+        uint256 price = _oracleAbovePool(400);
+        _mockPrice(price);
+        uint256 coll = account.position().collateral;
+        uint256 crBefore = account.position().cr;
+        assertLt(crBefore, 1.5e18);
+
+        uint256 dust = 30e18;
+        deal(MezoAddresses.TESTNET_MUSD, user, dust);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), dust);
+        account.moveReserve(dust, false);
+        vm.stopPrank();
+
+        vm.prank(makeAddr("partial"));
+        assertTrue(account.guard());
+        CoilAccount.Position memory afterP = account.position();
+        assertEq(afterP.collateral, coll);
+        assertGt(afterP.cr, crBefore);
+        assertLt(afterP.cr, 1.5e18, "still under the floor");
+        assertEq(account.park().assetsOf(address(account)), 0);
+
+        vm.recordLogs();
+        vm.prank(makeAddr("later"));
+        assertFalse(account.guard());
+        assertEq(account.position().cr, afterP.cr);
+        assertEq(account.position().collateral, coll);
+        assertEq(account.park().assetsOf(address(account)), 0);
+
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bytes32 topic = keccak256("RescueBlocked(uint8)");
+        bool found;
+        for (uint256 i; i < entries.length; ++i) {
+            if (entries[i].emitter != address(account) || entries[i].topics[0] != topic) continue;
+            uint8 reason = abi.decode(entries[i].data, (uint8));
+            assertEq(reason, 1);
+            found = true;
+        }
+        assertTrue(found, "rescue blocked");
         _mockPrice(spot);
     }
 

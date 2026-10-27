@@ -27,13 +27,14 @@ The owner can always unwind and close.
 | Invariant: handler calls (`guard`, `deleverTo`, `flashDeleverTo`, and forbidden calls) never lower the ratio at a constant oracle, never send BTC or MUSD to the caller, and conserve MEZO | `invariant_keeperOnlyReducesRisk` |
 | A spoofed pool callback reverts | `test_hookRejectsSpoof` |
 | Tight slippage reverts instead of opening under the quote | `test_tightSlippageReverts` |
-| Pool about 1.4% under the oracle: `guard()` reverts at 50 bps and succeeds at the 200 bps rescue default; 301 bps reverts; a stranger cannot set the cap | `test_guardSucceedsWhenPoolIsBelowOracle` |
+| Pool about 1.4% under the oracle: `guard()` returns false at 50 bps and succeeds at the 200 bps rescue default; 301 bps reverts; a stranger cannot set the cap | `test_guardSucceedsWhenPoolIsBelowOracle` |
 | Owner close at 230 bps and 400 bps off the oracle | `test_closeWhenPoolIs230And400BpsOffOracle` |
 | Full close spends the reserve and returns the leftover | `test_fullCloseSpendsReserveAndReturnsTheLeftover` |
 | Partial reserve rescue skips a BTC sale that would fail the oracle cap | `test_partialReserveGuardSkipsTheBtcSale` |
+| After that rescue empties the park, a later `guard()` returns false and emits `RescueBlocked` | `test_guardReturnsFalseAfterPartialRescueEmptiesThePark` |
 | `flashLoop` reverts `PegOff` at 236 bps until the owner raises the cap to 500 | `test_pegOffBlocksOpenUntilTheOwnerRaisesTheCap` |
 
-`guard` and `flashDeleverTo` use `rescueSlippageBps` (default 200, hard cap 300). Only the owner can set it. The check reverts `Slippage` when the BTC sold would be worse than `fair * (1 + rescueSlippageBps)` against `PriceFeed` and nothing was repaid from the reserve. If parked MUSD was repaid and the sale would fail that check, the repayment stands and `PartialRescue` is emitted. A keeper cannot push a rescue through a pool past that cap.
+`guard` and `flashDeleverTo` use `rescueSlippageBps` (default 200, hard cap 300). Only the owner can set it. When the BTC sale would be worse than `fair * (1 + rescueSlippageBps)` against `PriceFeed`, the sale does not run. If parked MUSD was repaid, that repayment stands and `PartialRescue` is emitted. If nothing was spent, `stageDelever` emits `RescueBlocked` and returns 0, and `guard` returns false. It does not revert `Slippage`. A keeper cannot push a rescue through a pool past that cap. Owner `deleverTo` on the same path returns without changing the trove.
 
 Owner `unwind` and `flashUnwind` spend parked MUSD first. They flash the remainder when the BTC owed is under the collateral, including when the pool is outside the rescue cap, so a close is not stuck behind 3%. Leftover park MUSD returns to the owner on a full close. Open uses `slippageBps` and is unchanged. `flashLoop` still reverts `PegOff` above `maxPegDeviationBps`.
 

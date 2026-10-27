@@ -8,7 +8,15 @@ import {
   type PublicClient,
   type WalletClient,
 } from "viem";
-import { musdBelowPegBps, needsGuard, notify, telegramFromEnv, type Telegram } from "./alerts.js";
+import {
+  musdBelowPegBps,
+  needsGuard,
+  notify,
+  saleBackoffActive,
+  telegramFromEnv,
+  type SaleBackoff,
+  type Telegram,
+} from "./alerts.js";
 import { accountErrors, revertReason } from "./revert.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { mezoTestnet } from "./chain.js";
@@ -245,13 +253,15 @@ async function scan(opts: {
     console.log(
       `${account} owner=${position.owner} CR=${pct(position.cr)} floor=${pct(position.floorCR)} guard=${pct(position.guardTargetCR)} rank=${rank}`,
     );
-    if (!reason) continue;
+    if (!reason) {
+      saleQuiet.delete(account.toLowerCase());
+      continue;
+    }
+
+    const quietKey = account.toLowerCase();
+    if (saleBackoffActive(saleQuiet.get(quietKey), position.cr, Date.now())) continue;
 
     console.log(`  guard() because ${reason}`);
-    await notify(
-      tg,
-      `Coil Labs: ${account} ${reason}. CR ${pct(position.cr)}, floor ${pct(position.floorCR)}, target ${pct(position.guardTargetCR)}.`,
-    );
 
     const caller = wallet?.account?.address ?? "0x0000000000000000000000000000000000000001";
     try {
@@ -262,7 +272,8 @@ async function scan(opts: {
         account: caller,
       });
       if (!simulated.result) {
-        console.log("  simulation returned false (already safe, or the ratio would not rise)");
+        saleQuiet.set(quietKey, { until: Date.now() + quietMs(), cr: position.cr });
+        console.log("  nothing to do (guard returned false). Backing off until the ratio changes or the quiet period ends.");
         continue;
       }
     } catch (error) {
@@ -274,6 +285,12 @@ async function scan(opts: {
       await notify(tg, `Coil Labs: guard() simulation failed for ${account}. ${reason.slice(0, 180)}`);
       continue;
     }
+
+    saleQuiet.delete(quietKey);
+    await notify(
+      tg,
+      `Coil Labs: ${account} ${reason}. CR ${pct(position.cr)}, floor ${pct(position.floorCR)}, target ${pct(position.guardTargetCR)}.`,
+    );
 
     if (!execute || !wallet) {
       console.log("  dry run: would send guard()");
@@ -328,6 +345,14 @@ async function scan(opts: {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Accounts whose last guard() simulation returned false. Same CR stays quiet so an empty park does not page every poll. */
+const saleQuiet = new Map<string, SaleBackoff>();
+
+function quietMs() {
+  const n = Number(process.env.KEEPER_QUIET_MS ?? 5 * 60 * 1000);
+  return Number.isFinite(n) && n >= 0 ? n : 5 * 60 * 1000;
 }
 
 async function main() {

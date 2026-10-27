@@ -100,3 +100,10 @@ export async function notify(
 export function isWatchAddress(value: string | undefined): value is Address {
   return Boolean(value && isAddress(value));
 }
+
+export type SaleBackoff = { until: number; cr: bigint };
+
+/** True while a no-op guard should stay quiet. A changed collateral ratio ends the wait. */
+export function saleBackoffActive(entry: SaleBackoff | undefined, cr: bigint, now: number) {
+  return entry !== undefined && entry.cr === cr && now < entry.until;
+}

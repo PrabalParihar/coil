@@ -19,6 +19,10 @@ library CoilExit {
     /// @notice `guard` repaid parked MUSD and skipped the BTC sale.
     ///         The sale would have failed the oracle slippage check, so the reserve improvement stands.
     event PartialRescue(uint256 musdSpent, uint256 crAfter);
+    /// @notice The BTC sale did not run, and no parked MUSD was spent.
+    ///         `reason` 1: the oracle cap would reject the sale. `reason` 2: the quote does not fit in the collateral.
+    ///         `guard` returns false. It does not revert.
+    event RescueBlocked(uint8 reason);
 
     error MinDebt();
     error Slippage();
@@ -126,8 +130,10 @@ library CoilExit {
     }
 
     /// @notice `guard` / `deleverTo` sizing. Repays the reserve first.
-    /// @dev If the BTC sale would fail the oracle cap, skip it and keep the reserve repayment.
-    ///      `guard` already accepts any rise in the ratio. A sale that reverts would undo that repayment.
+    /// @dev If the BTC sale would fail the oracle cap, skip it and keep any reserve repayment.
+    ///      When nothing was spent, return 0 and emit `RescueBlocked` instead of reverting, so a later
+    ///      `guard` with an empty park and a still-low ratio is a no-op. `guard` already treats an
+    ///      unchanged ratio as false.
     /// @return musdToFlash MUSD the caller must flash-borrow. Zero when no BTC sale should run.
     function stageDelever(
         CoilLegacy.Env memory e,
@@ -155,7 +161,11 @@ library CoilExit {
             return 0;
         }
         if (btcOwed == 0 || btcOwed >= coll || !oracleAllows(btcOwed, musdOut, price, rescueBps)) {
-            if (spent == 0) revert Slippage();
+            if (spent == 0) {
+                // 1: the pool is outside the oracle cap. 2: the BTC quote does not fit in the collateral.
+                emit RescueBlocked(btcOwed != 0 && btcOwed < coll ? 1 : 2);
+                return 0;
+            }
             emit PartialRescue(spent, _cr(e, price));
             return 0;
         }
