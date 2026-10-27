@@ -610,6 +610,28 @@ export function CoilApp() {
       .finally(() => setBusy(false));
   }
 
+  function saveOpenCap(bps: number) {
+    if (!account || pegGuardRaw === undefined) return;
+    if (bps < 1 || bps > 500) return;
+    const guard = pegGuardBps >= 0 && pegGuardBps <= 500 ? pegGuardBps : 0;
+    begin();
+    send("Set open cap", () =>
+      writeContractAsync({
+        address: account,
+        abi: coilAccountAbi,
+        functionName: "setPegBounds",
+        args: [bps, guard],
+        chainId: mezoTestnet.id,
+        gas: 200_000n,
+      }),
+    )
+      .then(() =>
+        setStatus(`Open cap set to ${bps} bps. flashLoop allows a pool-versus-oracle gap up to that. The maximum is 500.`),
+      )
+      .catch(fail)
+      .finally(() => setBusy(false));
+  }
+
   function doLoop() {
     if (!account || collateral === null) return;
     begin();
@@ -747,7 +769,7 @@ export function CoilApp() {
   const openBlock = inRecovery
     ? "Mezo is in Recovery Mode. A new loop is refused."
     : pegBlocked
-      ? `Pool is ${poolGap.toString()} bps off the oracle. flashLoop refuses above ${openCap} bps.`
+      ? `PegOff: the pool is ${poolGap.toString()} bps off the oracle, and this account's open cap is ${openCap} bps. Raise the cap (maximum 500) to loop.`
       : null;
   const sensible = market && collateral && collateral > 0n ? sensibleOpen(collateral, market) : null;
   const reserveNeed = (() => {
@@ -776,7 +798,7 @@ export function CoilApp() {
           : !account
             ? { label: busy ? "Creating account…" : "Create your Coil account", onClick: createAccount, disabled: busy }
             : openBlock
-              ? { label: inRecovery ? "Recovery Mode — loop refused" : "Pool is off the oracle", disabled: true, icon: <Lock className="size-4" aria-hidden /> }
+              ? { label: inRecovery ? "Recovery Mode — loop refused" : "PegOff — raise the open cap", disabled: true, icon: <Lock className="size-4" aria-hidden /> }
               : { label: busy ? "Working…" : `Loop to ${targetPct}% · ${leverageLabel(targetCR)}`, onClick: doLoop, disabled: !loopReady, icon: <Lock className="size-4" aria-hidden /> };
 
   const setup = [
@@ -924,13 +946,41 @@ export function CoilApp() {
                   Mezo is in Recovery Mode at the current oracle price. flashLoop refuses to open. Existing troves can still be raised by guard().
                 </Banner>
               ) : null}
-              {market && poolGap > 0n ? (
-                <Banner tone={poolGap > BigInt(openCap) ? "warn" : "info"} title="Pool versus oracle">
-                  The MUSD/BTC pool is {poolGap.toString()} bps off the oracle.
-                  {belowPeg > 0n ? ` MUSD is ${belowPeg.toString()} bps under $1.` : " MUSD is not under $1 in this pool."}
+              {market && (poolGap > 0n || reserveFactory) ? (
+                <Banner
+                  tone={pegBlocked ? "warn" : "info"}
+                  title={pegBlocked ? "PegOff: a new loop is blocked" : "Pool versus oracle"}
+                  action={
+                    account && reserveFactory ? (
+                      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Open cap in bps">
+                        {OPEN_CAPS.map((bps) => (
+                          <Button
+                            key={bps}
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              "h-8 rounded-full px-3 font-mono text-[11px]",
+                              openCap === bps && "border-filament text-foreground",
+                            )}
+                            disabled={busy || openCap === bps || pegGuardRaw === undefined}
+                            onClick={() => saveOpenCap(bps)}
+                          >
+                            {bps} bps
+                          </Button>
+                        ))}
+                      </div>
+                    ) : null
+                  }
+                >
+                  The MUSD/BTC pool is {poolGap.toString()} bps off the oracle
+                  {poolGap > 0n ? ` (${(Number(poolGap) / 100).toFixed(2)}%)` : ""}.
+                  {belowPeg > 0n ? ` MUSD is ${belowPeg.toString()} bps under $1 in this pool.` : " MUSD is not under $1 in this pool."}
                   {reserveFactory
-                    ? ` flashLoop refuses an open past ${openCap} bps.`
-                    : " This factory still attempts the open. The next factory refuses past 200 bps."}
+                    ? pegBlocked
+                      ? ` flashLoop reverts PegOff above this account's open cap of ${openCap} bps. setPegBounds can raise that cap to 500. Closing a trove is not blocked by PegOff.`
+                      : ` The open cap is ${openCap} bps (maximum 500). flashLoop reverts PegOff above it.`
+                    : " This factory does not expose setPegBounds."}
+                  {reserveFactory && !account ? " Create a Coil account, then set the open cap." : ""}
                 </Banner>
               ) : null}
               {connectError && !isConnected ? (
@@ -1632,6 +1682,7 @@ function PoolDepth({
 }
 
 const PEG_GUARD = [0, 50, 100, 200] as const;
+const OPEN_CAPS = [200, 300, 400, 500] as const;
 
 function ReserveBlock({
   available,

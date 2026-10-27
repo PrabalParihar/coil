@@ -97,6 +97,26 @@ contract FlashSizer {
         return (true, owed, minted);
     }
 
+    struct Repay {
+        uint256 coll;
+        uint256 debt;
+        uint256 room;
+        uint256 targetCR;
+        uint256 price;
+        uint256 reserveMusd;
+        uint256 reserveBtc;
+        uint256 fee;
+        uint256 gasComp;
+        uint256 mcrBuffer;
+    }
+
+    /// @notice Same as the expanded `sizeRepay`. One memory argument, so callers stay off the stack limit.
+    function sizeRepay(Repay memory r) public pure returns (uint256) {
+        return sizeRepay(
+            r.coll, r.debt, r.room, r.targetCR, r.price, r.reserveMusd, r.reserveBtc, r.fee, r.gasComp, r.mcrBuffer
+        );
+    }
+
     /// @notice Smallest MUSD flash that lifts the ratio to `targetCR`, or the largest
     ///         flash that still raises it when the minimum-debt floor blocks the target.
     function sizeRepay(

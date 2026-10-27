@@ -5,6 +5,7 @@ import {Script, console2} from "forge-std/Script.sol";
 import {CoilAccount} from "../src/CoilAccount.sol";
 import {CoilFactory} from "../src/CoilFactory.sol";
 import {CoilLegacy} from "../src/libraries/CoilLegacy.sol";
+import {CoilExit} from "../src/libraries/CoilExit.sol";
 import {MezoAddresses} from "../src/MezoAddresses.sol";
 
 /// @notice Deploy Coil to Mezo testnet. The key stays in PRIVATE_KEY and is never committed.
@@ -36,23 +37,24 @@ contract Deploy is Script {
         // CoilPark is the second (nonce 2).
         address sizer = vm.computeCreateAddress(address(implementation), 1);
         address park = vm.computeCreateAddress(address(implementation), 2);
-        address legacy = _linkedLegacy(address(implementation));
+        address legacy = _linkedLib(address(implementation), type(CoilLegacy).runtimeCode);
+        address exitLib = _linkedLib(address(implementation), type(CoilExit).runtimeCode);
 
         console2.log("deployer", deployer);
         console2.log("legacy", legacy);
+        console2.log("exit", exitLib);
         console2.log("sizer", sizer);
         console2.log("park", park);
         console2.log("implementation", address(implementation));
         console2.log("factory", address(factory));
     }
 
-    /// @dev CoilLegacy is linked into CoilAccount as PUSH20 <address> DELEGATECALL.
-    ///      Its own bytecode also embeds that address (calls to its public functions),
-    ///      so the deployed code differs from `type(CoilLegacy).runtimeCode` only there.
+    /// @dev Libraries are linked into CoilAccount as PUSH20 <address> DELEGATECALL.
+    ///      A library's own bytecode also embeds that address, so the deployed code
+    ///      differs from `type(Lib).runtimeCode` only there.
     ///      The logged address is what verify.sh passes to --libraries.
-    function _linkedLegacy(address impl) internal view returns (address lib) {
+    function _linkedLib(address impl, bytes memory expected) internal view returns (address lib) {
         bytes memory code = impl.code;
-        bytes memory expected = type(CoilLegacy).runtimeCode;
         uint256 len = code.length;
         for (uint256 i; i + 21 <= len; ++i) {
             if (uint8(code[i]) != 0x73) continue;
@@ -62,7 +64,12 @@ contract Deploy is Script {
             }
             if (_isLinkedLegacy(candidate, expected)) return candidate;
         }
-        revert("CoilLegacy was not linked");
+        revert("library was not linked");
+    }
+
+    /// @dev Foundry's unlinked placeholder is 20 bytes and starts with `__$`.
+    function _linkPlaceholder(bytes memory code, uint256 j) internal pure returns (bool) {
+        return j + 2 < code.length && code[j] == 0x5f && code[j + 1] == 0x5f && code[j + 2] == 0x24;
     }
 
     function _isLinkedLegacy(address candidate, bytes memory expected) internal view returns (bool) {
@@ -80,7 +87,7 @@ contract Deploy is Script {
             assembly {
                 found := shr(96, mload(add(deployed, add(j, 32))))
             }
-            if (found != candidate) return false;
+            if (found != candidate && !_linkPlaceholder(expected, j)) return false;
             unchecked {
                 j += 20;
             }

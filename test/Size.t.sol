@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {CoilAccount} from "../src/CoilAccount.sol";
 import {CoilFactory} from "../src/CoilFactory.sol";
 import {CoilLegacy} from "../src/libraries/CoilLegacy.sol";
+import {CoilExit} from "../src/libraries/CoilExit.sol";
 import {MezoAddresses} from "../src/MezoAddresses.sol";
 
 /// @notice Mezo testnet enforces EIP-170 inside eth_estimateGas. `runtimeCode`
@@ -30,26 +31,28 @@ contract SizeTest is Test {
             MezoAddresses.TESTNET_MUSD_BTC_POOL
         );
         CoilFactory factory = new CoilFactory(address(impl), address(this));
-        address legacy = _linkedLegacy(address(impl));
+        address legacy = _linkedLib(address(impl), type(CoilLegacy).runtimeCode);
+        address exitLib = _linkedLib(address(impl), type(CoilExit).runtimeCode);
 
         assertGt(address(impl).code.length, 0);
         assertGt(address(factory).code.length, 0);
         assertGt(address(impl.sizer()).code.length, 0);
         assertGt(address(impl.park()).code.length, 0);
         assertGt(legacy.code.length, 0);
+        assertGt(exitLib.code.length, 0);
 
         assertLe(address(impl).code.length, EIP_170, "CoilAccount");
         assertLe(address(factory).code.length, EIP_170, "CoilFactory");
         assertLe(address(impl.sizer()).code.length, EIP_170, "FlashSizer");
         assertLe(address(impl.park()).code.length, EIP_170, "CoilPark");
         assertLe(legacy.code.length, EIP_170, "CoilLegacy");
+        assertLe(exitLib.code.length, EIP_170, "CoilExit");
     }
 
     /// @dev Same recognition as script/Deploy.s.sol. The deployed library embeds its
     ///      own address, so it is not a byte-for-byte copy of the unlinked runtime.
-    function _linkedLegacy(address impl) internal view returns (address lib) {
+    function _linkedLib(address impl, bytes memory expected) internal view returns (address lib) {
         bytes memory code = impl.code;
-        bytes memory expected = type(CoilLegacy).runtimeCode;
         uint256 len = code.length;
         for (uint256 i; i + 21 <= len; ++i) {
             if (uint8(code[i]) != 0x73) continue;
@@ -59,7 +62,12 @@ contract SizeTest is Test {
             }
             if (_isLinkedLegacy(candidate, expected)) return candidate;
         }
-        revert("CoilLegacy was not linked");
+        revert("library was not linked");
+    }
+
+    /// @dev Foundry's unlinked placeholder is 20 bytes and starts with `__$`.
+    function _linkPlaceholder(bytes memory code, uint256 j) internal pure returns (bool) {
+        return j + 2 < code.length && code[j] == 0x5f && code[j + 1] == 0x5f && code[j + 2] == 0x24;
     }
 
     function _isLinkedLegacy(address candidate, bytes memory expected) internal view returns (bool) {
@@ -77,7 +85,7 @@ contract SizeTest is Test {
             assembly {
                 found := shr(96, mload(add(deployed, add(j, 32))))
             }
-            if (found != candidate) return false;
+            if (found != candidate && !_linkPlaceholder(expected, j)) return false;
             unchecked {
                 j += 20;
             }
