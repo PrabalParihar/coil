@@ -25,11 +25,11 @@ export const addr = {
   sortedTroves: "0x722E4D24FD6Ff8b0AC679450F3D91294607268fA",
 } as const;
 
-/** Live Wave 2 Mezo testnet factory. Override with NEXT_PUBLIC_COIL_FACTORY. */
-const DEPLOYED_FACTORY = "0x6A38f560cF8612cc81cF966831890DBb310e31F7" as const;
+/** Live Wave 2 Mezo testnet factory (reserve and peg gate). Override with NEXT_PUBLIC_COIL_FACTORY. */
+const DEPLOYED_FACTORY = "0x2218D33d2f9279A4266b49dB572F5b1343d09De5" as const;
 
-/** Block of the Wave 2 factory deploy. /guard starts its log scan here. */
-export const FACTORY_DEPLOY_BLOCK = 16_400_159n;
+/** Block of that factory deploy. /guard and /stats start their log scan here. */
+export const FACTORY_DEPLOY_BLOCK = 16_407_578n;
 
 const factoryEnv = process.env.NEXT_PUBLIC_COIL_FACTORY ?? "";
 

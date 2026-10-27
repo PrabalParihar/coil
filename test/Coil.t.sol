@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-import {Test, console2} from "forge-std/Test.sol";
+import {Test, console2, Vm} from "forge-std/Test.sol";
 import {CoilAccount} from "../src/CoilAccount.sol";
 import {CoilFactory} from "../src/CoilFactory.sol";
 import {CoilPark} from "../src/CoilPark.sol";
@@ -289,8 +289,9 @@ contract CoilForkTest is Test {
         assertFalse(acted);
     }
 
-    /// @dev The testnet pool can sit ~1.4% under the oracle. Rescue and close
-    ///      use rescueSlippageBps (default 200, cap 300), not the 50 bps open default.
+    /// @dev The testnet pool can sit ~1.4% under the oracle. A keeper rescue
+    ///      uses rescueSlippageBps (default 200, cap 300). Owner close does not
+    ///      get stuck on that cap; see the close tests below.
     function test_guardSucceedsWhenPoolIsBelowOracle() public {
         uint256 rich = spot * 10_000 / 9_860;
         _mockPrice(rich);
@@ -317,9 +318,6 @@ contract CoilForkTest is Test {
         vm.prank(stranger);
         vm.expectRevert(CoilAccount.Slippage.selector);
         account.guard();
-        vm.prank(user);
-        vm.expectRevert(CoilAccount.Slippage.selector);
-        account.flashUnwind(1e18);
 
         vm.prank(user);
         account.setRescueSlippage(200);
@@ -590,6 +588,146 @@ contract CoilForkTest is Test {
         assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(user), 40e18);
     }
 
+    /// @dev 230 bps is inside the 300 bps rescue cap and outside the 200 bps default.
+    ///      400 bps is past the cap, so `setRescueSlippage` cannot open a flash close.
+    function test_closeWhenPoolIs230And400BpsOffOracle() public {
+        (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.5e18, 50);
+        assertEq(account.rescueSlippageBps(), 200);
+        _mockPrice(_oracleAbovePool(230));
+        uint256 before = user.balance;
+        vm.prank(user);
+        account.flashUnwind(1e18);
+        assertFalse(account.position().active);
+        assertGt(user.balance, before);
+
+        _mockPrice(spot);
+        (address user2, CoilAccount second) = _flashOpen(0.2 ether, 1.5e18, 50);
+        _mockPrice(_oracleAbovePool(400));
+        vm.prank(user2);
+        vm.expectRevert(CoilAccount.BadSlippage.selector);
+        second.setRescueSlippage(400);
+        uint256 before2 = user2.balance;
+        vm.prank(user2);
+        second.unwind(1e18);
+        assertFalse(second.position().active);
+        assertGt(user2.balance, before2);
+        _mockPrice(spot);
+    }
+
+    function test_fullCloseSpendsReserveAndReturnsTheLeftover() public {
+        (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.5e18, 50);
+        uint256 net = account.position().debt - 200e18;
+        uint256 extra = 50.24e18;
+        uint256 parkAmt = net + extra;
+        deal(MezoAddresses.TESTNET_MUSD, user, parkAmt);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), parkAmt);
+        account.moveReserve(parkAmt, false);
+        vm.stopPrank();
+        assertEq(account.park().assetsOf(address(account)), parkAmt);
+
+        uint256 coll = account.position().collateral;
+        uint256 btcBefore = user.balance;
+        _mockPrice(_oracleAbovePool(400));
+        vm.prank(user);
+        account.flashUnwind(1e18);
+        assertFalse(account.position().active);
+        assertEq(account.park().assetsOf(address(account)), 0);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(user), extra);
+        assertEq(user.balance - btcBefore, coll);
+
+        _mockPrice(spot);
+        (address user2, CoilAccount small) = _flashOpen(0.2 ether, 1.5e18, 50);
+        uint256 dust = 50.24e18;
+        deal(MezoAddresses.TESTNET_MUSD, user2, dust);
+        vm.startPrank(user2);
+        IERC20(MezoAddresses.TESTNET_MUSD).approve(address(small), dust);
+        small.moveReserve(dust, false);
+        vm.stopPrank();
+        _mockPrice(_oracleAbovePool(230));
+        vm.prank(user2);
+        small.unwind(1e18);
+        assertFalse(small.position().active);
+        assertEq(small.park().assetsOf(address(small)), 0);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(user2), 0);
+        _mockPrice(spot);
+    }
+
+    function test_partialReserveGuardSkipsTheBtcSale() public {
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, uint256(4e18) / 3, 50);
+        (address bareUser, CoilAccount bare) = _flashOpen(0.02 ether, uint256(4e18) / 3, 50);
+        vm.prank(user);
+        account.setGuard(1.5e18, 2.2e18, 0);
+        vm.prank(bareUser);
+        bare.setGuard(1.5e18, 2.2e18, 0);
+
+        uint256 price = _oracleAbovePool(400);
+        _mockPrice(price);
+        uint256 coll = account.position().collateral;
+        uint256 debt = account.position().debt;
+        uint256 targetDebt = coll * price / 2.2e18;
+        assertLt(targetDebt, debt);
+        uint256 need = debt - targetDebt;
+        uint256 net = debt - 200e18;
+        uint256 room = net > 1800e18 ? net - 1800e18 : 0;
+        if (need > room) need = room;
+        uint256 half = need / 2;
+        assertGt(half, 1e18);
+        uint256 crBefore = account.position().cr;
+        assertLt(crBefore, 1.5e18);
+
+        deal(MezoAddresses.TESTNET_MUSD, user, half);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), half);
+        account.moveReserve(half, false);
+        vm.stopPrank();
+
+        vm.recordLogs();
+        vm.prank(makeAddr("partial-only"));
+        assertTrue(account.guard());
+        CoilAccount.Position memory afterP = account.position();
+        assertEq(afterP.collateral, coll);
+        assertGt(afterP.cr, crBefore);
+        assertLt(afterP.cr, 2.2e18);
+        assertEq(account.park().assetsOf(address(account)), 0);
+        assertLt(afterP.debt, debt);
+
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bytes32 topic = keccak256("PartialRescue(uint256,uint256)");
+        bool found;
+        for (uint256 i; i < entries.length; ++i) {
+            if (entries[i].emitter != address(account) || entries[i].topics[0] != topic) continue;
+            (uint256 spent, uint256 crAfter) = abi.decode(entries[i].data, (uint256, uint256));
+            assertEq(spent, half);
+            assertEq(crAfter, afterP.cr);
+            found = true;
+        }
+        assertTrue(found, "partial rescue");
+
+        vm.prank(makeAddr("no-reserve"));
+        vm.expectRevert(CoilAccount.Slippage.selector);
+        bare.guard();
+        _mockPrice(spot);
+    }
+
+    function test_pegOffBlocksOpenUntilTheOwnerRaisesTheCap() public {
+        (address user, CoilAccount account) = _openAccount();
+        _mockPrice(_oracleAbovePool(236));
+        assertEq(account.maxPegDeviationBps(), 200);
+        vm.prank(user);
+        vm.expectRevert(CoilAccount.PegOff.selector);
+        account.flashLoop{value: 0.2 ether}(1.5e18, 200);
+        vm.prank(user);
+        vm.expectRevert(CoilAccount.BadSlippage.selector);
+        account.setPegBounds(501, 0);
+        vm.prank(user);
+        account.setPegBounds(500, 0);
+        vm.prank(user);
+        account.flashLoop{value: 0.2 ether}(1.5e18, 200);
+        assertTrue(account.position().active);
+        _mockPrice(spot);
+    }
+
     function test_flashLoopRevertsWhenPoolIsOffTheOracle() public {
         (address user, CoilAccount account) = _openAccount();
         _mockPrice(spot * 10_300 / 10_000);
@@ -752,6 +890,11 @@ contract CoilForkTest is Test {
 
     function _mintMezo(address to, uint256 amount) internal {
         deal(MezoAddresses.MEZO, to, amount);
+    }
+
+    /// @dev Oracle above the pool price by `bps`. Deviation is `bps` of the oracle.
+    function _oracleAbovePool(uint256 bps) internal view returns (uint256) {
+        return spot * 10_000 / (10_000 - bps);
     }
 
     function _mockPrice(uint256 price) internal {

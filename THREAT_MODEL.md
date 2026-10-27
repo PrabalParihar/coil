@@ -12,7 +12,9 @@ The reserve lives in `CoilPark`, not in the clone. `sweep` sends the clone's own
 
 The owner can loop, unwind, withdraw the reserve, set both slippage caps, and set the peg bounds. Open slippage and rescue slippage are each capped at 300 bps. The peg deviation cap is 500 bps and cannot be zero, so `flashLoop` always has a bound. `pegGuardBps` may be zero, which turns the peg trigger off.
 
-A rescue still checks the BTC it sells against the oracle using the rescue cap. Raising that cap lets a keeper sell more BTC into a bad pool. It does not let the keeper choose the buyer. The owner sets it.
+A rescue still checks the BTC it sells against the oracle using the rescue cap. If that check would fail after parked MUSD was repaid, the sale is skipped and the repayment stays. Raising the cap lets a keeper sell more BTC into a bad pool. It does not let the keeper choose the buyer. The owner sets it.
+
+Owner close can pay the live pool price when that price is outside the rescue cap, as long as the BTC owed is under the collateral. That is the owner's way out. A keeper cannot call `unwind`. A full close returns leftover park MUSD to the owner. `sweep` still cannot take the park.
 
 ## What the park governor can do
 

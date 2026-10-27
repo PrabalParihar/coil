@@ -6,6 +6,7 @@ import {ICoilFactory} from "./ICoilFactory.sol";
 import {MezoAddresses} from "./MezoAddresses.sol";
 import {FlashSizer} from "./libraries/FlashMath.sol";
 import {CoilLegacy} from "./libraries/CoilLegacy.sol";
+import {CoilExit} from "./libraries/CoilExit.sol";
 import {CoilPark} from "./CoilPark.sol";
 
 /// @title CoilAccount
@@ -78,11 +79,12 @@ contract CoilAccount is IPoolCallee {
     address public keeper;
     /// @notice Slippage for `loop` / `flashLoop`. The owner sets it on each open.
     uint16 public slippageBps;
-    /// @notice Slippage for `guard`, `flashUnwind`, and `flashDeleverTo`.
+    /// @notice Slippage for `guard` and `flashDeleverTo`.
     ///         Owner-set, default 2% (200 bps), hard cap 3% (300 bps). A keeper
-    ///         cannot change it. The oracle check still bounds BTC sold to
-    ///         `fair * (1 + rescueSlippageBps)`, so a caller cannot push a
-    ///         rescue through a worse pool than that cap.
+    ///         cannot change it. The oracle check still bounds BTC sold on a rescue to
+    ///         `fair * (1 + rescueSlippageBps)`. Owner `unwind` / `flashUnwind` do not
+    ///         use this cap as a dead end: a close spends parked MUSD first, and if the
+    ///         oracle check would fail it still flashes when the BTC owed is under the collateral.
     uint16 public rescueSlippageBps;
     /// @notice Max pool-vs-oracle gap, in bps, that `flashLoop` will still open through.
     uint16 public maxPegDeviationBps;
@@ -260,7 +262,9 @@ contract CoilAccount is IPoolCallee {
     }
 
     /// @param fractionWad Share of net debt to repay, 1e18 = close the trove and return BTC.
-    ///         One Mezo Pools flash swap covers the whole repayment.
+    ///         Parked MUSD is spent first. One Mezo Pools flash swap covers the remainder
+    ///         when it fits in the collateral, including when the pool is outside `rescueSlippageBps`.
+    ///         A full close returns any MUSD still parked to the owner.
     function unwind(uint256 fractionWad) external onlyOwner nonReentrant {
         _unwind(fractionWad);
     }
@@ -529,27 +533,16 @@ contract CoilAccount is IPoolCallee {
         if (fractionWad == 0 || fractionWad > WAD) revert BadFraction();
         if (!_active()) revert NoTrove();
         uint256 price = priceFeed.fetchPrice();
-        if (fractionWad == WAD) {
-            _flashClose(price);
-            _sweep();
-            emit Unwound(owner, fractionWad, _active() ? _cr(price) : type(uint256).max);
-            return;
+        (uint256 musdOut, bool emitNow) = CoilExit.stageUnwind(
+            _env(), address(park), address(pool), address(sizer), fractionWad, price, rescueSlippageBps
+        );
+        if (musdOut != 0) {
+            flashKind = fractionWad == WAD ? FlashKind.Close : FlashKind.Repay;
+            _swapMusdOut(musdOut);
+            if (fractionWad == WAD) CoilExit.returnReserve(_env(), address(park));
+            emitNow = true;
         }
-
-        uint256 debt = troveManager.getTroveDebt(address(this));
-        uint256 net = debt - GAS_COMPENSATION;
-        uint256 toRepay = net * fractionWad / WAD;
-        if (net - toRepay < borrowerOperations.minNetDebt()) revert MinDebt();
-        uint256 have = musd.balanceOf(address(this));
-        if (have >= toRepay) {
-            _repay(toRepay);
-        } else if (!_paused()) {
-            uint256 short = toRepay - have;
-            _beginRepay(short, price);
-        } else {
-            _unwindSale(fractionWad, price, toRepay);
-            return;
-        }
+        if (!emitNow) return;
         _sweep();
         emit Unwound(owner, fractionWad, _active() ? _cr(price) : type(uint256).max);
     }
@@ -574,45 +567,10 @@ contract CoilAccount is IPoolCallee {
     }
 
     function _deleverFlash(uint256 targetCR, uint256 price) internal {
-        CoilLegacy.applyReserve(_env(), address(park), targetCR, price);
-        if (_active() && _cr(price) >= targetCR) return;
-        if (_paused()) {
-            _deleverTo(targetCR, price);
-            return;
-        }
-        uint256 musdOut = _sizeDelever(targetCR, price);
+        uint256 musdOut = CoilExit.stageDelever(
+            _env(), address(park), address(pool), address(sizer), targetCR, price, rescueSlippageBps
+        );
         if (musdOut == 0) return;
-        _beginRepay(musdOut, price);
-    }
-
-    function _flashClose(uint256 price) internal {
-        uint256 debt = troveManager.getTroveDebt(address(this));
-        uint256 need = debt - GAS_COMPENSATION;
-        uint256 have = musd.balanceOf(address(this));
-        if (have >= need) {
-            borrowerOperations.closeTrove();
-            return;
-        }
-        if (_paused()) {
-            _unwindAll(price);
-            return;
-        }
-        uint256 short = need - have;
-        (uint256 reserveMusd, uint256 reserveBtc) = _reserves();
-        uint256 btcOwed = sizer.amountIn(reserveBtc, reserveMusd, short, _poolFeeBps());
-        uint256 coll = troveManager.getTroveColl(address(this));
-        if (btcOwed == 0 || btcOwed >= coll) revert Slippage();
-        _checkOracleSlip(btcOwed, short, price);
-        flashKind = FlashKind.Close;
-        _swapMusdOut(short);
-    }
-
-    function _beginRepay(uint256 musdOut, uint256 price) internal {
-        (uint256 reserveMusd, uint256 reserveBtc) = _reserves();
-        uint256 btcOwed = sizer.amountIn(reserveBtc, reserveMusd, musdOut, _poolFeeBps());
-        uint256 coll = troveManager.getTroveColl(address(this));
-        if (btcOwed == 0 || btcOwed >= coll) revert Slippage();
-        _checkOracleSlip(btcOwed, musdOut, price);
         flashKind = FlashKind.Repay;
         _swapMusdOut(musdOut);
     }
@@ -750,16 +708,6 @@ contract CoilAccount is IPoolCallee {
         return sizer.solve(c);
     }
 
-    function _sizeDelever(uint256 targetCR, uint256 price) internal view returns (uint256) {
-        uint256 coll = troveManager.getTroveColl(address(this));
-        uint256 debt = troveManager.getTroveDebt(address(this));
-        uint256 room = _maxRepay(debt);
-        (uint256 reserveMusd, uint256 reserveBtc) = _reserves();
-        return sizer.sizeRepay(
-            coll, debt, room, targetCR, price, reserveMusd, reserveBtc, _poolFeeBps(), GAS_COMPENSATION, MCR + 0.01e18
-        );
-    }
-
     function _swapBtcOut(uint256 btcOut) internal {
         if (btcIsToken0) pool.swap(btcOut, 0, address(this), hex"01");
         else pool.swap(0, btcOut, address(this), hex"01");
@@ -794,15 +742,6 @@ contract CoilAccount is IPoolCallee {
         (bool ok, bytes memory data) = poolFactory.staticcall(abi.encodeWithSignature("isPaused()"));
         if (!ok || data.length < 32) return false;
         return abi.decode(data, (bool));
-    }
-
-    /// @dev Oracle bound for a BTC-in / MUSD-out flash. Uses `rescueSlippageBps`,
-    ///      not the open slippage. No precompile calls.
-    function _checkOracleSlip(uint256 btcIn, uint256 musdOut, uint256 price) internal view {
-        if (btcIn == 0 || price == 0) revert Slippage();
-        uint256 fairBtc = musdOut * WAD / price;
-        uint256 cap = fairBtc * (BPS + rescueSlippageBps) / BPS;
-        if (btcIn > cap) revert Slippage();
     }
 
     function _pullBtcToNative() internal returns (uint256) {
@@ -854,20 +793,8 @@ contract CoilAccount is IPoolCallee {
     }
 
 
-    function _unwindSale(uint256 fractionWad, uint256 price, uint256 toRepay) internal {
-        CoilLegacy.unwindSale(_env(), fractionWad, price, toRepay, rescueSlippageBps);
-    }
-
     function _addColl(uint256 amount) internal {
         CoilLegacy.addColl(_env(), amount);
-    }
-
-    function _deleverTo(uint256 targetCR, uint256 price) internal {
-        CoilLegacy.deleverIter(_env(), targetCR, price, rescueSlippageBps);
-    }
-
-    function _unwindAll(uint256 price) internal {
-        CoilLegacy.unwindAll(_env(), price, rescueSlippageBps);
     }
 
     function _projectedDebt(uint256 debt, uint256 amount, uint256 rate, bool includeRefi, uint8 refiPct)
@@ -886,10 +813,6 @@ contract CoilAccount is IPoolCallee {
 
     function _minOpenAmount(uint256 rate) internal view returns (uint256) {
         return CoilLegacy.minOpenAmount(_env(), rate);
-    }
-
-    function _maxRepay(uint256 debt) internal view returns (uint256) {
-        return CoilLegacy.maxRepay(_env(), debt);
     }
 
     /// @dev Codehash of the live BTC precompile bytecode. EXTCODEHASH does not

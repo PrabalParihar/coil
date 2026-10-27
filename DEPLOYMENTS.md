@@ -4,7 +4,7 @@ Chain **31611** (matsnet). RPC `https://rpc.test.mezo.org`. Explorer `https://ex
 
 Throwaway deployer, testnet only: `0xFc58045fFB104D983de0e78F748Ab8e9cb6Bfc61`. The private key is in gitignored `.env` and is not in this repository. Do not reuse it on mainnet.
 
-The factory the frontend and keeper use is the Wave 2 factory **`0x6A38f560cF8612cc81cF966831890DBb310e31F7`**. Live app: https://coil.up.railway.app. The Wave 1 factory `0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e` is still on chain and is not what the app defaults to.
+The factory the frontend and keeper use is **`0x2218D33d2f9279A4266b49dB572F5b1343d09De5`** (block 16407578). Live app: https://coil.up.railway.app. The Wave 1 factory `0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e` is still on chain and is not what the app defaults to. Close fixes after the end-to-end run on this factory are not deployed.
 
 `eth_getTransactionReceipt` on this RPC sometimes returns null for a transaction that is already in a block. Hashes below were read back out of their blocks. Gas figures that came back as a round half of the gas limit are omitted. This RPC has done that.
 
@@ -141,7 +141,19 @@ BTC at `0x7b7C000000000000000000000000000000000000` has no `deposit()` or `withd
 
 `forge create` on this RPC tries `http://localhost:8545`. The Wave 1 contracts were deployed with `cast send --create`. The next factory has to be `forge script script/Deploy.s.sol --rpc-url https://rpc.test.mezo.org --broadcast`. That one broadcast also deploys and links `CoilLegacy`. Raw creation bytecode is not linked.
 
-## Wave 2 factory (live)
+## Reserve factory (app default)
+
+Deployed at block **16407578**. This is the factory in `web/src/lib/mezo.ts` and `.env.example`. It includes the MUSD reserve, the peg gate, and the rescue-slippage split. An end-to-end run on it found three bugs (close stuck on rescue slippage and ignoring `CoilPark`, a partial reserve repayment rolled back when the BTC sale reverted, and the 200 bps open cap blocking a loop while the pool sat about 234–236 bps off the oracle). Those fixes are in source and need another factory. No storage or constructor arguments change.
+
+| Step | Address |
+| --- | --- |
+| `CoilFactory` | `0x2218D33d2f9279A4266b49dB572F5b1343d09De5` |
+| `CoilAccount` implementation | `0x31D5964A2bc4CA86c0807Ea5e95882fF72693076` |
+| `CoilLegacy` | `0xb75d1F6Fe5D9Ab999CbcdDE99589976e66B25eC4` |
+| `FlashSizer` | `0x6359EF81A7F535b04E0Abfb28FA4565951a5F2fd` |
+| `CoilPark` | `0x87b2E191232DD09510dE1885198375F6450dd5D8` |
+
+## Wave 2 factory (earlier)
 
 Deployed 27 October 2026, blocks **16400159–16400160**, with `forge script script/Deploy.s.sol --broadcast`. Deployer `0xf74E746a8d7A46A8b0f745C6d5944Ee672c1a3AF`. Keeper `0x1D2621480011C44693a47801C1158E70b25b4B4F`. The private keys are not in this repository.
 
