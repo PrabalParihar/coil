@@ -648,7 +648,7 @@ export function Activity({
     <div className="well mt-4 space-y-4 px-4 py-4" aria-live="polite">
       <div className="flex items-center justify-between gap-3">
         <p className="eyebrow">
-          {kind === "delever" ? "De-lever · one sale per transaction" : kind === "unwind" ? "Unwind · one sale per transaction" : "Transaction progress"}
+          {kind === "delever" ? "De-lever" : kind === "unwind" ? "Unwind" : "Transaction progress"}
         </p>
         {!busy && onDismiss ? (
           <button type="button" onClick={onDismiss} className="rounded-full p-1 text-muted-foreground hover:text-foreground" aria-label="Dismiss transaction progress">

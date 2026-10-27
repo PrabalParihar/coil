@@ -49,6 +49,8 @@ interface ITroveManager {
 
     function getTroveMaxBorrowingCapacity(address _borrower) external view returns (uint256);
 
+    function getNominalICR(address _borrower) external view returns (uint256);
+
     function checkRecoveryMode(uint256 _price) external view returns (bool);
 }
 
@@ -102,4 +104,33 @@ interface IERC20 {
     function approve(address spender, uint256 amount) external returns (bool);
 
     function transfer(address to, uint256 amount) external returns (bool);
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+}
+
+/// @dev Mezo Pools volatile pair. `swap` with nonempty `data` calls `IPoolCallee.hook`
+///      on `to` before checking the constant product. Testnet MUSD/BTC is token0/token1.
+interface IPool {
+    function token0() external view returns (address);
+
+    function token1() external view returns (address);
+
+    function stable() external view returns (bool);
+
+    function getReserves() external view returns (uint256 reserve0, uint256 reserve1, uint256 blockTimestampLast);
+
+    function getAmountOut(uint256 amountIn, address tokenIn) external view returns (uint256);
+
+    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
+}
+
+/// @dev Callback name on mezo-org/tigris Pool. `sender` is the address that called `swap`.
+interface IPoolCallee {
+    function hook(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external;
+}
+
+interface IPoolFactory {
+    function getFee(address pool, bool stable) external view returns (uint256);
+
+    function isPaused() external view returns (bool);
 }

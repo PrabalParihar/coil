@@ -24,7 +24,8 @@ contract Deploy is Script {
             MezoAddresses.TESTNET_MUSD,
             MezoAddresses.BTC,
             MezoAddresses.TESTNET_ROUTER,
-            MezoAddresses.TESTNET_POOL_FACTORY
+            MezoAddresses.TESTNET_POOL_FACTORY,
+            MezoAddresses.TESTNET_MUSD_BTC_POOL
         );
         CoilFactory factory = new CoilFactory(address(implementation), deployer);
         vm.stopBroadcast();

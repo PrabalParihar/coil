@@ -6,6 +6,9 @@ pragma solidity 0.8.24;
 ///         address; its balanceOf matches address.balance on testnet.
 library MezoAddresses {
     address internal constant BTC = 0x7b7C000000000000000000000000000000000000;
+    /// @dev MEZO precompile. Same address on testnet and mainnet. `transfer` and
+    ///      `balanceOf` count toward the 20-precompile-call budget.
+    address internal constant MEZO = 0x7B7c000000000000000000000000000000000001;
 
     // --- matsnet / Mezo testnet (chain 31611) ---
     address internal constant TESTNET_MUSD = 0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503;

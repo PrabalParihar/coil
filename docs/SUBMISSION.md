@@ -57,3 +57,16 @@ Testnet prototype, submission-ready for Wave 1. Fork tests pass. The app builds 
 ## Team
 
 Prabal Pratap Singh. Solo. X: https://x.com/0xPrabalParihar. GitHub: https://github.com/PrabalParihar. 6+ years of experience and 10 hackathon wins.
+
+## Wave 2 update (draft, not posted)
+
+Title stays Coil. The product name in the app is Coil Labs, so it is not confused with a different Wave 1 project that also used the name Coil.
+
+What changed since Wave 1:
+
+- `flashLoop` opens about 4× (collateral ratio 133.33%) in one transaction via a Mezo Pools flash swap. The old `loop` still stops after two swaps because a third swap blows the 20-precompile cap. Flash unwind and flash de-lever are one transaction each (8 and 10 precompile calls). `guard()` with a MEZO tip is 12. All sit under 20.
+- `guard()` is permissionless. The caller earns MEZO only when the collateral ratio rose, at most once per block. The call cannot loop, unwind, or withdraw, and it cannot send BTC or MUSD to the caller.
+- The keeper polls with `--watch`, simulates `guard()` before sending, and can alert Telegram when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set. It runs with both unset. `keeper/Dockerfile` and `keeper/railway.json` are ready to deploy. The public page is `/guard`.
+- The app connects Bitcoin and EVM wallets through Mezo Passport, shows a redemption-rank preview, and offers 4× / 3× / 2× presets.
+
+Not done, and not claimed: a new testnet broadcast, a rescue transaction, a recut video, an AKINDO comment, a Railway service, a mainnet deploy, or a vault share token. The live factory is still `0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e`. Wave 2 needs a new factory because clones are not upgradeable.

@@ -21,6 +21,8 @@ export const addr = {
   router: "0x9a1ff7FE3a0F69959A3fBa1F1e5ee18e1A9CD7E9",
   poolFactory: "0x4947243CC818b627A5D06d14C4eCe7398A23Ce1A",
   pool: "0xd16A5Df82120ED8D626a1a15232bFcE2366d6AA9",
+  mezo: "0x7B7c000000000000000000000000000000000001",
+  sortedTroves: "0x722E4D24FD6Ff8b0AC679450F3D91294607268fA",
 } as const;
 
 /** Live Mezo testnet factory. Override with NEXT_PUBLIC_COIL_FACTORY. */
@@ -33,6 +35,53 @@ export const factoryAddress = /^0x[a-fA-F0-9]{40}$/.test(factoryEnv)
   : DEPLOYED_FACTORY;
 
 export const ZERO = "0x0000000000000000000000000000000000000000" as const;
+
+export const erc20Abi = [
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
+export const sortedTrovesAbi = [
+  {
+    type: "function",
+    name: "getLast",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "getPrev",
+    stateMutability: "view",
+    inputs: [{ name: "_id", type: "address" }],
+    outputs: [{ name: "", type: "address" }],
+  },
+] as const;
+
+export const troveManagerAbi = [
+  {
+    type: "function",
+    name: "getNominalICR",
+    stateMutability: "view",
+    inputs: [{ name: "_borrower", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
 
 export const priceFeedAbi = [
   {
@@ -131,6 +180,42 @@ export const coilFactoryAbi = [
     inputs: [],
     outputs: [{ name: "", type: "address" }],
   },
+  {
+    type: "function",
+    name: "implementation",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "accounts",
+    stateMutability: "view",
+    inputs: [{ name: "", type: "uint256" }],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "accountsLength",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "heartbeat",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    type: "event",
+    name: "Heartbeat",
+    inputs: [
+      { name: "keeper", type: "address", indexed: true },
+      { name: "timestamp", type: "uint256", indexed: false },
+    ],
+  },
 ] as const;
 
 export const positionComponents = [
@@ -160,6 +245,113 @@ export const coilAccountAbi = [
   },
   {
     type: "function",
+    name: "flashLoop",
+    stateMutability: "payable",
+    inputs: [
+      { name: "targetCR", type: "uint256" },
+      { name: "maxSlippageBps", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "flashUnwind",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "fractionWad", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "flashDeleverTo",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "targetCR", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "quoteFlashLoop",
+    stateMutability: "view",
+    inputs: [
+      { name: "collateralIn", type: "uint256" },
+      { name: "targetCR", type: "uint256" },
+      { name: "slippageBps", type: "uint256" },
+    ],
+    outputs: [
+      {
+        name: "q",
+        type: "tuple",
+        components: [
+          { name: "collateral", type: "uint256" },
+          { name: "debt", type: "uint256" },
+          { name: "cr", type: "uint256" },
+          { name: "liquidationPrice", type: "uint256" },
+          { name: "musdMinted", type: "uint256" },
+          { name: "iterations", type: "uint256" },
+        ],
+      },
+      { name: "flashBtc", type: "uint256" },
+      { name: "poolFeeMusd", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "precompileBudget",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "loopCalls", type: "uint256" },
+      { name: "unwindCalls", type: "uint256" },
+      { name: "deleverCalls", type: "uint256" },
+      { name: "guardCalls", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "previewRedemptionRank",
+    stateMutability: "view",
+    inputs: [
+      { name: "collateral", type: "uint256" },
+      { name: "debt", type: "uint256" },
+    ],
+    outputs: [{ name: "rank", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "redemptionEdge",
+    stateMutability: "view",
+    inputs: [{ name: "zone", type: "uint32" }],
+    outputs: [{ name: "nicr", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "tipMezo",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "tipBalance",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "fundTips",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "amount", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "guard",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [{ name: "acted", type: "bool" }],
+  },
+  {
+    type: "function",
     name: "unwind",
     stateMutability: "nonpayable",
     inputs: [{ name: "fractionWad", type: "uint256" }],
@@ -182,6 +374,38 @@ export const coilAccountAbi = [
       { name: "zone", type: "uint32" },
     ],
     outputs: [],
+  },
+  {
+    type: "function",
+    name: "setGuard",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "floor", type: "uint256" },
+      { name: "target", type: "uint256" },
+      { name: "zone", type: "uint32" },
+      { name: "tip", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "event",
+    name: "Guarded",
+    inputs: [
+      { name: "caller", type: "address", indexed: true },
+      { name: "crBefore", type: "uint256", indexed: false },
+      { name: "crAfter", type: "uint256", indexed: false },
+      { name: "tip", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "Delevered",
+    inputs: [
+      { name: "owner", type: "address", indexed: true },
+      { name: "targetCR", type: "uint256", indexed: false },
+      { name: "cr", type: "uint256", indexed: false },
+      { name: "debt", type: "uint256", indexed: false },
+    ],
   },
   {
     type: "function",

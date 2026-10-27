@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console2} from "forge-std/Test.sol";
 import {CoilAccount} from "../src/CoilAccount.sol";
 import {CoilFactory} from "../src/CoilFactory.sol";
 import {MezoAddresses} from "../src/MezoAddresses.sol";
-import {IBorrowerOperations, ITroveManager, IPriceFeed, IRouter} from "../src/interfaces/Mezo.sol";
+import {IBorrowerOperations, ITroveManager, IPriceFeed, IRouter, IERC20} from "../src/interfaces/Mezo.sol";
 
 interface IPoolView {
     function token0() external view returns (address);
@@ -78,6 +78,7 @@ contract CoilForkTest is Test {
 
         _mockPrice(spot);
         _installBtcMirror();
+        _installMezo();
 
         implementation = new CoilAccount(
             MezoAddresses.TESTNET_BORROWER_OPERATIONS,
@@ -88,7 +89,8 @@ contract CoilForkTest is Test {
             MezoAddresses.TESTNET_MUSD,
             MezoAddresses.BTC,
             MezoAddresses.TESTNET_ROUTER,
-            MezoAddresses.TESTNET_POOL_FACTORY
+            MezoAddresses.TESTNET_POOL_FACTORY,
+            MezoAddresses.TESTNET_MUSD_BTC_POOL
         );
         factory = new CoilFactory(address(implementation), address(this));
     }
@@ -261,6 +263,189 @@ contract CoilForkTest is Test {
         assertLt(p.cr, 2.15e18);
     }
 
+    function test_precompileBudgetFits() public view {
+        (uint256 loopCalls, uint256 unwindCalls, uint256 deleverCalls, uint256 guardCalls) =
+            implementation.precompileBudget();
+        assertEq(loopCalls, 7);
+        assertEq(unwindCalls, 8);
+        assertEq(deleverCalls, 10);
+        assertEq(guardCalls, 12);
+        assertLe(guardCalls, 16);
+    }
+
+    function test_flashLoopReachesThreeTimes() public {
+        (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.5e18, 50);
+        CoilAccount.Position memory p = account.position();
+        assertTrue(p.active);
+        assertGe(p.cr, 1.5e18);
+        assertLt(p.cr, 1.6e18);
+        assertGt(p.collateral, 0.35 ether);
+        assertEq(p.owner, user);
+        assertEq(address(account).balance, 0);
+    }
+
+    function test_flashLoopReachesAboutFourTimes() public {
+        // 4× leverage is a collateral ratio of 4/3 ≈ 133.33%.
+        uint256 target = uint256(4e18) / 3;
+        (, CoilAccount account) = _flashOpen(0.25 ether, target, 100);
+        CoilAccount.Position memory p = account.position();
+        assertTrue(p.active);
+        assertGe(p.cr, target);
+        assertLt(p.cr, target + 0.05e18);
+        // Leverage is CR / (CR − 1), scaled by 10_000 so 4.00× is 40_000.
+        uint256 leverageBps = p.cr * 10_000 / (p.cr - 1e18);
+        console2.log("four-x collateral ratio", p.cr);
+        console2.log("four-x leverage bps", leverageBps);
+        assertGe(leverageBps, 38_000);
+        assertLt(leverageBps, 41_000);
+    }
+
+    function test_flashQuoteAgrees() public {
+        (CoilAccount.LoopQuote memory q, uint256 flashBtc, uint256 poolFee) =
+            implementation.quoteFlashLoop(0.2 ether, 1.5e18, 50);
+        assertGt(flashBtc, 0);
+        assertGt(poolFee, 0);
+        assertGe(q.cr, 1.5e18);
+        (, CoilAccount account) = _flashOpen(0.2 ether, 1.5e18, 50);
+        CoilAccount.Position memory p = account.position();
+        assertApproxEqRel(p.collateral, q.collateral, 0.02e18);
+        assertApproxEqRel(p.debt, q.debt, 0.02e18);
+    }
+
+    function test_flashUnwindAndDeleverAreOneCall() public {
+        (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.5e18, 50);
+        uint256 opened = account.position().cr;
+        vm.prank(user);
+        account.flashDeleverTo(2e18);
+        assertGe(account.position().cr, 2e18);
+        assertGt(account.position().cr, opened);
+
+        uint256 before = user.balance;
+        vm.prank(user);
+        account.flashUnwind(1e18);
+        assertFalse(account.position().active);
+        assertGt(user.balance - before, 0.15 ether);
+    }
+
+    function test_tightSlippageReverts() public {
+        address user = makeAddr("tight");
+        vm.deal(user, 1 ether);
+        vm.prank(user);
+        factory.createAccount();
+        CoilAccount account = CoilAccount(payable(factory.accountOf(user)));
+        vm.prank(user);
+        vm.expectRevert(CoilAccount.Slippage.selector);
+        account.flashLoop{value: 0.2 ether}(1.5e18, 1);
+    }
+
+    function test_hookRejectsSpoof() public {
+        (, CoilAccount account) = _flashOpen(0.12 ether, 2e18, 50);
+        vm.expectRevert(CoilAccount.NotPool.selector);
+        account.hook(address(this), 0, 1, hex"01");
+
+        vm.prank(address(account.pool()));
+        vm.expectRevert(CoilAccount.BadFlash.selector);
+        account.hook(address(this), 0, 1, hex"01");
+    }
+
+    function test_strangerGuardPaysMezoOnlyWhenSafer() public {
+        (address user, CoilAccount account) = _flashOpen(0.22 ether, 1.7e18, 50);
+        address stranger = makeAddr("stranger");
+        uint256 tip = 25e18;
+        _mintMezo(user, 100e18);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.MEZO).approve(address(account), tip);
+        account.fundTips(tip);
+        account.setGuard(1.5e18, 2.2e18, 4, tip);
+        vm.stopPrank();
+
+        uint256 strangerBefore = IERC20(MezoAddresses.MEZO).balanceOf(stranger);
+        vm.prank(stranger);
+        bool acted = account.guard();
+        assertFalse(acted);
+        assertEq(IERC20(MezoAddresses.MEZO).balanceOf(stranger), strangerBefore);
+
+        uint256 dropped = spot * 80 / 100;
+        _mockPrice(dropped);
+        assertLt(account.position().cr, 1.5e18);
+        uint256 crBefore = account.position().cr;
+        uint256 btcBefore = stranger.balance;
+        uint256 musdBefore = IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(stranger);
+
+        vm.prank(stranger);
+        acted = account.guard();
+        assertTrue(acted);
+        assertGt(account.position().cr, crBefore);
+        assertEq(IERC20(MezoAddresses.MEZO).balanceOf(stranger), strangerBefore + tip);
+        assertEq(stranger.balance, btcBefore);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(stranger), musdBefore);
+
+        vm.prank(stranger);
+        acted = account.guard();
+        assertFalse(acted);
+        assertEq(IERC20(MezoAddresses.MEZO).balanceOf(stranger), strangerBefore + tip);
+    }
+
+    function test_underfundedTipPaysBalance() public {
+        (address user, CoilAccount account) = _flashOpen(0.22 ether, 1.8e18, 50);
+        address stranger = makeAddr("partial-tip");
+        _mintMezo(user, 4e18);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.MEZO).approve(address(account), 4e18);
+        account.fundTips(4e18);
+        account.setGuard(1.6e18, 2.4e18, 0, 20e18);
+        vm.stopPrank();
+        _mockPrice(spot * 80 / 100);
+        vm.prank(stranger);
+        assertTrue(account.guard());
+        assertEq(IERC20(MezoAddresses.MEZO).balanceOf(stranger), 4e18);
+        assertEq(IERC20(MezoAddresses.MEZO).balanceOf(address(account)), 0);
+    }
+
+    function test_keeperCannotLoopUnwindOrTakeTips() public {
+        (address user, CoilAccount account) = _flashOpen(0.16 ether, 1.8e18, 50);
+        address keeper = makeAddr("keeper-bounds");
+        _mintMezo(user, 10e18);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.MEZO).approve(address(account), 10e18);
+        account.fundTips(10e18);
+        account.setKeeper(keeper);
+        account.setGuard(1.5e18, 2e18, 0, 10e18);
+        vm.stopPrank();
+
+        vm.startPrank(keeper);
+        vm.expectRevert(CoilAccount.NotOwner.selector);
+        account.flashLoop{value: 0}(1.5e18, 50);
+        vm.expectRevert(CoilAccount.NotOwner.selector);
+        account.unwind(1e18);
+        vm.expectRevert(CoilAccount.NotOwner.selector);
+        account.flashUnwind(0.5e18);
+        vm.expectRevert(CoilAccount.NotOwner.selector);
+        account.withdrawTips(1e18);
+        vm.expectRevert(CoilAccount.NotOwner.selector);
+        account.sweep();
+        vm.expectRevert(CoilAccount.KeeperLimited.selector);
+        account.flashDeleverTo(3e18);
+        vm.stopPrank();
+
+        vm.prank(user);
+        account.unwind(1e18);
+        assertFalse(account.position().active);
+        assertEq(IERC20(MezoAddresses.MEZO).balanceOf(address(account)), 10e18);
+    }
+
+    /// forge-config: default.fuzz.runs = 8
+    function testFuzz_flashLoopStaysAboveTarget(uint96 depositRaw, uint16 targetPct) public {
+        uint256 deposit = bound(uint256(depositRaw), 0.1 ether, 0.35 ether);
+        uint256 pct = bound(uint256(targetPct), 140, 220);
+        uint256 target = pct * 1e16;
+        (, CoilAccount account) = _flashOpen(deposit, target, 100);
+        CoilAccount.Position memory p = account.position();
+        assertTrue(p.active);
+        assertGe(p.cr, target);
+        assertGt(p.collateral, deposit);
+    }
+
     function test_twoUsersGetDistinctClones() public {
         (, CoilAccount a) = _open(0.12 ether, 2.5e18, 50);
         (, CoilAccount b) = _open(0.12 ether, 2.5e18, 50);
@@ -294,6 +479,24 @@ contract CoilForkTest is Test {
         account.loop{value: collateral}(targetCR, slip);
     }
 
+    function _flashOpen(uint256 collateral, uint256 targetCR, uint256 slip)
+        internal
+        returns (address user, CoilAccount account)
+    {
+        userNonce++;
+        user = makeAddr(string(abi.encodePacked("flash-user-", vm.toString(userNonce))));
+        vm.deal(user, collateral + 1 ether);
+        vm.prank(user);
+        factory.createAccount();
+        account = CoilAccount(payable(factory.accountOf(user)));
+        vm.prank(user);
+        account.flashLoop{value: collateral}(targetCR, slip);
+    }
+
+    function _mintMezo(address to, uint256 amount) internal {
+        deal(MezoAddresses.MEZO, to, amount);
+    }
+
     function _mockPrice(uint256 price) internal {
         vm.mockCall(
             MezoAddresses.TESTNET_PRICE_FEED,
@@ -307,5 +510,10 @@ contract CoilForkTest is Test {
         vm.etch(MezoAddresses.BTC, address(mirror).code);
         deal(MezoAddresses.BTC, MezoAddresses.TESTNET_MUSD_BTC_POOL, reserveBtc);
         vm.deal(MezoAddresses.BTC, 5_000 ether);
+    }
+
+    function _installMezo() internal {
+        MockWbtc token = new MockWbtc();
+        vm.etch(MezoAddresses.MEZO, address(token).code);
     }
 }

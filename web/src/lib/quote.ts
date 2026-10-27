@@ -152,6 +152,141 @@ export function quoteLoop(
   };
 }
 
+export type FlashPreview = LoopPreview & {
+  flashBtc: bigint;
+  poolFeeMusd: bigint;
+};
+
+function amountIn(
+  reserveIn: bigint,
+  reserveOut: bigint,
+  amountOut_: bigint,
+  feeBps: bigint,
+): bigint {
+  if (amountOut_ === 0n || amountOut_ >= reserveOut || feeBps >= BPS || reserveIn === 0n) return 0n;
+  const outLeft = reserveOut - amountOut_;
+  const net = BPS - feeBps;
+  let guess = (reserveIn * amountOut_ * BPS) / (outLeft * net) + 1n;
+  for (let i = 0; i < 8; i++) {
+    const fee = (guess * feeBps) / BPS;
+    if (fee >= guess) return 0n;
+    const kept = guess - fee;
+    const balIn = reserveIn + kept;
+    if (balIn * outLeft >= reserveIn * reserveOut) return guess;
+    guess += 1n;
+  }
+  return 0n;
+}
+
+function openDebt(amount: bigint, rate: bigint) {
+  return GAS + amount + (amount * rate) / WAD;
+}
+
+type Fit = { ok: boolean; owed: bigint; minted: bigint };
+
+function flashFits(
+  deposit: bigint,
+  targetCR: bigint,
+  market: Market,
+  minAmt: bigint,
+  flash: bigint,
+): Fit {
+  let owed = 0n;
+  if (flash > 0n) {
+    owed = amountIn(market.reserveMusd, market.reserveBtc, flash, market.feeBps);
+    if (owed === 0n) return { ok: false, owed: 0n, minted: 0n };
+  }
+  const minted = owed < minAmt ? minAmt : owed;
+  const coll = deposit + flash;
+  if (coll === 0n || minted === 0n) return { ok: false, owed, minted };
+  const debt = openDebt(minted, market.borrowRate);
+  const cap = (coll * market.price) / (MCR + OPEN_HEADROOM);
+  if (debt > cap) return { ok: false, owed, minted };
+  if ((coll * market.price) / debt < targetCR) return { ok: false, owed, minted };
+  return { ok: true, owed, minted };
+}
+
+/** One-transaction flash loop. Matches `FlashSizer` for a fresh trove. */
+export function quoteFlashLoop(
+  collateralIn: bigint,
+  targetCR: bigint,
+  slippageBps: bigint,
+  market: Market,
+): FlashPreview {
+  if (collateralIn <= 0n) throw new QuoteError("Enter an amount of BTC.");
+  if (market.price <= 0n) throw new QuoteError("The Mezo price feed returned zero.");
+  if (slippageBps <= 0n || slippageBps > 300n) {
+    throw new QuoteError("Slippage must sit between 0.01% and 3%.");
+  }
+  if (targetCR < 115n * 10n ** 16n) throw new QuoteError("Coil will not target below 115%.");
+  if (market.reserveBtc < 5n) throw new QuoteError("The MUSD/BTC pool has no BTC liquidity.");
+
+  const minAmt =
+    (market.minNetDebt * WAD + (WAD + market.borrowRate) - 1n) / (WAD + market.borrowRate);
+
+  let hi = market.reserveBtc / 5n;
+  let lo = 0n;
+  let best = 0n;
+  for (let i = 0; i < 72; i++) {
+    const mid = (lo + hi + 1n) / 2n;
+    if (flashFits(collateralIn, targetCR, market, minAmt, mid).ok) {
+      best = mid;
+      lo = mid;
+    } else if (mid === 0n) {
+      break;
+    } else {
+      hi = mid - 1n;
+    }
+  }
+
+  let chosen = flashFits(collateralIn, targetCR, market, minAmt, best);
+  let flash = best;
+  if (!chosen.ok) {
+    chosen = flashFits(collateralIn, targetCR, market, minAmt, 0n);
+    flash = 0n;
+  }
+  if (!chosen.ok || chosen.minted === 0n) {
+    throw new QuoteError(
+      "This deposit cannot open at that ratio. Mezo requires at least 1,800 MUSD of debt, and borrowing that much would land under your target. Add BTC or choose a lower collateral ratio.",
+    );
+  }
+  if (flash > 0n) {
+    const fair = (flash * market.price) / WAD;
+    if (fair === 0n || chosen.owed > (fair * (BPS + slippageBps)) / BPS) {
+      throw new QuoteError(
+        "The pool quote is outside your slippage. Raise the slippage limit or choose a higher collateral ratio.",
+      );
+    }
+  }
+
+  const coll = collateralIn + flash;
+  const debt = openDebt(chosen.minted, market.borrowRate);
+  const cr = (coll * market.price) / debt;
+  return {
+    collateral: coll,
+    debt,
+    cr,
+    liquidationPrice: (MCR * debt) / coll,
+    musdMinted: chosen.minted,
+    iterations: flash === 0n ? 0 : 1,
+    leverage: leverageLabel(cr),
+    flashBtc: flash,
+    poolFeeMusd: (chosen.owed * market.feeBps) / BPS,
+  };
+}
+
+/** Nominal ICR, Liquity scale: collateral * 1e20 / debt. */
+export function nominalIcr(collateral: bigint, debt: bigint) {
+  if (debt === 0n) return 0n;
+  return (collateral * 10n ** 20n) / debt;
+}
+
+/** Convert a nominal ICR and a price into a collateral ratio (1e18 = 100%). */
+export function icrFromNominal(nicr: bigint, price: bigint) {
+  if (nicr === 0n || price === 0n) return 0n;
+  return (nicr * price) / 10n ** 20n;
+}
+
 export function leverageLabel(cr: bigint) {
   if (cr <= WAD) return "—";
   const bps = (cr * 100n) / (cr - WAD);
