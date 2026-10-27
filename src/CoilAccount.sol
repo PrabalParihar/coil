@@ -5,6 +5,7 @@ import {IBorrowerOperations, ITroveManager, ISortedTroves, IHintHelpers, IPriceF
 import {ICoilFactory} from "./ICoilFactory.sol";
 import {MezoAddresses} from "./MezoAddresses.sol";
 import {FlashSizer} from "./libraries/FlashMath.sol";
+import {CoilLegacy} from "./libraries/CoilLegacy.sol";
 
 /// @title CoilAccount
 /// @notice One clone per user. The clone is the MUSD trove owner.
@@ -26,6 +27,11 @@ import {FlashSizer} from "./libraries/FlashMath.sol";
 ///      All of those sit under 16, leaving margin if a BorrowerOperations call
 ///      touches one extra precompile. The iterative `loop` is unchanged and still
 ///      stops after two swaps.
+///
+///      Router fallback (`loop`, sale unwind, quotes, hints, sweep) lives in
+///      CoilLegacy and is reached with DELEGATECALL. That call is not a
+///      precompile, and `address(this)` stays this clone. The counts above
+///      do not change. `precompileBudget()` stays on this contract.
 ///
 ///      On Mezo, BTC at 0x7b7c…0000 reports the native balance. Fork tests etch a
 ///      WETH-style token at that address; wrap and unwrap exist for that case.
@@ -216,33 +222,9 @@ contract CoilAccount is IPoolCallee {
         if (maxSlippageBps == 0 || maxSlippageBps > 300) revert BadSlippage();
         if (targetCR < MIN_TARGET_CR || targetCR > 10e18) revert BadCR();
         slippageBps = uint16(maxSlippageBps);
-
-        uint256 price = priceFeed.fetchPrice();
-        if (troveManager.checkRecoveryMode(price)) revert RecoveryMode();
-
-        bool exists = _active();
-        if (!exists && msg.value == 0) revert ZeroAmount();
-        if (exists && msg.value == 0 && _cr(price) <= targetCR) revert AlreadyAtTarget();
-        if (exists && msg.value > 0) _addColl(msg.value);
-
-        uint256 pending = exists ? 0 : msg.value;
-        uint256 swaps;
-        for (uint256 i; i < MAX_ITERS && swaps < MAX_SWAPS_PER_TX; ++i) {
-            bool stop;
-            (pending, stop) = _leverStep(targetCR, maxSlippageBps, pending, price, swaps);
-            if (stop) break;
-            unchecked {
-                ++swaps;
-            }
-        }
-        if (pending != 0) revert CannotOpen();
-        if (!_active()) revert CannotOpen();
-
-        uint256 endCr = _cr(price);
-        if (endCr < targetCR) revert BelowTarget();
-        emit Looped(
-            owner, targetCR, troveManager.getTroveColl(address(this)), troveManager.getTroveDebt(address(this)), endCr
-        );
+        // Router loop lives in CoilLegacy so this clone stays under EIP-170.
+        // DELEGATECALL keeps address(this) as the clone. No extra precompile calls.
+        CoilLegacy.runLoop(_env(), targetCR, maxSlippageBps);
     }
 
     /// @param fractionWad Share of net debt to repay, 1e18 = close the trove and return BTC.
@@ -374,33 +356,13 @@ contract CoilAccount is IPoolCallee {
         if (collateralIn == 0) revert ZeroAmount();
         if (targetCR < MIN_TARGET_CR || targetCR > 10e18) revert BadCR();
         if (slippageBps_ == 0 || slippageBps_ > 300) revert BadSlippage();
-
-        uint256 price = priceFeed.fetchPrice();
-        uint256 rate = borrowerOperations.borrowingRate();
-        uint8 refiPct = borrowerOperations.refinancingFeePercentage();
-        uint256 coll = collateralIn;
-        uint256 debt;
-
-        for (uint256 i; i < MAX_SWAPS_PER_TX; ++i) {
-            if (debt != 0 && coll * price / debt <= targetCR) break;
-            bool last = i + 1 == MAX_SWAPS_PER_TX;
-            uint8 feePct = last ? 0 : refiPct;
-            uint256 cap = debt == 0 ? coll * price / (MCR + OPEN_HEADROOM) : coll * price / MCR;
-            uint256 maxAmt = _amountFromCap(debt, cap, rate);
-            uint256 amount = _borrowAmount(coll, debt, price, targetCR, maxAmt, slippageBps_, rate, feePct);
-            if (amount == 0) break;
-            uint256 btcOut = _btcMinOut(amount, slippageBps_);
-            debt = _projectedDebt(debt, amount, rate, !last, feePct);
-            coll += btcOut;
-            q.musdMinted += amount;
-            q.iterations = i + 1;
-            if (last || coll * price / debt <= targetCR + CR_BUFFER) break;
-        }
-
-        q.collateral = coll;
-        q.debt = debt;
-        q.cr = debt == 0 ? 0 : coll * price / debt;
-        q.liquidationPrice = coll == 0 ? 0 : MCR * debt / coll;
+        CoilLegacy.Quote memory got = CoilLegacy.quoteLoop(_env(), collateralIn, targetCR, slippageBps_);
+        q.collateral = got.collateral;
+        q.debt = got.debt;
+        q.cr = got.cr;
+        q.liquidationPrice = got.liquidationPrice;
+        q.musdMinted = got.musdMinted;
+        q.iterations = got.iterations;
     }
 
     /// @notice 1 = lowest collateral ratio, the first trove a redemption walks.
@@ -830,239 +792,21 @@ contract CoilAccount is IPoolCallee {
         lastTipBlock = block.number;
     }
 
+
     function _unwindSale(uint256 fractionWad, uint256 price, uint256 toRepay) internal {
-        uint256 repaid;
-        uint256 saleCap = _saleCap();
-        for (uint256 i; i < saleCap && repaid < toRepay; ++i) {
-            uint256 short = toRepay - repaid;
-            uint256 coll = troveManager.getTroveColl(address(this));
-            uint256 debt = troveManager.getTroveDebt(address(this));
-            uint256 maxW = _maxWithdraw(coll, debt, price);
-            if (maxW == 0) break;
-            uint256 sell = _btcInForMusd(short, slippageBps);
-            if (sell == 0 || sell > maxW) sell = maxW;
-            uint256 got = _sellAndRepay(sell, short);
-            if (got == 0) break;
-            repaid += got;
-        }
-        if (repaid < toRepay && (toRepay - repaid) * 100 > toRepay && !(_btcMirror() && repaid > 0)) {
-            revert ShortRepay();
-        }
-        _sweep();
-        emit Unwound(owner, fractionWad, _active() ? _cr(price) : type(uint256).max);
-    }
-
-    // ---------------------------------------------------------------------
-    // Leverage step
-    // ---------------------------------------------------------------------
-
-    function _leverStep(uint256 targetCR, uint256 slip, uint256 pending, uint256 price, uint256 completedSwaps)
-        internal
-        returns (uint256, bool)
-    {
-        uint256 coll = pending > 0 ? pending : troveManager.getTroveColl(address(this));
-        uint256 debt = pending > 0 ? 0 : troveManager.getTroveDebt(address(this));
-        if (debt != 0 && coll * price / debt <= targetCR) return (0, true);
-
-        // The last round in this transaction is not refinanced, so the sizing
-        // must not reserve a refinance fee it will never pay.
-        bool last = completedSwaps + 1 >= MAX_SWAPS_PER_TX;
-        uint256 rate = borrowerOperations.borrowingRate();
-        uint8 refiPct = borrowerOperations.refinancingFeePercentage();
-        uint8 feePct = last ? 0 : refiPct;
-        uint256 cap = debt == 0 ? coll * price / (MCR + OPEN_HEADROOM) : troveManager.getTroveMaxBorrowingCapacity(address(this));
-        uint256 maxAmt = _amountFromCap(debt, cap, rate);
-        uint256 amount = _borrowAmount(coll, debt, price, targetCR, maxAmt, slip, rate, feePct);
-        if (amount == 0) {
-            if (pending > 0) revert CannotOpen();
-            return (0, true);
-        }
-
-        uint256 minBtc = _btcMinOut(amount, slip);
-        if (minBtc == 0) revert Slippage();
-        uint256 fee = amount * rate / WAD;
-
-        if (debt == 0) {
-            (address upper, address lower) = _hintPair(pending, amount + fee + GAS_COMPENSATION);
-            borrowerOperations.openTrove{value: pending}(amount, upper, lower);
-            pending = 0;
-        } else {
-            uint256 newPrincipal = troveManager.getTrovePrincipal(address(this)) + amount + fee;
-            (address upper, address lower) = _hintPair(coll, newPrincipal);
-            borrowerOperations.withdrawMUSD(amount, upper, lower);
-        }
-
-        uint256 btcGot = _swapMusdToBtc(amount, minBtc);
-        uint256 principal = troveManager.getTrovePrincipal(address(this));
-        (address upperAdd, address lowerAdd) = _hintPair(troveManager.getTroveColl(address(this)) + btcGot, principal);
-        borrowerOperations.addColl{value: btcGot}(upperAdd, lowerAdd);
-
-        uint256 crNow = troveManager.getTroveColl(address(this)) * price / troveManager.getTroveDebt(address(this));
-        // Stop while the ratio is still above the target. Another swap would be
-        // the third BTC transfer in this transaction, which Mezo rejects.
-        if (last || crNow <= targetCR + CR_BUFFER) return (0, true);
-
-        (address upperRefi, address lowerRefi) = _hintPair(
-            troveManager.getTroveColl(address(this)), troveManager.getTrovePrincipal(address(this))
-        );
-        borrowerOperations.refinance(upperRefi, lowerRefi);
-        return (0, false);
+        CoilLegacy.unwindSale(_env(), fractionWad, price, toRepay, slippageBps);
     }
 
     function _addColl(uint256 amount) internal {
-        (address upper, address lower) = _hintPair(troveManager.getTroveColl(address(this)) + amount, troveManager.getTrovePrincipal(address(this)));
-        borrowerOperations.addColl{value: amount}(upper, lower);
-        (upper, lower) = _hintPair(troveManager.getTroveColl(address(this)), troveManager.getTrovePrincipal(address(this)));
-        borrowerOperations.refinance(upper, lower);
-    }
-
-    /// @dev Collateral sales that fit in this transaction. Live Mezo allows one:
-    ///      a sale is a withdraw, a BTC swap, and usually a repay, and a second
-    ///      sale crosses the 20-precompile-call cap. The fork mock is not capped.
-    function _saleCap() internal view returns (uint256) {
-        return _btcMirror() ? 1 : MAX_ITERS;
+        CoilLegacy.addColl(_env(), amount);
     }
 
     function _deleverTo(uint256 targetCR, uint256 price) internal {
-        uint256 sales = _saleCap();
-        for (uint256 i; i < sales; ++i) {
-            uint256 coll = troveManager.getTroveColl(address(this));
-            uint256 debt = troveManager.getTroveDebt(address(this));
-            if (debt <= GAS_COMPENSATION) return;
-            uint256 crNow = coll * price / debt;
-            if (crNow >= targetCR) return;
-
-            uint256 maxW = _maxWithdraw(coll, debt, price);
-            uint256 room = _maxRepay(debt);
-            // At the 1,800 MUSD floor, `room` is zero or a few wei of interest.
-            // Selling collateral that cannot be repaid drops the ratio.
-            if (maxW == 0 || room == 0) {
-                if (_btcMirror()) return;
-                revert MinDebt();
-            }
-            uint256 sell = _btcToReach(coll, debt, price, targetCR, maxW, slippageBps);
-            // Never sell more BTC than this repay can absorb. Extra MUSD would
-            // be swept to the owner instead of burned, and the ratio would fall.
-            uint256 forRoom = _btcInForMusd(room, slippageBps);
-            if (forRoom != 0 && (sell == 0 || forRoom < sell)) sell = forRoom;
-            if (sell == 0 || sell > maxW) {
-                if (_btcMirror()) return;
-                revert MinDebt();
-            }
-            if (_crAfterCappedRepay(coll, debt, sell, price, slippageBps, room) <= crNow) {
-                if (_btcMirror()) return;
-                revert NotSafer();
-            }
-            _sellAndRepay(sell, room);
-        }
-        if (!_btcMirror() && _cr(price) < targetCR) revert Iterations();
+        CoilLegacy.deleverIter(_env(), targetCR, price, slippageBps);
     }
 
     function _unwindAll(uint256 price) internal {
-        uint256 sales;
-        uint256 saleCap = _btcMirror() ? 1 : MAX_ITERS + 2;
-        for (uint256 i; i < MAX_ITERS + 2; ++i) {
-            uint256 debt = troveManager.getTroveDebt(address(this));
-            uint256 need = debt - GAS_COMPENSATION;
-            uint256 have = musd.balanceOf(address(this));
-            if (have >= need) {
-                borrowerOperations.closeTrove();
-                _sweep();
-                return;
-            }
-            // One sale is committed. Closing in this same call is still inside
-            // the budget when the sale already raised enough MUSD; otherwise the
-            // next transaction continues.
-            if (sales >= saleCap) return;
-
-            uint256 coll = troveManager.getTroveColl(address(this));
-            uint256 maxW = _maxWithdraw(coll, debt, price);
-            if (maxW == 0) revert MinDebt();
-
-            uint256 short = need - have;
-            uint256 btcForShort = _btcInForMusd(short, slippageBps);
-            if (btcForShort != 0 && btcForShort <= maxW) {
-                _withdrawAndSwap(btcForShort);
-                sales++;
-                continue;
-            }
-
-            uint256 maxRepay = _maxRepay(debt);
-            if (maxRepay == 0) revert MinDebt();
-            uint256 btcForRepay = _btcInForMusd(maxRepay, slippageBps);
-            if (btcForRepay == 0 || btcForRepay > maxW) btcForRepay = maxW;
-            _sellAndRepay(btcForRepay, maxRepay);
-            sales++;
-        }
-        if (!_btcMirror()) revert Iterations();
-    }
-
-    function _withdrawAndSwap(uint256 btcAmount) internal returns (uint256 musdGot) {
-        uint256 minMusd = _musdMinOut(btcAmount, slippageBps);
-        if (minMusd == 0) revert Slippage();
-        (address upper, address lower) = _hintPair(
-            troveManager.getTroveColl(address(this)) - btcAmount, troveManager.getTrovePrincipal(address(this))
-        );
-        borrowerOperations.withdrawColl(btcAmount, upper, lower);
-        musdGot = _swapBtcToMusd(btcAmount, minMusd);
-    }
-
-    function _sellAndRepay(uint256 btcAmount, uint256 repayCap) internal returns (uint256 repaid) {
-        uint256 got = _withdrawAndSwap(btcAmount);
-        uint256 debt = troveManager.getTroveDebt(address(this));
-        uint256 cap = _maxRepay(debt);
-        if (repayCap < cap) cap = repayCap;
-        repaid = got > cap ? cap : got;
-        if (repaid == 0) return 0;
-        uint256 principal = troveManager.getTrovePrincipal(address(this));
-        uint256 hinted = principal > repaid ? principal - repaid : principal;
-        (address upper, address lower) = _hintPair(troveManager.getTroveColl(address(this)), hinted);
-        borrowerOperations.repayMUSD(repaid, upper, lower);
-    }
-
-    // ---------------------------------------------------------------------
-    // Sizing
-    // ---------------------------------------------------------------------
-
-    function _borrowAmount(
-        uint256 coll,
-        uint256 debt,
-        uint256 price,
-        uint256 targetCR,
-        uint256 maxAmount,
-        uint256 slip,
-        uint256 rate,
-        uint8 refiPct
-    ) internal view returns (uint256) {
-        if (maxAmount == 0) return 0;
-        uint256 minAmount = debt == 0 ? _minOpenAmount(rate) : 1e16;
-        if (minAmount > maxAmount) return 0;
-        if (_projectedCR(coll, debt, minAmount, price, slip, rate, refiPct) < targetCR) return 0;
-        if (_projectedCR(coll, debt, maxAmount, price, slip, rate, refiPct) >= targetCR) return maxAmount;
-
-        uint256 lo = minAmount;
-        uint256 hi = maxAmount;
-        for (uint256 i; i < 18; ++i) {
-            uint256 mid = (lo + hi + 1) / 2;
-            if (_projectedCR(coll, debt, mid, price, slip, rate, refiPct) >= targetCR) lo = mid;
-            else hi = mid - 1;
-        }
-        return lo;
-    }
-
-    function _projectedCR(
-        uint256 coll,
-        uint256 debt,
-        uint256 amount,
-        uint256 price,
-        uint256 slip,
-        uint256 rate,
-        uint8 refiPct
-    ) internal view returns (uint256) {
-        uint256 btcOut = _btcMinOut(amount, slip);
-        uint256 newDebt = _projectedDebt(debt, amount, rate, true, refiPct);
-        if (newDebt == 0) return type(uint256).max;
-        return (coll + btcOut) * price / newDebt;
+        CoilLegacy.unwindAll(_env(), price, slippageBps);
     }
 
     function _projectedDebt(uint256 debt, uint256 amount, uint256 rate, bool includeRefi, uint8 refiPct)
@@ -1078,187 +822,13 @@ contract CoilAccount is IPoolCallee {
         }
     }
 
-    function _amountFromCap(uint256 debt, uint256 cap, uint256 rate) internal pure returns (uint256) {
-        uint256 base = debt == 0 ? GAS_COMPENSATION : debt;
-        if (cap <= base) return 0;
-        uint256 room = cap - base;
-        if (debt != 0) room = room * 995 / 1000;
-        return room * WAD / (WAD + rate);
-    }
 
     function _minOpenAmount(uint256 rate) internal view returns (uint256) {
-        uint256 minNet = borrowerOperations.minNetDebt();
-        return (minNet * WAD + (WAD + rate) - 1) / (WAD + rate);
-    }
-
-    function _maxWithdraw(uint256 coll, uint256 debt, uint256 price) internal pure returns (uint256) {
-        if (price == 0 || debt == 0) return 0;
-        uint256 floor = MCR + 0.01e18;
-        uint256 minColl = (debt * floor + price - 1) / price;
-        if (coll <= minColl) return 0;
-        return coll - minColl;
+        return CoilLegacy.minOpenAmount(_env(), rate);
     }
 
     function _maxRepay(uint256 debt) internal view returns (uint256) {
-        if (debt <= GAS_COMPENSATION) return 0;
-        uint256 net = debt - GAS_COMPENSATION;
-        uint256 minNet = borrowerOperations.minNetDebt();
-        if (net <= minNet) return 0;
-        return net - minNet;
-    }
-
-    function _btcToReach(uint256 coll, uint256 debt, uint256 price, uint256 targetCR, uint256 maxBtc, uint256 slip)
-        internal
-        view
-        returns (uint256)
-    {
-        uint256 musdAtMax = _musdMinOut(maxBtc, slip);
-        uint256 cap = _maxRepay(debt);
-        if (cap != 0 && musdAtMax > cap) {
-            uint256 shrunk = _btcInForMusd(cap, slip);
-            if (shrunk != 0 && shrunk < maxBtc) maxBtc = shrunk;
-        }
-        if (maxBtc == 0) return 0;
-        if (_crAfterSell(coll, debt, maxBtc, price, slip) < targetCR) return maxBtc;
-
-        uint256 lo;
-        uint256 hi = maxBtc;
-        for (uint256 i; i < 18; ++i) {
-            uint256 mid = (lo + hi) / 2;
-            if (mid == 0 || _crAfterSell(coll, debt, mid, price, slip) < targetCR) lo = mid + 1;
-            else hi = mid;
-        }
-        return hi;
-    }
-
-    function _crAfterSell(uint256 coll, uint256 debt, uint256 btcAmt, uint256 price, uint256 slip)
-        internal
-        view
-        returns (uint256)
-    {
-        if (btcAmt >= coll) return 0;
-        uint256 musdOut = _musdMinOut(btcAmt, slip);
-        if (musdOut >= debt) return type(uint256).max;
-        return (coll - btcAmt) * price / (debt - musdOut);
-    }
-
-    /// @dev Collateral ratio after selling `btcAmt` and repaying at most `room`.
-    ///      Uses the slippage-worsened quote, so a sale that passes this check
-    ///      still raises the ratio when the pool fills at the real price.
-    function _crAfterCappedRepay(
-        uint256 coll,
-        uint256 debt,
-        uint256 btcAmt,
-        uint256 price,
-        uint256 slip,
-        uint256 room
-    ) internal view returns (uint256) {
-        if (btcAmt == 0 || btcAmt >= coll || room == 0) return 0;
-        uint256 musdOut = _musdMinOut(btcAmt, slip);
-        uint256 repaid = musdOut > room ? room : musdOut;
-        if (repaid == 0) return 0;
-        if (repaid >= debt) return type(uint256).max;
-        return (coll - btcAmt) * price / (debt - repaid);
-    }
-
-    function _btcInForMusd(uint256 musdOut, uint256 slip) internal view returns (uint256) {
-        if (musdOut == 0) return 0;
-        uint256 lo;
-        uint256 hi = 1e16;
-        for (uint256 i; i < 12; ++i) {
-            if (_musdMinOut(hi, slip) >= musdOut) break;
-            hi *= 2;
-        }
-        if (_musdMinOut(hi, slip) < musdOut) return 0;
-        for (uint256 i; i < 22; ++i) {
-            uint256 mid = (lo + hi) / 2;
-            if (_musdMinOut(mid, slip) >= musdOut) hi = mid;
-            else lo = mid + 1;
-        }
-        return hi;
-    }
-
-    // ---------------------------------------------------------------------
-    // Swaps
-    // ---------------------------------------------------------------------
-
-    function _swapMusdToBtc(uint256 amount, uint256 minOut) internal returns (uint256 got) {
-        uint256 nativeBefore = address(this).balance;
-        _approve(address(musd), address(router), amount);
-        IRouter.Route[] memory routes = _route(address(musd), btc);
-        bytes memory payload = abi.encodeCall(
-            IRouter.swapExactTokensForTokens, (amount, minOut, routes, address(this), block.timestamp)
-        );
-        (bool swapOk, bytes memory swapData) = address(router).call(payload);
-        if (!swapOk) {
-            assembly {
-                revert(add(swapData, 32), mload(swapData))
-            }
-        }
-
-        uint256 nativeGain = address(this).balance - nativeBefore;
-        // Live Mezo credits native BTC, so this returns before any balanceOf.
-        // The fork mock only credits its ERC-20; unwrap that below.
-        if (nativeGain >= minOut) return nativeGain;
-
-        uint256 ercGain = IERC20(btc).balanceOf(address(this));
-        if (ercGain < minOut) revert Slippage();
-        (bool ok,) = btc.call(abi.encodeWithSignature("withdraw(uint256)", ercGain));
-        if (!ok) revert Slippage();
-        got = address(this).balance - nativeBefore;
-        if (got < minOut) revert Slippage();
-    }
-
-    function _swapBtcToMusd(uint256 amount, uint256 minOut) internal returns (uint256 got) {
-        // On the live mirror, native balance and balanceOf are the same number,
-        // and balanceOf spends one of the 20 precompile calls. Skip it.
-        if (_btcMirror()) {
-            if (address(this).balance < amount) revert Slippage();
-        } else {
-            uint256 native = address(this).balance;
-            if (native < amount) {
-                uint256 erc = IERC20(btc).balanceOf(address(this));
-                if (erc < amount) {
-                    uint256 short = amount - erc;
-                    if (native < short) revert Slippage();
-                    (bool ok,) = btc.call{value: short}(abi.encodeWithSignature("deposit()"));
-                    if (!ok) revert Slippage();
-                }
-            } else {
-                uint256 erc = IERC20(btc).balanceOf(address(this));
-                if (erc < amount) {
-                    (bool ok,) = btc.call{value: amount}(abi.encodeWithSignature("deposit()"));
-                    if (!ok) revert Slippage();
-                }
-            }
-        }
-        _approve(btc, address(router), amount);
-        uint256 beforeBal = musd.balanceOf(address(this));
-        router.swapExactTokensForTokens(amount, minOut, _route(btc, address(musd)), address(this), block.timestamp);
-        got = musd.balanceOf(address(this)) - beforeBal;
-        if (got < minOut) revert Slippage();
-    }
-
-    function _btcMinOut(uint256 musdAmount, uint256 slip) internal view returns (uint256) {
-        if (musdAmount == 0) return 0;
-        uint256 quoted = _quotedOut(musdAmount, address(musd), btc);
-        return quoted * (BPS - slip) / BPS;
-    }
-
-    function _musdMinOut(uint256 btcAmount, uint256 slip) internal view returns (uint256) {
-        if (btcAmount == 0) return 0;
-        uint256 quoted = _quotedOut(btcAmount, btc, address(musd));
-        return quoted * (BPS - slip) / BPS;
-    }
-
-    function _quotedOut(uint256 amountIn, address from, address to) internal view returns (uint256) {
-        uint256[] memory amounts = router.getAmountsOut(amountIn, _route(from, to));
-        return amounts[amounts.length - 1];
-    }
-
-    function _route(address from, address to) internal view returns (IRouter.Route[] memory routes) {
-        routes = new IRouter.Route[](1);
-        routes[0] = IRouter.Route({from: from, to: to, stable: false, factory: poolFactory});
+        return CoilLegacy.maxRepay(_env(), debt);
     }
 
     /// @dev Codehash of the live BTC precompile bytecode. EXTCODEHASH does not
@@ -1269,25 +839,6 @@ contract CoilAccount is IPoolCallee {
 
     function _btcMirror() internal view returns (bool) {
         return btc.codehash == BTC_MIRROR_CODEHASH;
-    }
-
-    function _hintPair(uint256 coll, uint256 debtForNicr) internal view returns (address upper, address lower) {
-        if (coll == 0 || debtForNicr == 0) return (address(0), address(0));
-        // Hints are ordinary contract calls, not precompile calls. An empty hint
-        // makes SortedTroves walk the list and can blow the 10M block gas limit.
-        uint256 nicr = coll * NICR_PRECISION / debtForNicr;
-        address approx = address(0);
-        try hintHelpers.getApproxHint(nicr, 12, uint256(uint160(address(this)))) returns (
-            address hint, uint256, uint256
-        ) {
-            approx = hint;
-        } catch {}
-        (upper, lower) = sortedTroves.findInsertPosition(nicr, approx, approx);
-    }
-
-    function _approve(address token, address spender, uint256 amount) internal {
-        (bool ok, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.approve.selector, spender, amount));
-        if (!ok || (data.length != 0 && !abi.decode(data, (bool)))) revert TransferFailed();
     }
 
     function _transferToken(address token, address to, uint256 amount) internal {
@@ -1301,41 +852,26 @@ contract CoilAccount is IPoolCallee {
         if (!ok || (data.length != 0 && !abi.decode(data, (bool)))) revert TransferFailed();
     }
 
+
+    function _hintPair(uint256 coll, uint256 debtForNicr) internal view returns (address upper, address lower) {
+        return CoilLegacy.hintPair(_env(), coll, debtForNicr);
+    }
+
     function _sweep() internal {
-        uint256 btcBeforeSend = address(this).balance;
-        uint256 musdBefore = musd.balanceOf(address(this));
-        if (btcBeforeSend > 0) {
-            (bool ok,) = owner.call{value: btcBeforeSend}("");
-            if (!ok) revert TransferFailed();
-        }
-        // On the live mirror, native and the ERC-20 are the same balance, and balanceOf
-        // spends a precompile call. The send above already moved it.
-        if (_btcMirror()) {
-            if (btcBeforeSend > 0 || musdBefore > 0) {
-                uint256 mirroredMusd = musd.balanceOf(address(this));
-                if (mirroredMusd > 0 && !musd.transfer(owner, mirroredMusd)) revert TransferFailed();
-                emit Swept(owner, btcBeforeSend, musdBefore);
-            }
-            return;
-        }
-        uint256 erc = IERC20(btc).balanceOf(address(this));
-        // A distinct wrapper (fork tests) can still hold a balance; unwrap or forward it.
-        if (erc > 0 && address(this).balance == 0) {
-            (bool ok,) = btc.call(abi.encodeWithSignature("withdraw(uint256)", erc));
-            if (ok && address(this).balance > 0) {
-                (bool ok2,) = owner.call{value: address(this).balance}("");
-                if (!ok2) revert TransferFailed();
-            } else {
-                (bool ok3, bytes memory data) =
-                    btc.call(abi.encodeWithSelector(IERC20.transfer.selector, owner, erc));
-                if (!ok3 || (data.length != 0 && !abi.decode(data, (bool)))) revert TransferFailed();
-            }
-        }
-        uint256 m = musd.balanceOf(address(this));
-        if (m > 0) {
-            if (!musd.transfer(owner, m)) revert TransferFailed();
-        }
-        if (btcBeforeSend > 0 || musdBefore > 0) emit Swept(owner, btcBeforeSend, musdBefore);
+        CoilLegacy.sweep(_env());
+    }
+
+    function _env() internal view returns (CoilLegacy.Env memory e) {
+        e.borrowerOperations = address(borrowerOperations);
+        e.troveManager = address(troveManager);
+        e.sortedTroves = address(sortedTroves);
+        e.hintHelpers = address(hintHelpers);
+        e.priceFeed = address(priceFeed);
+        e.musd = address(musd);
+        e.btc = btc;
+        e.router = address(router);
+        e.poolFactory = poolFactory;
+        e.owner = owner;
     }
 
     function _active() internal view returns (bool) {
