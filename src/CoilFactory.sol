@@ -16,6 +16,7 @@ contract CoilFactory {
     event AccountCreated(address indexed owner, address indexed account);
     event KeeperUpdated(address indexed keeper);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event Heartbeat(address indexed keeper, uint256 timestamp);
 
     error Ownable();
     error AccountExists();
@@ -38,6 +39,11 @@ contract CoilFactory {
 
     function accountsLength() external view returns (uint256) {
         return accounts.length;
+    }
+
+    /// @notice Keeper pulse. The guard log reads the latest event as a heartbeat.
+    function heartbeat() external {
+        emit Heartbeat(msg.sender, block.timestamp);
     }
 
     function setKeeper(address _keeper) external {

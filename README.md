@@ -1,12 +1,14 @@
-# Coil
+# Coil Labs
 
 One transaction turns BTC into a leveraged BTC position on MUSD.
 
-Deposit Bitcoin. Coil opens a Mezo trove, swaps the borrowed MUSD for more BTC on Mezo Pools, and posts that BTC back as collateral until the collateral ratio you pick. De-lever and unwind sell collateral the other way, one sale per transaction, until the position is safer or closed. A keeper can only make a position safer.
+Deposit Bitcoin. Coil Labs flash-borrows BTC from the Mezo Pools MUSD/BTC pair, opens or tops up a trove, and repays the pool with the MUSD it just minted. About 4× (a 133.33% collateral ratio) fits in that single transaction. Unwind and de-lever are one transaction each. A keeper can only make a position safer, and earns MEZO when `guard()` actually raises the ratio.
 
-Built by [Prabal Pratap Singh](https://prabal.pro) ([GitHub](https://github.com/PrabalParihar/coil), [X](https://x.com/0xPrabalParihar)) for Mezo Buildathon Wave 1. Source: [github.com/PrabalParihar/coil](https://github.com/PrabalParihar/coil).
+Built by [Prabal Pratap Singh](https://prabal.pro) ([GitHub](https://github.com/PrabalParihar/coil), [X](https://x.com/0xPrabalParihar)). Source: [github.com/PrabalParihar/coil](https://github.com/PrabalParihar/coil).
 
-**Live app:** [coil.up.railway.app](https://coil.up.railway.app) (Mezo testnet, chain 31611).
+**Live app:** [coil.up.railway.app](https://coil.up.railway.app) (Mezo testnet, chain 31611). The site still points at the Wave 1 factory until the Wave 2 factory in this branch is deployed. A different Wave 1 project also used the name Coil. This repository is Coil Labs.
+
+Clones are EIP-1167 and are not upgradeable. Wave 2 is a new implementation and a new factory. `NEXT_PUBLIC_COIL_FACTORY` selects it. Until that address changes, the app keeps the Wave 1 two-swap `loop`.
 
 ## Problem
 
@@ -20,21 +22,19 @@ Coil does that sizing inside one clone, in one loop transaction, and keeps a kee
 sequenceDiagram
   participant W as Wallet
   participant C as CoilAccount
-  participant M as MUSD BorrowerOperations
   participant P as Mezo Pools MUSD/BTC
-  W->>C: loop(target) + BTC
-  C->>M: openTrove, mint MUSD
-  C->>P: swap MUSD for BTC
-  C->>M: addColl, then refinance
-  C->>M: withdrawMUSD
-  C->>P: swap MUSD for BTC
-  C->>M: addColl
-  Note over C: Stops after two swaps. Ratio lands on or above the target.
+  participant M as MUSD BorrowerOperations
+  W->>C: flashLoop(target) + BTC
+  C->>P: flash-swap BTC out
+  P->>C: hook
+  C->>M: openTrove with deposit plus flash BTC
+  C->>P: repay the MUSD the pool is owed
+  Note over C: One transaction. Ratio lands on or above the target.
 ```
 
-The same clone runs the reverse path. `deleverTo` withdraws collateral, swaps BTC for MUSD, and repays. `unwind(100%)` does that until it can `closeTrove` and send the BTC home. On live Mezo each of those calls sells collateral once. If the ratio is still short, or the trove is not closed yet, the call succeeds and the app sends the next one. The screen shows each transaction and links it on the explorer.
+`unwind` flash-borrows the MUSD needed to close or repay, then sends the BTC the pool is owed. `deleverTo` does the same for a partial repay that raises the ratio. If the pool factory is paused, both fall back to the Wave 1 one-sale path. `loop` is unchanged and still stops after two swaps.
 
-Collateral ratios use Liquity's scale: `1e18` is 100%. Coil will not target below 115%. Liquidation is 110%. Leverage in the app is `CR / (CR − 1)`: 200% is 2.00×, 150% is 3.00×.
+Collateral ratios use Liquity's scale: `1e18` is 100%. Coil will not target below 115%. Liquidation is 110%. Leverage in the app is `CR / (CR − 1)`: 200% is 2.00×, 150% is 3.00×, 133.33% is 4.00×. Fork tests open at the 4× target in one `flashLoop`.
 
 ## How MUSD and Mezo Pools are used
 
@@ -44,9 +44,11 @@ Mezo Pools is the venue. The router is Tigris-style: `swapExactTokensForTokens(a
 
 Repay does not approve MUSD. `BorrowerOperations.repayMUSD` burns it. `closeTrove` burns whatever is left, including the gas compensation, which `repayMUSD` is not allowed to clear on its own.
 
-The MEZO token is not in this wave. Nothing in the loop, the keeper, or the app transfers MEZO. Wave 2 is where a keeper tip and a gauge reward would be denominated in MEZO.
+MEZO (`0x7B7c000000000000000000000000000000000001`, 18 decimals, same address on testnet and mainnet) pays the keeper. The owner approves the clone and calls `fundTips`. `guard()` transfers `min(tipMezo, balance)` to the caller only after the collateral ratio has risen, at most once per block. An empty jar still rescues. `withdrawTips` is owner-only. `transfer` and `balanceOf` on MEZO each count as a precompile call.
 
-## Live testnet
+## Live testnet (Wave 1 factory)
+
+The addresses below are the factory the app and keeper use until a Wave 2 deploy. They do not include `flashLoop` or MEZO tips. Deployment steps for the new factory are under [Deploy](#deploy). Nothing in this branch was broadcast.
 
 Chain 31611, RPC `https://rpc.test.mezo.org`, explorer `https://explorer.test.mezo.org`.
 
@@ -93,23 +95,26 @@ CoilFactory ── EIP-1167 clone ── CoilAccount   ← this address owns the
 | Call | Who | What it does |
 | --- | --- | --- |
 | `createAccount()` | wallet | Deploys that wallet's clone. One account per owner. |
-| `loop(targetCR, maxSlippageBps)` + BTC | owner | Opens or tops up. Two borrow-and-swap rounds, then stops. |
-| `unwind(fractionWad)` | owner | Repays that fraction of net debt. `1e18` closes the trove. On Mezo, one collateral sale per call. |
-| `deleverTo(targetCR)` | owner or keeper | Sells collateral, swaps to MUSD, repays. On Mezo, one sale per call. Returns, rather than reverts, when another sale cannot raise the ratio. |
-| `guard()` | owner or keeper | If the ratio is under the floor, or the trove is inside the redemption zone, de-levers up to the guard target. |
-| `setGuard(floor, target, zone)` | owner | `zone` is how many places from the lowest-CR end of `SortedTroves` count as redemption risk (max 32). All zeros disables the guard. |
+| `flashLoop(targetCR, maxSlippageBps)` + BTC | owner | One flash swap. About 4× (CR 4/3) in one transaction. Reverts `Slippage` if the pool quote is outside the cap. |
+| `loop(targetCR, maxSlippageBps)` + BTC | owner | Wave 1 path. Two borrow-and-swap rounds, then stops. Fallback when the pool is paused, and the only loop on the live factory. |
+| `unwind` / `flashUnwind(fractionWad)` | owner | One flash repayment. `1e18` closes the trove and returns BTC. |
+| `deleverTo` / `flashDeleverTo(targetCR)` | owner, or keeper up to the guard target | One flash repayment that raises the ratio. Returns when the 1,800 MUSD floor blocks a further raise. |
+| `guard()` | anyone | De-levers to the guard target when the floor or the redemption zone says so. Pays MEZO only if the ratio rose. Cannot loop, unwind, or withdraw. |
+| `setGuard(floor, target, zone)` | owner | Keeps the current tip. `zone` is how many places from the lowest-CR end count as redemption risk (max 32). |
+| `setGuard(floor, target, zone, tip)` | owner | Same, and sets the MEZO tip. |
+| `fundTips` / `withdrawTips` | owner | Pull MEZO in (needs `approve`) or send unused MEZO back. |
 
 `openTrove` sets `maxBorrowingCapacity` from the collateral in that call. Coil adds the swapped BTC, refinances, then borrows again. The first open is capped at `collateral * price / 1.105e18`. Each step binary-searches a borrow whose projected ratio, after slippage and the refinance fee, stays at or above the target. The second round is not refinanced, because the transaction is about to stop. Ending safer than the target is allowed. Ending under it reverts `BelowTarget`.
 
 Hints come from `HintHelpers.getApproxHint` (12 trials) and `SortedTroves.findInsertPosition`. They are ordinary contract calls, not precompile calls.
 
-The keeper in `keeper/` is a dry-run by default. With `--execute` it sends `deleverTo(guardTargetCR)` up to four times and stops when the ratio stops rising. A keeper cannot `loop`, `unwind`, or aim above the owner's guard target. Swept BTC and MUSD go to the owner.
+The keeper in `keeper/` is a dry-run by default. `--watch` (or `KEEPER_WATCH=true`) polls until stopped. It simulates `guard()` and, with `--execute`, sends that call with an explicit gas limit. It does not call `loop`, `unwind`, or `withdrawTips`. Swept BTC and MUSD go to the owner. Telegram alerts are optional: leave `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` unset and the process still runs. `/watch 0xClone` from that chat adds an address. `keeper/Dockerfile` and `keeper/railway.json` are the Railway shape. This repository does not create the Railway service.
 
-The app is Next.js, wagmi, and viem. `npm run build` in `web/` writes a static export to `web/out`. On Vercel, set the project root to `web`.
+The app is Next.js. Wallet connect uses the OrangeKit connectors that [Mezo Passport](https://github.com/mezo-org/passport) ships: Unisat, OKX, and Xverse for Bitcoin, plus injected EVM wallets and WalletConnect. Passport `0.17.2` itself does not compile here. Its entry imports `mezoTestnet` from `@mezo-org/orangekit`, and that package's entry does not re-export the chain, and the published `dist` imports a `./wallet` module that is not in the tarball. `npm run build` in `web/` writes a static export to `web/out`. `/guard` lists `Guarded`, `Delevered`, and `Heartbeat` logs. On Vercel, set the project root to `web`. Set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` for the WalletConnect option. The id is public.
 
 ## Security notes and risks
 
-The clone is the only borrower. `loop`, `unwind`, `sweep`, and `setGuard` are `onlyOwner`. A keeper can call `deleverTo` only up to `guardTargetCR`, and `guard()` only when the owner has set a guard. Neither path transfers BTC or MUSD to the keeper. `nonReentrant` covers the state-changing flows. Slippage is capped at 3%. The implementation is pinned in the factory. Clones are not upgradeable. The factory owner can change the factory keeper and transfer ownership. That keeper still cannot withdraw.
+The clone is the only borrower. `loop`, `flashLoop`, `unwind`, `sweep`, `setGuard`, `fundTips`, and `withdrawTips` are `onlyOwner`. `deleverTo` above the guard target is owner-only. `guard()` is permissionless and only runs when the owner has set a guard. It never transfers BTC or MUSD to the caller. `nonReentrant` covers the state-changing flows. Slippage is capped at 3%. The implementation is pinned in the factory. Clones are not upgradeable. The factory owner can change the factory keeper and transfer ownership. That keeper still cannot withdraw.
 
 - **Liquidation.** A trove can be liquidated at 110%. Coil will not target below 115%, and the guard is off until the owner sets one.
 - **Redemption.** Redemptions hit the lowest nominal collateral ratio first. A tight coil sits at the front of that queue. The guard walks at most 32 troves from the tail.
@@ -124,9 +129,11 @@ The clone is the only borrower. `loop`, `unwind`, `sweep`, and `setGuard` are `o
 
 A Mezo transaction may call native precompiles 20 times. Call 21 reverts with empty data. Measured on a budget probe: `balanceOf` succeeds 20 times and the 21st reverts. `EXTCODEHASH` does not count. `getAmountsOut` and hint calls do not count. `PriceFeed.fetchPrice` is two calls (`latestRoundData` and `decimals`). In the testnet MUSD/BTC pool, a MUSD→BTC swap is three BTC calls: the output transfer and two `balanceOf` reads. A BTC→MUSD swap is about five if the clone also reads its own balance. Each BorrowerOperations call fetches the price again.
 
-Two borrow-and-swap rounds use 18 of the 20 calls and land on a 200% target. A third MUSD→BTC swap is the 21st precompile call. The pool surfaces it as `SafeERC20: low-level call failed` and the whole loop reverts. `loop` therefore stops after two swaps. `cast estimate` on this RPC is not a signal: it has returned a few hundred thousand gas for both a reverting loop and a succeeding one. Broadcasts go out only after `eth_call` succeeds, with an explicit gas limit under the 10,000,000 block cap. The app sets the same limits.
+`loop` still stops after two swaps. A third MUSD→BTC swap is the 21st precompile call, and the pool surfaces it as `SafeERC20: low-level call failed`.
 
-De-lever and unwind hit the same wall if they sell twice in one transaction. On the live BTC mirror (`EXTCODEHASH` `0x646ced85…`) each call sells once and returns. The next call continues. A sale that cannot raise the ratio, including a few wei of repay room above the 1,800 floor, is skipped. Fork tests etch a WETH-style mock at the BTC address, so the codehash differs and those tests still run several sales inside one call.
+`flashLoop` does not take that path. A new-trove flash is `fetchPrice` (2) plus `openTrove`'s own `fetchPrice` (2) plus a BTC-out swap (3) = 7. Flash close is 8. Flash de-lever is 10. `guard()` adds a MEZO `balanceOf` and `transfer` = 12. All of those sit under 20, with margin. The pool's volatile check is `(reserveIn + amountInAfterFee) * (reserveOut - amountOut) >= k`, not a Uniswap V2 fee-adjusted `k`. `FlashSizer.amountIn` walks a few wei until that holds. Shanghai has no transient storage, so the in-flash flag is storage and the callback clears it.
+
+`cast estimate` on this RPC is not a signal. Broadcasts go out only after `eth_call` succeeds, with an explicit gas limit under the 10,000,000 block cap.
 
 ## Setup, tests, deploy
 
@@ -143,7 +150,7 @@ forge test
 anvil --fork-url https://rpc.test.mezo.org --hardfork shanghai --port 18545
 ```
 
-`test/Coil.t.sol` reads live protocol parameters, opens a trove, loops 0.2 BTC to 200% and checks the quote, reverts a deposit that cannot clear minimum debt, closes and partially unwinds, rejects a keeper who tries to unwind or to de-lever past the guard, de-levers through `guard()` after a mocked price drop, tops up a trove, and gives two users two clones.
+`test/Coil.t.sol` covers the Wave 1 loop plus flash loop at 3× and about 4×, one-call unwind and de-lever, MEZO tips, and a keeper who cannot take funds. `test/FlashMath.t.sol` fuzzes the constant-product input. `test/KeeperInvariant.t.sol` checks that keeper and stranger calls do not lower the ratio or move BTC or MUSD. See [SECURITY.md](SECURITY.md).
 
 ### Deploy
 
@@ -154,16 +161,33 @@ anvil --fork-url https://rpc.test.mezo.org --hardfork shanghai --port 18545
 PRIVATE_KEY=0x… forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:18545 --broadcast
 ```
 
-The script deploys `CoilAccount` with the testnet addresses in `src/MezoAddresses.sol`, then `CoilFactory(implementation, deployer)`.
+The script deploys `CoilAccount` with the testnet addresses in `src/MezoAddresses.sol`, including the MUSD/BTC pool, then `CoilFactory(implementation, deployer)`. `CoilAccount` deploys its own `FlashSizer` in the constructor.
+
+Against the public RPC, `forge script` is the path that takes `--rpc-url`. `forge create` on this RPC has been seen talking to `localhost:8545` instead. A live broadcast also works as `cast send --create` with the bytecode from `forge inspect`. Fund the deployer from [faucet.test.mezo.org](https://faucet.test.mezo.org) (the faucet can require a captcha). Then:
+
+```bash
+# copy .env.example to .env and set PRIVATE_KEY. Do not commit .env.
+set -a && source .env && set +a
+forge script script/Deploy.s.sol --rpc-url "$MEZO_TESTNET_RPC" --broadcast
+OWNER=0xYourDeployer IMPL=0x… FACTORY=0x… ./script/verify.sh
+```
+
+`script/verify.sh` submits the implementation and the factory to Blockscout at `https://api.explorer.test.mezo.org/api`. After the factory exists, set `NEXT_PUBLIC_COIL_FACTORY` and `COIL_FACTORY` to it and redeploy the web app and the keeper. The Wave 1 clones stay on the old factory. They are not upgraded.
 
 ### Keeper
 
 ```bash
 cd keeper
 npm install
+# dry run against the live factory, no key, no Telegram
 COIL_FACTORY=0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e npm start
-COIL_FACTORY=0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e KEEPER_PRIVATE_KEY=0x… npm start -- --execute
+# poll until you stop it
+COIL_FACTORY=0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e npm start -- --watch
+# send guard()
+COIL_FACTORY=0x… KEEPER_PRIVATE_KEY=0x… npm start -- --execute
 ```
+
+Railway: from `keeper/`, the Dockerfile and `railway.json` are ready. Set `COIL_FACTORY`, `MEZO_TESTNET_RPC`, `KEEPER_PRIVATE_KEY`, `COIL_EXECUTE=true`, `KEEPER_WATCH=true`, and optionally the two Telegram variables. Do not put the key in the repo. Creating the service is a separate step. The MEZO tip is only paid by a Wave 2 factory. On the Wave 1 factory, `guard()` is still the owner or the factory keeper, and the simulation says so.
 
 ### Frontend
 
@@ -182,11 +206,16 @@ cd keeper && npx tsc --noEmit
 
 ## Wave 2
 
-- An always-on keeper, watching the floor and the redemption zone without a manual `--execute`.
-- Telegram alerts when a trove crosses the floor, enters the redemption zone, or a de-lever fails.
-- A vault share token so a deposit can be a position in a shared coil instead of a personal clone.
-- MEZO gauge rewards for pool volume, and keeper tips paid in MEZO when `guard()` does the work.
-- A capped mainnet beta, with a maximum loop size set against the thin MUSD/BTC pool.
+Shipped in this branch, not yet deployed:
+
+- `flashLoop`, `flashUnwind`, and `flashDeleverTo`: one transaction each. Fork test reaches about 4.00× (target CR `4e18/3`).
+- Permissionless `guard()` with a MEZO tip only when the ratio rises.
+- Keeper `--watch`, optional Telegram, `keeper/Dockerfile`, `keeper/railway.json`, and a public `/guard` log.
+- Mezo Passport wallet connect, a redemption-rank preview, `script/verify.sh`, and the Coil Labs name.
+
+Still needs a person: faucet BTC and testnet MEZO for a fresh deployer, the broadcast, the explorer verify, the Railway service, a WalletConnect project id, and a Telegram bot token. No vault share token, no mainnet cap, and no gauge. The Wave 1 video and the AKINDO comment are unchanged.
+
+Invariants and the test names are in [SECURITY.md](SECURITY.md). The Wave 2 update text, for the submission form, is in [docs/SUBMISSION.md](docs/SUBMISSION.md).
 
 ## License
 

@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { usePassportConnect } from "@/app/providers";
 import { parseEther } from "viem";
 import {
   useAccount,
@@ -25,10 +27,13 @@ import {
   factoryAddress,
   addr,
   borrowerAbi,
+  erc20Abi,
   factoryFeeAbi,
   mezoTestnet,
   poolAbi,
   priceFeedAbi,
+  sortedTrovesAbi,
+  troveManagerAbi,
   type Position,
 } from "@/lib/mezo";
 import {
@@ -38,9 +43,12 @@ import {
   formatMusd,
   formatPercent,
   formatUsd,
+  icrFromNominal,
   leverageLabel,
+  nominalIcr,
   percentToCr,
   poolReserves,
+  quoteFlashLoop,
   quoteLoop,
   type Market,
 } from "@/lib/quote";
@@ -83,6 +91,8 @@ export function CoilApp() {
   const [floorPct, setFloorPct] = useState(170);
   const [guardPct, setGuardPct] = useState(220);
   const [zone, setZone] = useState(8);
+  const [tipText, setTipText] = useState("5");
+  const [tail, setTail] = useState<bigint[]>([]);
   const [market, setMarket] = useState<Market | null>(null);
   const [marketError, setMarketError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -96,6 +106,7 @@ export function CoilApp() {
   // unsupported one, so prefer the wallet's real chain for the wrong-network check.
   const chainId = walletChainId ?? configChainId;
   const { connect, connectors, isPending: connecting, error: connectError } = useConnect();
+  const openPassport = usePassportConnect();
   const { switchChainAsync } = useSwitchChain();
   const publicClient = usePublicClient({ chainId: mezoTestnet.id });
   const { writeContractAsync } = useWriteContract();
@@ -188,17 +199,46 @@ export function CoilApp() {
     }
   }, [btcText]);
 
+  const { data: implementation } = useReadContract({
+    address: factoryAddress,
+    abi: coilFactoryAbi,
+    functionName: "implementation",
+  });
+  const { data: budget, isError: budgetMissing } = useReadContract({
+    address: implementation,
+    abi: coilAccountAbi,
+    functionName: "precompileBudget",
+    query: { enabled: Boolean(implementation), retry: false },
+  });
+  const flashFactory = Boolean(implementation) && Boolean(budget) && !budgetMissing;
+
   const preview = useMemo(() => {
     if (!market) return { kind: "loading" as const };
     if (collateral === null) return { kind: "error" as const, message: "Enter a BTC amount." };
     try {
-      const quote = quoteLoop(collateral, percentToCr(targetPct), BigInt(slippageBps), market);
+      const target = percentToCr(targetPct);
+      const quote = flashFactory
+        ? quoteFlashLoop(collateral, target, BigInt(slippageBps), market)
+        : { ...quoteLoop(collateral, target, BigInt(slippageBps), market), flashBtc: 0n, poolFeeMusd: 0n };
       return { kind: "ok" as const, quote };
     } catch (error) {
       const message = error instanceof QuoteError ? error.message : "Preview failed.";
       return { kind: "error" as const, message };
     }
-  }, [market, collateral, targetPct, slippageBps]);
+  }, [market, collateral, targetPct, slippageBps, flashFactory]);
+
+  const redemption = useMemo(() => {
+    if (preview.kind !== "ok" || tail.length === 0 || !market) return null;
+    const ours = nominalIcr(preview.quote.collateral, preview.quote.debt);
+    let lower = 0;
+    for (const nicr of tail) if (nicr < ours) lower += 1;
+    const rank = lower >= tail.length && tail.length >= 32 ? 33 : lower + 1;
+    const edge = zone > 0 && tail.length >= zone ? tail[zone - 1]! : 0n;
+    const inside = edge > 0n && ours <= edge && rank !== 0 && rank <= zone;
+    const suggested =
+      inside && edge > 0n ? Number((icrFromNominal(edge, market.price) * 10000n) / WAD) / 100 + 0.5 : null;
+    return { rank, inside, suggested };
+  }, [preview, tail, zone, market]);
 
   const { data: coilAccount, refetch: refetchAccount } = useReadContract({
     address: factoryAddress,
@@ -218,6 +258,54 @@ export function CoilApp() {
     query: { enabled: Boolean(account), refetchInterval: 15_000 },
   });
   const position = positionRaw as Position | undefined;
+
+  const { data: tipBalanceRaw } = useReadContract({
+    address: account,
+    abi: coilAccountAbi,
+    functionName: "tipBalance",
+    query: { enabled: Boolean(account && flashFactory), refetchInterval: 20_000 },
+  });
+  const tipBalance = typeof tipBalanceRaw === "bigint" ? tipBalanceRaw : undefined;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTail() {
+      if (!publicClient) return;
+      try {
+        const nicrs: bigint[] = [];
+        let cur = await publicClient.readContract({
+          address: addr.sortedTroves,
+          abi: sortedTrovesAbi,
+          functionName: "getLast",
+        });
+        for (let i = 0; i < 32 && cur && cur !== ZERO; i++) {
+          nicrs.push(
+            await publicClient.readContract({
+              address: addr.troveManager,
+              abi: troveManagerAbi,
+              functionName: "getNominalICR",
+              args: [cur],
+            }),
+          );
+          cur = await publicClient.readContract({
+            address: addr.sortedTroves,
+            abi: sortedTrovesAbi,
+            functionName: "getPrev",
+            args: [cur],
+          });
+        }
+        if (!cancelled) setTail(nicrs);
+      } catch {
+        if (!cancelled) setTail([]);
+      }
+    }
+    loadTail();
+    const timer = setInterval(loadTail, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [publicClient]);
 
   async function ensureChain() {
     if (chainId !== mezoTestnet.id) {
@@ -260,20 +348,21 @@ export function CoilApp() {
   async function delever(clone: `0x${string}`) {
     begin();
     const target = percentToCr(deleverPct);
+    const steps = flashFactory ? 1 : 4;
     try {
-      for (let step = 1; step <= 4; step++) {
+      for (let step = 1; step <= steps; step++) {
         const pos = await readPos(clone);
         if (!pos.active || pos.cr >= target) break;
         const beforeDebt = pos.debt;
         try {
-          await send(`De-lever ${step} of the way to ${deleverPct}%`, () =>
+          await send(flashFactory ? `De-lever to ${deleverPct}%` : `De-lever ${step} of the way to ${deleverPct}%`, () =>
             writeContractAsync({
               address: clone,
               abi: coilAccountAbi,
-              functionName: "deleverTo",
+              functionName: flashFactory ? "flashDeleverTo" : "deleverTo",
               args: [target],
               chainId: mezoTestnet.id,
-              gas: 5_000_000n,
+              gas: 6_000_000n,
             }),
           );
         } catch (error) {
@@ -281,8 +370,6 @@ export function CoilApp() {
           throw error;
         }
         const mid = await readPos(clone);
-        // Stop when the sale did not repay. An oracle tick can lift the ratio
-        // without a sale, and another call would only repeat a no-op.
         if (!mid.active || mid.debt >= beforeDebt) break;
       }
       const end = await readPos(clone);
@@ -303,25 +390,26 @@ export function CoilApp() {
   async function unwind(clone: `0x${string}`) {
     begin();
     const fraction = (BigInt(unwindPct) * WAD) / 100n;
+    const steps = flashFactory ? 1 : 4;
     try {
       const start = await readPos(clone);
       const goal =
         unwindPct === 100 ? 0n : start.debt - ((start.debt - 200n * WAD) * BigInt(unwindPct)) / 100n;
-      for (let step = 1; step <= 4; step++) {
+      for (let step = 1; step <= steps; step++) {
         const pos = await readPos(clone);
         if (!pos.active) break;
         if (unwindPct < 100 && pos.debt <= goal) break;
         const before = pos.debt;
         await send(
-          unwindPct === 100 ? `Unwind ${step}: closing the trove` : `Unwind ${step}: repaying debt`,
+          unwindPct === 100 ? (flashFactory ? "Unwind and close" : `Unwind ${step}: closing the trove`) : flashFactory ? "Unwind" : `Unwind ${step}: repaying debt`,
           () =>
             writeContractAsync({
               address: clone,
               abi: coilAccountAbi,
-              functionName: "unwind",
+              functionName: flashFactory ? "flashUnwind" : "unwind",
               args: [fraction],
               chainId: mezoTestnet.id,
-              gas: 5_000_000n,
+              gas: 6_000_000n,
             }),
         );
         const after = await readPos(clone);
@@ -338,6 +426,10 @@ export function CoilApp() {
   }
 
   function connectWallet() {
+    if (openPassport) {
+      openPassport();
+      return;
+    }
     const connector = connectors[0];
     if (connector) connect({ connector });
   }
@@ -367,7 +459,7 @@ export function CoilApp() {
       writeContractAsync({
         address: account,
         abi: coilAccountAbi,
-        functionName: "loop",
+        functionName: flashFactory ? "flashLoop" : "loop",
         args: [targetCR, BigInt(slippageBps)],
         value: collateral,
         chainId: mezoTestnet.id,
@@ -382,17 +474,65 @@ export function CoilApp() {
   function setGuard() {
     if (!account) return;
     begin();
+    let tip = 0n;
+    try {
+      tip = parseEther(tipText || "0");
+    } catch {
+      fail(new Error("Enter a MEZO tip amount."));
+      setBusy(false);
+      return;
+    }
     send("Set guard", () =>
       writeContractAsync({
         address: account,
         abi: coilAccountAbi,
         functionName: "setGuard",
-        args: [percentToCr(floorPct), percentToCr(guardPct), zone],
+        args: flashFactory
+          ? [percentToCr(floorPct), percentToCr(guardPct), zone, tip]
+          : [percentToCr(floorPct), percentToCr(guardPct), zone],
         chainId: mezoTestnet.id,
         gas: 300_000n,
       }),
     )
       .then(() => setStatus("Guard saved."))
+      .catch(fail)
+      .finally(() => setBusy(false));
+  }
+
+  function fundTips() {
+    if (!account) return;
+    let amount = 0n;
+    try {
+      amount = parseEther(tipText || "0");
+    } catch {
+      fail(new Error("Enter a MEZO tip amount."));
+      return;
+    }
+    if (amount === 0n) return;
+    begin();
+    send("Approve MEZO", () =>
+      writeContractAsync({
+        address: addr.mezo,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [account, amount],
+        chainId: mezoTestnet.id,
+        gas: 200_000n,
+      }),
+    )
+      .then(() =>
+        send("Fund MEZO tip", () =>
+          writeContractAsync({
+            address: account,
+            abi: coilAccountAbi,
+            functionName: "fundTips",
+            args: [amount],
+            chainId: mezoTestnet.id,
+            gas: 250_000n,
+          }),
+        ),
+      )
+      .then(() => setStatus("MEZO tip funded. A caller earns it only when guard() raises the ratio."))
       .catch(fail)
       .finally(() => setBusy(false));
   }
@@ -453,9 +593,9 @@ export function CoilApp() {
 
       <header className="sticky top-0 z-30 border-b border-border/70 bg-background/70 backdrop-blur-xl">
         <div className="relative mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-          <a href="#" className="flex items-center gap-2.5" aria-label="Coil home">
+          <a href="#" className="flex items-center gap-2.5" aria-label="Coil Labs home">
             <CoilMark className="size-8" />
-            <span className="text-lg font-semibold tracking-tight">Coil</span>
+            <span className="text-lg font-semibold tracking-tight">Coil Labs</span>
             <span className="hidden rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
               testnet
             </span>
@@ -463,6 +603,7 @@ export function CoilApp() {
           <nav aria-label="Primary" className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
             <a className="hover:text-foreground" href="#how">How it works</a>
             <a className="hover:text-foreground" href="#app">App</a>
+            <Link className="hover:text-foreground" href="/guard">Guard log</Link>
             <a className="hover:text-foreground" href="#proof">Receipts</a>
             <a className="hover:text-foreground" href="#risks">Risks</a>
           </nav>
@@ -567,7 +708,7 @@ export function CoilApp() {
                     </Button>
                   }
                 >
-                  Coil sends transactions on Mezo testnet (chain 31611).
+                  Coil Labs sends transactions on Mezo testnet (chain 31611). Bitcoin wallets connect through Mezo Passport.
                 </Banner>
               ) : null}
               {connectError && !isConnected ? (
@@ -652,6 +793,26 @@ export function CoilApp() {
                       </span>
                     }
                   />
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] text-muted-foreground">Leverage</span>
+                    {([
+                      ["4×", 133.33],
+                      ["3×", 150],
+                      ["2×", 200],
+                    ] as const).map(([label, pct]) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => setTargetPct(pct)}
+                        className={cn(
+                          "rounded-full border px-3 py-1 font-mono text-xs",
+                          Math.abs(targetPct - pct) < 0.2 ? "border-filament text-filament" : "border-border text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
@@ -666,7 +827,7 @@ export function CoilApp() {
                   {[
                     ["01", "Borrow MUSD", "against your BTC"],
                     ["02", "Buy BTC", "on Mezo Pools"],
-                    ["03", "Post it back", "stop at your ratio"],
+                    ["03", "Post it back", flashFactory ? "one flash swap" : "stop at your ratio"],
                   ].map(([n, t, s]) => (
                     <div key={n} className="flex items-start gap-3">
                       <span className="font-mono text-[11px] text-filament">{n}</span>
@@ -685,7 +846,7 @@ export function CoilApp() {
                   <h3 id="review-title" className="text-lg font-semibold tracking-tight">Review before you sign</h3>
                   {preview.kind === "ok" ? <RiskPill percent={crToPercent(preview.quote.cr)} /> : null}
                 </div>
-                <ReviewCard preview={preview} deposit={collateral} currentPrice={currentPrice} />
+                <ReviewCard preview={preview} deposit={collateral} currentPrice={currentPrice} redemption={redemption} zone={zone} flash={flashFactory} />
 
                 <div className="mt-5 space-y-2">
                   <p className="eyebrow">Transactions</p>
@@ -703,7 +864,7 @@ export function CoilApp() {
                     )}
                     <li className="flex items-center gap-2.5">
                       <span className="flex size-5 items-center justify-center rounded-full border border-filament/60 font-mono text-[10px] text-filament">{account ? 1 : 2}</span>
-                      Loop · borrow, swap and post back <span className="text-muted-foreground">· one transaction</span>
+                      {flashFactory ? "Flash loop · one pool swap" : "Loop · two swaps on this factory"} <span className="text-muted-foreground">· one transaction</span>
                     </li>
                   </ol>
                 </div>
@@ -811,7 +972,12 @@ export function CoilApp() {
                         busy={busy}
                         disabled={!account}
                         onSave={setGuard}
+                        onFund={fundTips}
                         position={position}
+                        flash={flashFactory}
+                        tipText={tipText}
+                        setTipText={setTipText}
+                        tipBalance={tipBalance}
                       />
                     </div>
                   ) : (
@@ -825,6 +991,7 @@ export function CoilApp() {
                       busy={busy}
                       onDelever={() => account && delever(account)}
                       onUnwind={() => account && unwind(account)}
+                      flash={flashFactory}
                       guard={
                         <GuardPanel
                           floorPct={floorPct}
@@ -836,7 +1003,12 @@ export function CoilApp() {
                           busy={busy}
                           disabled={!account}
                           onSave={setGuard}
+                          onFund={fundTips}
                           position={position}
+                          flash={flashFactory}
+                          tipText={tipText}
+                          setTipText={setTipText}
+                          tipBalance={tipBalance}
                           bare
                         />
                       }
@@ -870,19 +1042,26 @@ export function CoilApp() {
 
 /* ------------------------------------------------------------------ */
 
+type PreviewQuote = ReturnType<typeof quoteLoop> & { flashBtc?: bigint; poolFeeMusd?: bigint };
 type PreviewState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "ok"; quote: ReturnType<typeof quoteLoop> };
+  | { kind: "ok"; quote: PreviewQuote };
 
 function ReviewCard({
   preview,
   deposit,
   currentPrice,
+  redemption,
+  zone,
+  flash,
 }: {
   preview: PreviewState;
   deposit: bigint | null;
   currentPrice: string | null;
+  redemption: { rank: number; inside: boolean; suggested: number | null } | null;
+  zone: number;
+  flash: boolean;
 }) {
   if (preview.kind === "loading") {
     return (
@@ -945,14 +1124,37 @@ function ReviewCard({
           }
         />
         <ReviewRow label="BTC can fall" after={`${drop.toFixed(1)}% before liquidation`} tone={risk.tone} />
-        <ReviewRow label="Route" after={`${formatMusd(q.musdMinted, 0)} MUSD → BTC · ${q.iterations} ${q.iterations === 1 ? "swap" : "swaps"}`} />
+        <ReviewRow
+          label="Route"
+          after={
+            flash
+              ? `${formatMusd(q.musdMinted, 0)} MUSD · flash ${formatBtc(q.flashBtc ?? 0n)} BTC · pool fee ${formatMusd(q.poolFeeMusd ?? 0n)} MUSD`
+              : `${formatMusd(q.musdMinted, 0)} MUSD → BTC · ${q.iterations} ${q.iterations === 1 ? "swap" : "swaps"}`
+          }
+        />
+        {redemption ? (
+          <ReviewRow
+            label="Redemption rank"
+            after={redemption.rank > 32 ? "Outside 32" : `#${redemption.rank}`}
+            tone={redemption.inside ? "text-danger" : undefined}
+          />
+        ) : null}
       </dl>
       <div className="mt-4">
         <HealthBar percent={ratio} />
       </div>
       <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-        Liquidation risk: <span className={risk.tone}>{risk.word.toLowerCase()}</span>. Redemption risk{" "}
-        {ratio < 150 ? <span className="text-danger">is higher at this ratio</span> : "falls as the ratio rises"}: MUSD redemptions repay the lowest-ratio troves first.
+        Liquidation risk: <span className={risk.tone}>{risk.word.toLowerCase()}</span>.{" "}
+        {redemption?.inside ? (
+          <span className="text-danger">
+            This quote sits inside redemption zone {zone}
+            {redemption.suggested ? ` (rank #${redemption.rank}). A ratio near ${redemption.suggested.toFixed(0)}% sits just outside that zone.` : "."}
+          </span>
+        ) : (
+          <>
+            Redemption risk {ratio < 150 ? <span className="text-danger">is higher at this ratio</span> : "falls as the ratio rises"}: MUSD redemptions repay the lowest-ratio troves first.
+          </>
+        )}
       </p>
     </div>
   );
@@ -969,6 +1171,7 @@ function OpenPosition({
   onDelever,
   onUnwind,
   guard,
+  flash,
 }: {
   position: Position;
   market: Market | null;
@@ -980,6 +1183,7 @@ function OpenPosition({
   onDelever: () => void;
   onUnwind: () => void;
   guard: React.ReactNode;
+  flash: boolean;
 }) {
   const [tab, setTab] = useState<"delever" | "unwind" | "guard">("delever");
   const ratio = Number((position.cr * 10000n) / 10n ** 18n) / 100;
@@ -1067,8 +1271,8 @@ function OpenPosition({
                 display={<span className={cn("num text-3xl font-semibold", riskOf(deleverPct).tone)}>{deleverPct}%</span>}
               />
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Sells some BTC for MUSD and repays, about {leverageFromPercent(deleverPct).toFixed(2)}× after. One sale per transaction;
-                Mezo keeps at least 1,800 MUSD of debt on an open trove.
+                Sells some BTC for MUSD and repays, about {leverageFromPercent(deleverPct).toFixed(2)}× after.{" "}
+                {flash ? "One flash swap covers the whole raise." : "On this factory, one sale per transaction."} Mezo keeps at least 1,800 MUSD of debt on an open trove.
               </p>
               <Button
                 type="button"
@@ -1097,7 +1301,9 @@ function OpenPosition({
               />
               <p className="text-xs leading-relaxed text-muted-foreground">
                 {unwindPct === 100
-                  ? "Sells collateral to repay everything and closes the trove. BTC left over returns to your wallet. A fresh 200% trove took two transactions on testnet."
+                  ? flash
+                    ? "One flash swap repays the debt, closes the trove, and returns leftover BTC to your wallet."
+                    : "Sells collateral to repay everything and closes the trove. On this factory a full close can take more than one transaction."
                   : "Sells collateral to repay part of the debt, down toward the 2,000 MUSD floor."}
               </p>
               <Button type="button" variant="outline" className="h-12 w-full rounded-2xl font-semibold" disabled={busy} onClick={onUnwind}>
@@ -1123,7 +1329,12 @@ function GuardPanel({
   busy,
   disabled,
   onSave,
+  onFund,
   position,
+  flash = false,
+  tipText = "5",
+  setTipText,
+  tipBalance,
   bare = false,
 }: {
   floorPct: number;
@@ -1135,7 +1346,12 @@ function GuardPanel({
   busy: boolean;
   disabled: boolean;
   onSave: () => void;
+  onFund?: () => void;
   position?: Position;
+  flash?: boolean;
+  tipText?: string;
+  setTipText?: (v: string) => void;
+  tipBalance?: bigint;
   bare?: boolean;
 }) {
   const min = 110;
@@ -1150,8 +1366,8 @@ function GuardPanel({
         </div>
       ) : null}
       <p className="text-xs leading-relaxed text-muted-foreground">
-        If the ratio drops under the floor, or the trove enters the redemption zone, the keeper may call <span className="font-mono text-foreground/90">deleverTo</span> up
-        to your target. It cannot loop, unwind, or withdraw.
+        If the ratio drops under the floor, or the trove enters the redemption zone, anyone may call <span className="font-mono text-foreground/90">guard()</span>.
+        It can only raise the ratio. It cannot loop, unwind, or withdraw. {flash ? "The caller earns MEZO only when the ratio rises." : "MEZO tips ship with the Wave 2 factory."}
       </p>
       <div className="relative mt-5 h-10" aria-hidden>
         <div className="absolute inset-x-0 top-4 h-1.5 rounded-full opacity-60" style={{ background: "linear-gradient(90deg,var(--danger) 0%,var(--danger) 16.7%,var(--warn) 16.7%,var(--warn) 37.5%,var(--safe) 37.5%)" }} />
@@ -1166,6 +1382,24 @@ function GuardPanel({
         <NumberField id={bare ? "guard-target" : "guard-target-closed"} label="De-lever to" value={guardPct} onChange={setGuardPct} suffix="%" />
         <NumberField id={bare ? "zone" : "zone-closed"} label="Zone" value={zone} onChange={setZone} />
       </div>
+      {flash && setTipText ? (
+        <div className="mt-3 space-y-2">
+          <Label htmlFor={bare ? "tip" : "tip-closed"} className="eyebrow">MEZO tip</Label>
+          <Input
+            id={bare ? "tip" : "tip-closed"}
+            inputMode="decimal"
+            value={tipText}
+            onChange={(event) => setTipText(event.target.value)}
+            className="h-11 rounded-xl bg-black/25 font-mono md:text-sm dark:bg-black/25"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Jar {tipBalance !== undefined ? `${formatMusd(tipBalance)} MEZO` : "—"}. Paid once per block, and only if the ratio rose.
+          </p>
+          <Button type="button" variant="outline" className="h-10 w-full rounded-2xl" disabled={busy || disabled} onClick={onFund}>
+            Fund MEZO tip
+          </Button>
+        </div>
+      ) : null}
       <Button type="button" variant="secondary" className="mt-4 h-11 w-full rounded-2xl font-semibold" disabled={busy || disabled} onClick={onSave}>
         Save guard
       </Button>

@@ -22,20 +22,20 @@ const mono = Geist_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://coil.up.railway.app"),
-  title: "Coil — one-click BTC leverage on Mezo",
+  title: "Coil Labs — BTC leverage on Mezo",
   description:
-    "Loop Bitcoin on Mezo in one transaction. Coil borrows MUSD against your BTC, buys more BTC on Mezo Pools, and posts it back as collateral at the ratio you pick.",
+    "One-transaction BTC leverage on MUSD. Coil Labs borrows with a Mezo Pools flash swap and posts the BTC back at the ratio you pick. A keeper can only make the position safer, and earns MEZO when it does.",
   openGraph: {
-    title: "Coil — one-click BTC leverage on Mezo",
-    description: "Borrow MUSD, buy BTC on Mezo Pools, post it back. One transaction, at the collateral ratio you pick. Live on Mezo testnet.",
+    title: "Coil Labs — BTC leverage on Mezo",
+    description: "Flash-swap leverage on MUSD. A keeper can only make the position safer, paid in MEZO. Live on Mezo testnet.",
     url: "https://coil.up.railway.app",
-    siteName: "Coil",
+    siteName: "Coil Labs",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Coil — one-click BTC leverage on Mezo",
-    description: "Borrow MUSD, buy BTC on Mezo Pools, post it back. One transaction. Live on Mezo testnet.",
+    title: "Coil Labs — BTC leverage on Mezo",
+    description: "Flash-swap leverage on MUSD. A keeper can only make the position safer, paid in MEZO. Live on Mezo testnet.",
   },
 };
 

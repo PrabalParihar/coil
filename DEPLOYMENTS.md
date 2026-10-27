@@ -15,7 +15,7 @@ The factory the frontend and keeper use is **`0xE29fAf17ed44B43c94D2Ff0e43E289aE
 | 0.05 BTC faucet | [`0x92c2373157546c17d7c15801fb957e0e07e4d33c2fd5a92837a73221beaea0e5`](https://explorer.test.mezo.org/tx/0x92c2373157546c17d7c15801fb957e0e07e4d33c2fd5a92837a73221beaea0e5) | 16242384 |
 | 100 MEZO | [`0x9b62ef9e277c4982cefd3b1bb586226dcc024a11b9e4626adc522dfb8f8a484c`](https://explorer.test.mezo.org/tx/0x9b62ef9e277c4982cefd3b1bb586226dcc024a11b9e4626adc522dfb8f8a484c) | 16242390 |
 
-Coil does not spend MEZO. Gas on this chain is hundreds of wei.
+The Wave 1 contracts do not spend MEZO. Wave 2 pays a keeper tip in MEZO. Gas on this chain is hundreds of wei.
 
 ## Current factory
 
@@ -139,4 +139,19 @@ A Mezo transaction may call native precompiles **20 times**. Call 21 reverts wit
 
 BTC at `0x7b7C000000000000000000000000000000000000` has no `deposit()` or `withdraw()`. The router’s transfer credits native BTC, and `balanceOf` matches `address.balance`. The MUSD→BTC path returns that native gain and does not also call `balanceOf`. The reverse path skips `balanceOf` when the codehash is the live mirror. Fork tests etch a WETH-style token at the BTC address and still wrap.
 
-`forge create` on this RPC tries `http://localhost:8545`. Contracts were deployed with `cast send --create`.
+`forge create` on this RPC tries `http://localhost:8545`. Contracts were deployed with `cast send --create`. `forge script script/Deploy.s.sol --rpc-url https://rpc.test.mezo.org --broadcast` is the path for the next factory.
+
+## Wave 2 factory
+
+Not deployed. Clones of `0x1bc9Ba4c62D62296aba1441fBB16BC9651a460Ce` are not upgradeable. Deploy a new implementation and factory from `script/Deploy.s.sol`, verify with `script/verify.sh`, then set `NEXT_PUBLIC_COIL_FACTORY` and `COIL_FACTORY`.
+
+What the new bytecode adds, measured on a fork of this RPC rather than a new broadcast:
+
+| Path | Precompile calls | One transaction |
+| --- | --- | --- |
+| `flashLoop` on a new trove | 7 | about 4.00× at collateral ratio `4e18/3`, and 3.00× at 150% |
+| `flashUnwind` / close | 8 | full close |
+| `flashDeleverTo` | 10 | whole raise |
+| `guard()` plus MEZO tip | 12 | rescue, tip only if the ratio rose |
+
+The testnet MUSD/BTC pool is `0xd16A5Df82120ED8D626a1a15232bFcE2366d6AA9` (volatile, fee 4 bps, MUSD is token0). MEZO is `0x7B7c000000000000000000000000000000000001`. Faucet: https://faucet.test.mezo.org. A captcha can block an unattended agent, so the deploy commands are in the README and were not broadcast from this branch.

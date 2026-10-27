@@ -1,9 +1,12 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   createPublicClient,
   createWalletClient,
   http,
   isAddress,
   type Address,
+  type PublicClient,
+  type WalletClient,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mezoTestnet } from "./chain.js";
@@ -22,6 +25,13 @@ const factoryAbi = [
     stateMutability: "view",
     inputs: [{ type: "uint256" }],
     outputs: [{ type: "address" }],
+  },
+  {
+    type: "function",
+    name: "heartbeat",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
   },
 ] as const;
 
@@ -52,10 +62,10 @@ const accountAbi = [
   },
   {
     type: "function",
-    name: "deleverTo",
+    name: "guard",
     stateMutability: "nonpayable",
-    inputs: [{ name: "targetCR", type: "uint256" }],
-    outputs: [],
+    inputs: [],
+    outputs: [{ name: "acted", type: "bool" }],
   },
 ] as const;
 
@@ -74,14 +84,15 @@ type Position = {
 };
 
 const OUTSIDE = (1n << 256n) - 1n;
+const ZERO = "0x0000000000000000000000000000000000000000" as Address;
 
 function pct(cr: bigint) {
-  return `${(cr * 10000n) / 10n ** 18n / 100n}.${((cr * 10000n) / 10n ** 18n % 100n)
-    .toString()
-    .padStart(2, "0")}%`;
+  if (cr === 0n) return "—";
+  const hundredths = (cr * 10000n) / 10n ** 18n;
+  return `${hundredths / 100n}.${(hundredths % 100n).toString().padStart(2, "0")}%`;
 }
 
-function needsDelever(position: Position) {
+function needsGuard(position: Position) {
   if (!position.active || position.guardTargetCR === 0n) return null;
   const crRisk = position.floorCR > 0n && position.cr < position.floorCR;
   const inZone =
@@ -89,38 +100,101 @@ function needsDelever(position: Position) {
     position.redemptionRank > 0n &&
     position.redemptionRank !== OUTSIDE &&
     position.redemptionRank <= BigInt(position.redemptionZone);
-  const belowGuard = position.cr < position.guardTargetCR;
+  if (position.cr >= position.guardTargetCR) return null;
   if (crRisk) return "collateral ratio is under the floor";
-  if (inZone && belowGuard) return "trove is inside the redemption zone";
+  if (inZone) return "trove is inside the redemption zone";
   return null;
 }
 
-async function main() {
-  const execute = process.argv.includes("--execute") || process.env.COIL_EXECUTE === "true";
-  const rpc = process.env.MEZO_TESTNET_RPC ?? "https://rpc.test.mezo.org";
-  const factory = process.env.COIL_FACTORY;
-  if (!factory || !isAddress(factory)) {
-    throw new Error("Set COIL_FACTORY to the deployed CoilFactory address.");
-  }
+type Telegram = {
+  token: string;
+  chatId: string;
+  offset: number;
+};
 
-  const publicClient = createPublicClient({ chain: mezoTestnet, transport: http(rpc) });
+function telegramFromEnv(): Telegram | null {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
+  if (!token || !chatId) return null;
+  return { token, chatId, offset: 0 };
+}
+
+async function notify(tg: Telegram | null, text: string) {
+  if (!tg) return;
+  const url = `https://api.telegram.org/bot${tg.token}/sendMessage`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ chat_id: tg.chatId, text, disable_web_page_preview: true }),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    console.error(`telegram ${response.status}: ${body.slice(0, 200)}`);
+  }
+}
+
+type WatchFile = { addresses: Address[] };
+
+function watchesPath() {
+  return process.env.WATCHES_PATH || "/tmp/coil-watches.json";
+}
+
+function loadWatches(): Address[] {
+  const path = watchesPath();
+  if (!existsSync(path)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as WatchFile;
+    return (parsed.addresses ?? []).filter((item) => isAddress(item));
+  } catch {
+    return [];
+  }
+}
+
+function saveWatches(addresses: Address[]) {
+  const unique = [...new Set(addresses.map((item) => item.toLowerCase() as Address))];
+  writeFileSync(watchesPath(), JSON.stringify({ addresses: unique }, null, 2));
+  return unique;
+}
+
+async function pollCommands(tg: Telegram | null) {
+  if (!tg) return;
+  const url = `https://api.telegram.org/bot${tg.token}/getUpdates?timeout=0&offset=${tg.offset}`;
+  const response = await fetch(url);
+  if (!response.ok) return;
+  const body = (await response.json()) as {
+    ok: boolean;
+    result?: { update_id: number; message?: { text?: string; chat?: { id: number } } }[];
+  };
+  if (!body.ok || !body.result) return;
+  let watches = loadWatches();
+  for (const update of body.result) {
+    tg.offset = update.update_id + 1;
+    const text = update.message?.text?.trim() ?? "";
+    const chat = update.message?.chat?.id;
+    if (!text.startsWith("/") || chat?.toString() !== tg.chatId) continue;
+    const [command, arg] = text.split(/\s+/, 2);
+    if (command === "/watch" && arg && isAddress(arg)) {
+      watches = saveWatches([...watches, arg]);
+      await notify(tg, `Watching ${arg}. The keeper still only calls guard().`);
+    } else if (command === "/unwatch" && arg && isAddress(arg)) {
+      watches = saveWatches(watches.filter((item) => item.toLowerCase() !== arg.toLowerCase()));
+      await notify(tg, `Stopped watching ${arg}.`);
+    } else if (command === "/help" || command === "/start") {
+      await notify(
+        tg,
+        "Coil Labs keeper. /watch 0xClone and /unwatch 0xClone. Alerts fire when a trove is under its floor or inside its redemption zone. guard() pays MEZO only on the Wave 2 factory, and only if the ratio rose.",
+      );
+    }
+  }
+}
+
+async function listAccounts(publicClient: PublicClient, factory: Address) {
   const length = await publicClient.readContract({
     address: factory,
     abi: factoryAbi,
     functionName: "accountsLength",
   });
-
-  console.log(`Coil keeper · ${length} account(s) · ${execute ? "EXECUTE" : "dry run"}`);
-
-  let wallet: ReturnType<typeof createWalletClient> | undefined;
-  if (execute) {
-    const key = process.env.KEEPER_PRIVATE_KEY;
-    if (!key) throw new Error("Set KEEPER_PRIVATE_KEY to send deleverTo transactions.");
-    const account = privateKeyToAccount(key as `0x${string}`);
-    wallet = createWalletClient({ account, chain: mezoTestnet, transport: http(rpc) });
-    console.log(`signer ${account.address}`);
-  }
-
+  const accounts: Address[] = [];
   for (let i = 0n; i < length; i++) {
     const account = await publicClient.readContract({
       address: factory,
@@ -128,18 +202,43 @@ async function main() {
       functionName: "accounts",
       args: [i],
     });
-    const position = (await publicClient.readContract({
-      address: account,
-      abi: accountAbi,
-      functionName: "position",
-    })) as Position;
+    accounts.push(account);
+  }
+  for (const extra of loadWatches()) {
+    if (!accounts.some((item) => item.toLowerCase() === extra.toLowerCase())) accounts.push(extra);
+  }
+  return accounts;
+}
 
+async function scan(opts: {
+  publicClient: PublicClient;
+  wallet?: WalletClient;
+  factory: Address;
+  execute: boolean;
+  tg: Telegram | null;
+}) {
+  const { publicClient, wallet, factory, execute, tg } = opts;
+  const accounts = await listAccounts(publicClient, factory);
+  console.log(`Coil Labs keeper · ${accounts.length} account(s) · ${execute ? "EXECUTE" : "dry run"}`);
+  const signer = wallet?.account?.address ?? ZERO;
+
+  for (const account of accounts) {
+    let position: Position;
+    try {
+      position = (await publicClient.readContract({
+        address: account,
+        abi: accountAbi,
+        functionName: "position",
+      })) as Position;
+    } catch (error) {
+      console.log(`${account} unreadable (${error instanceof Error ? error.message : "error"})`);
+      continue;
+    }
     if (!position.active) {
       console.log(`${account} idle`);
       continue;
     }
-
-    const reason = needsDelever(position);
+    const reason = needsGuard(position);
     const rank =
       position.redemptionRank === OUTSIDE ? "outside top 32" : position.redemptionRank.toString();
     console.log(
@@ -147,39 +246,113 @@ async function main() {
     );
     if (!reason) continue;
 
-    console.log(`  deleverTo ${pct(position.guardTargetCR)} because ${reason}`);
-    if (!execute || !wallet) continue;
+    console.log(`  guard() because ${reason}`);
+    await notify(
+      tg,
+      `Coil Labs: ${account} ${reason}. CR ${pct(position.cr)}, floor ${pct(position.floorCR)}, target ${pct(position.guardTargetCR)}.`,
+    );
 
-    let cursor = position;
-    for (let step = 1; step <= 4; step++) {
-      if (!cursor.active || cursor.cr >= cursor.guardTargetCR) break;
-      const freshReason = needsDelever(cursor);
-      if (!freshReason) break;
-      const beforeDebt = cursor.debt;
+    const caller = wallet?.account?.address ?? "0x0000000000000000000000000000000000000001";
+    try {
+      const simulated = await publicClient.simulateContract({
+        address: account,
+        abi: accountAbi,
+        functionName: "guard",
+        account: caller,
+      });
+      if (!simulated.result) {
+        console.log("  simulation returned false (already safe, or the ratio would not rise)");
+        continue;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`  simulation reverted: ${message.slice(0, 240)}`);
+      console.log("  Wave 1 guard() is owner/keeper only and pays no MEZO. Wave 2 pays a MEZO tip when the ratio rises.");
+      await notify(tg, `Coil Labs: guard() simulation failed for ${account}. ${message.slice(0, 180)}`);
+      continue;
+    }
+
+    if (!execute || !wallet) {
+      console.log("  dry run: would send guard()");
+      continue;
+    }
+
+    try {
       const hash = await wallet.writeContract({
         address: account,
         abi: accountAbi,
-        functionName: "deleverTo",
-        args: [cursor.guardTargetCR],
+        functionName: "guard",
         account: wallet.account!,
         chain: mezoTestnet,
+        gas: 6_000_000n,
       });
-      console.log(`  step ${step} tx ${hash}`);
+      console.log(`  tx ${hash}`);
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       console.log(`  ${receipt.status} block ${receipt.blockNumber}`);
-      if (receipt.status !== "success") break;
-      cursor = (await publicClient.readContract({
-        address: account,
-        abi: accountAbi,
-        functionName: "position",
-      })) as Position;
-      console.log(`  now CR=${pct(cursor.cr)}`);
-      if (!cursor.active || cursor.debt >= beforeDebt) {
-        console.log("  stopped: another sale cannot repay debt");
-        break;
+      const link = `https://explorer.test.mezo.org/tx/${hash}`;
+      if (receipt.status === "success") {
+        await notify(tg, `Coil Labs rescue ${link}`);
+      } else {
+        await notify(tg, `Coil Labs rescue reverted ${link}`);
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`  send failed: ${message.slice(0, 240)}`);
+      await notify(tg, `Coil Labs: rescue failed for ${account}. ${message.slice(0, 180)}`);
     }
   }
+
+  if (execute && wallet) {
+    try {
+      const hash = await wallet.writeContract({
+        address: factory,
+        abi: factoryAbi,
+        functionName: "heartbeat",
+        account: wallet.account!,
+        chain: mezoTestnet,
+        gas: 200_000n,
+      });
+      console.log(`heartbeat ${hash} signer ${signer}`);
+    } catch (error) {
+      console.log(
+        `heartbeat skipped (${error instanceof Error ? error.message.slice(0, 160) : "error"}). Wave 1 factories have no heartbeat().`,
+      );
+    }
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function main() {
+  const execute = process.argv.includes("--execute") || process.env.COIL_EXECUTE === "true";
+  const watch = process.argv.includes("--watch") || process.env.KEEPER_WATCH === "true";
+  const rpc = process.env.MEZO_TESTNET_RPC ?? "https://rpc.test.mezo.org";
+  const factory = process.env.COIL_FACTORY;
+  if (!factory || !isAddress(factory)) {
+    throw new Error("Set COIL_FACTORY to the deployed CoilFactory address.");
+  }
+  const pollMs = Number(process.env.KEEPER_POLL_MS ?? "20000");
+  const publicClient = createPublicClient({ chain: mezoTestnet, transport: http(rpc) });
+  const tg = telegramFromEnv();
+  if (!tg) console.log("Telegram alerts off (set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable).");
+
+  let wallet: WalletClient | undefined;
+  if (execute) {
+    const key = process.env.KEEPER_PRIVATE_KEY;
+    if (!key) throw new Error("Set KEEPER_PRIVATE_KEY to send guard() transactions.");
+    const account = privateKeyToAccount(key as `0x${string}`);
+    wallet = createWalletClient({ account, chain: mezoTestnet, transport: http(rpc) });
+    console.log(`signer ${account.address}`);
+  }
+
+  do {
+    if (tg) await pollCommands(tg);
+    await scan({ publicClient, wallet, factory, execute, tg });
+    if (!watch) break;
+    await sleep(Number.isFinite(pollMs) && pollMs >= 3000 ? pollMs : 20000);
+  } while (watch);
 }
 
 main().catch((error: unknown) => {

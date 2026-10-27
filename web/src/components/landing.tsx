@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo } from "react";
 import { parseEther } from "viem";
 import {
@@ -16,7 +17,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { cn } from "cn";
-import { formatBtc, formatMusd, formatUsd, percentToCr, quoteLoop, type Market } from "@/lib/quote";
+import { formatBtc, formatMusd, formatUsd, percentToCr, quoteFlashLoop, type Market } from "@/lib/quote";
 import { factoryAddress } from "@/lib/mezo";
 import { EXPLORER, EXPLORER_ADDRESS, dropToLiquidation, shorten, useMotionOk } from "@/components/shell";
 
@@ -139,7 +140,7 @@ export function LoopViz() {
         <p className="btc-text num mt-1 text-5xl font-semibold tracking-tighter sm:text-7xl">2.00×</p>
         <p className="mt-1 text-xs text-muted-foreground">BTC exposure target</p>
         <p className="mt-3 hidden chip border-filament/30 font-mono text-[10px] text-foreground/80 sm:inline-flex">
-          <Repeat2 className="size-3 text-filament" />2 rounds · 1 transaction
+          <Repeat2 className="size-3 text-filament" />1 flash swap · 1 transaction
         </p>
       </div>
     </div>
@@ -154,7 +155,7 @@ export function Hero({ market, marketError }: { market: Market | null; marketErr
   const sample = useMemo(() => {
     if (!market) return null;
     try {
-      return quoteLoop(parseEther("0.05"), percentToCr(200), 50n, market);
+      return quoteFlashLoop(parseEther("0.05"), percentToCr(200), 50n, market);
     } catch {
       return null;
     }
@@ -252,9 +253,9 @@ function HeroStat({ label, value, accent = false }: { label: string; value: stri
 const TICKER = [
   "0.0475 BTC looped to 200.09% in one transaction",
   "deleverTo(300%) → 288.04%",
-  "Fresh 200% trove closed in two transactions",
+  "Flash unwind and de-lever each fit in one transaction",
   "Liquidation 110% · Coil floor 115%",
-  "Keeper can only de-lever",
+  "Keeper earns MEZO only when the ratio rises",
   "MUSD BorrowerOperations + Mezo Pools",
   `Factory ${shorten(factoryAddress)}`,
 ];
@@ -297,8 +298,8 @@ const HOW = [
   {
     icon: Layers,
     title: "Post it back, stop at your ratio",
-    body: "The BTC goes back in as collateral. A refinance lifts the borrow cap and Coil borrows once more, landing on or above your target.",
-    tag: "addColl · refinance",
+    body: "The flash-borrowed BTC is posted as collateral. The clone mints the MUSD the pool is owed and repays it in the same transaction, landing on or above your target.",
+    tag: "flash swap · openTrove",
   },
 ];
 
@@ -309,12 +310,12 @@ export function HowItWorks() {
         <div>
           <p className="eyebrow text-filament">How it works</p>
           <h2 id="how-title" className="mt-3 max-w-xl text-4xl font-semibold tracking-[-0.035em] sm:text-5xl">
-            Three moves. <span className="font-serif font-normal italic">One</span> signature.
+            Three moves. <span className="font-serif font-normal italic">One</span> transaction.
           </h2>
         </div>
         <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-          The clone owns the trove, so every step shares one transaction. Mezo allows 20 precompile calls per transaction, so
-          the loop runs two borrow-and-swap rounds and stops.
+          The clone owns the trove. A Mezo Pools flash swap borrows the BTC, posts it, and repays the pool before the transaction ends.
+          Mezo allows 20 precompile calls. The flash loop uses 7. The two-swap loop remains on the Wave 1 factory.
         </p>
       </div>
       <ol className="mt-10 grid gap-4 md:grid-cols-3">
@@ -384,8 +385,7 @@ export function Proof() {
           </h2>
         </div>
         <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-          Every number here is read back from a mined transaction on the current factory. Click any hash to check it on the
-          Mezo explorer.
+          These receipts are the Wave 1 factory. Flash loop, unwind, and de-lever are one transaction each on the Wave 2 contracts and need a new factory before they are mined. Click any hash to check it on the Mezo explorer.
         </p>
       </div>
       <div className="mt-10 grid gap-4 lg:grid-cols-3">
@@ -494,17 +494,18 @@ export function Footer() {
     <footer className="mt-10 border-t border-border py-10 text-sm text-muted-foreground">
       <div className="flex flex-wrap items-start justify-between gap-6">
         <div className="max-w-md">
-          <p className="text-base font-semibold text-foreground">Coil</p>
+          <p className="text-base font-semibold text-foreground">Coil Labs</p>
           <p className="mt-1 leading-relaxed">
-            One-click BTC leverage on MUSD. Built by{" "}
+            One-transaction BTC leverage on MUSD, with a keeper that can only make you safer, paid in MEZO. Built by{" "}
             <a className="link text-foreground" href="https://prabal.pro" target="_blank" rel="noreferrer noopener">
               Prabal Pratap Singh
-            </a>{" "}
-            for Mezo Buildathon Wave 1.
+            </a>
+            .
           </p>
         </div>
         <nav aria-label="Footer" className="flex flex-wrap gap-x-6 gap-y-2">
           <a className="hover:text-foreground" href="#app">App</a>
+          <Link className="hover:text-foreground" href="/guard">Guard log</Link>
           <a className="hover:text-foreground" href="#proof">Receipts</a>
           <a className="hover:text-foreground" href="#risks">Risks</a>
           <a className="inline-flex items-center gap-1.5 hover:text-foreground" href="https://github.com/PrabalParihar/coil" target="_blank" rel="noreferrer noopener">
