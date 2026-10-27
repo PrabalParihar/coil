@@ -6,6 +6,7 @@ import {ICoilFactory} from "./ICoilFactory.sol";
 import {MezoAddresses} from "./MezoAddresses.sol";
 import {FlashSizer} from "./libraries/FlashMath.sol";
 import {CoilLegacy} from "./libraries/CoilLegacy.sol";
+import {CoilPark} from "./CoilPark.sol";
 
 /// @title CoilAccount
 /// @notice One clone per user. The clone is the MUSD trove owner.
@@ -24,8 +25,9 @@ import {CoilLegacy} from "./libraries/CoilLegacy.sol";
 ///      (transfer in, balanceOf, fee transfer, balanceOf) 4 = 8.
 ///      flashDelever: fetchPrice 2 + repay 2 + withdraw 2 + BTC repayment 4 = 10.
 ///      guard() adds a MEZO balanceOf and transfer, both precompiles, = 12.
-///      All of those sit under 16, leaving margin if a BorrowerOperations call
-///      touches one extra precompile. The iterative `loop` is unchanged and still
+///      A reserve repay adds one `repayMUSD` (2) before any flash. Reserve plus
+///      flash plus the tip is 14. A second reserve top-up in the same call is 16.
+///      All of those sit under 20. The iterative `loop` is unchanged and still
 ///      stops after two swaps.
 ///
 ///      Router fallback (`loop`, sale unwind, quotes, hints, sweep) lives in
@@ -65,6 +67,8 @@ contract CoilAccount is IPoolCallee {
     /// @dev Separate contract so quote views can staticcall the solver. A public
     ///      library would delegatecall, which a staticcall is not allowed to do.
     FlashSizer public immutable sizer;
+    /// @notice Shared MUSD reserve. Clones read this immutable from the implementation.
+    CoilPark public immutable park;
     /// @dev Testnet MUSD/BTC has MUSD as token0. Read once so flash swaps do not assume it.
     bool public immutable btcIsToken0;
     IERC20 public immutable mezo;
@@ -80,6 +84,11 @@ contract CoilAccount is IPoolCallee {
     ///         `fair * (1 + rescueSlippageBps)`, so a caller cannot push a
     ///         rescue through a worse pool than that cap.
     uint16 public rescueSlippageBps;
+    /// @notice Max pool-vs-oracle gap, in bps, that `flashLoop` will still open through.
+    uint16 public maxPegDeviationBps;
+    /// @notice When non-zero, `guard` also acts if MUSD is at least this many bps under $1
+    ///         and the trove sits in the redemption zone (or the bottom 8, if no zone is set).
+    uint16 public pegGuardBps;
     uint256 public floorCR;
     uint256 public guardTargetCR;
     uint32 public redemptionZone;
@@ -107,10 +116,15 @@ contract CoilAccount is IPoolCallee {
     uint256 public constant FLASH_UNWIND_PRECOMPILES = 8;
     uint256 public constant FLASH_DELEVER_PRECOMPILES = 10;
     uint256 public constant GUARD_TIP_PRECOMPILES = 12;
+    /// @dev guard() that repays from the reserve twice and then flashes BTC. Still under 20.
+    uint256 internal constant RESERVE_GUARD_PRECOMPILES = 16;
     /// @dev 2%. Covers the ~1.4% pool-below-oracle gap seen on testnet, plus the pool fee.
     uint16 public constant RESCUE_SLIPPAGE_DEFAULT = 200;
     /// @dev Same ceiling as open slippage. Past this, `setRescueSlippage` reverts.
     uint16 public constant RESCUE_SLIPPAGE_CAP = 300;
+    /// @dev flashLoop reverts when the pool and the oracle differ by more than this, unless the owner raises it.
+    uint16 internal constant PEG_DEVIATION_DEFAULT = 200;
+    uint16 internal constant PEG_DEVIATION_CAP = 500;
 
     struct LoopQuote {
         uint256 collateral;
@@ -140,6 +154,9 @@ contract CoilAccount is IPoolCallee {
     event Delevered(address indexed owner, uint256 targetCR, uint256 cr, uint256 debt);
     event GuardSet(uint256 floorCR, uint256 guardTargetCR, uint32 redemptionZone, uint256 tipMezo);
     event GuardTriggered(address indexed caller, uint256 crBefore, uint256 crAfter);
+    event ReserveDeposited(address indexed owner, uint256 amount);
+    event ReserveWithdrawn(address indexed owner, uint256 amount);
+    event ReserveSpent(uint256 amount);
     event Guarded(address indexed caller, uint256 crBefore, uint256 crAfter, uint256 tip);
     event KeeperSet(address indexed keeper);
     event Swept(address indexed to, uint256 btcAmount, uint256 musdAmount);
@@ -169,6 +186,7 @@ contract CoilAccount is IPoolCallee {
     error NotPool();
     error BadFlash();
     error PoolPaused();
+    error PegOff();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -206,6 +224,7 @@ contract CoilAccount is IPoolCallee {
         pool = IPool(_pool);
         btcIsToken0 = IPool(_pool).token0() == _btc;
         sizer = new FlashSizer();
+        park = new CoilPark(address(musd), msg.sender);
         mezo = IERC20(MezoAddresses.MEZO);
         initialized = true;
         owner = address(1);
@@ -219,6 +238,7 @@ contract CoilAccount is IPoolCallee {
         factory = msg.sender;
         slippageBps = 50;
         rescueSlippageBps = RESCUE_SLIPPAGE_DEFAULT;
+        maxPegDeviationBps = PEG_DEVIATION_DEFAULT;
     }
 
     receive() external payable {}
@@ -277,7 +297,11 @@ contract CoilAccount is IPoolCallee {
         bool crRisk = floorCR != 0 && cr < floorCR;
         uint256 rank = redemptionRank();
         bool redemptionRisk = redemptionZone != 0 && rank != 0 && rank <= redemptionZone;
-        if (!crRisk && !redemptionRisk) return false;
+        (uint256 poolMusd, uint256 poolBtc) = _reserves();
+        uint256 belowPeg = CoilLegacy.musdBelowPegBps(poolMusd, poolBtc, price);
+        uint256 zone = redemptionZone == 0 ? 8 : redemptionZone;
+        bool pegRisk = pegGuardBps != 0 && belowPeg >= pegGuardBps && rank != 0 && rank <= zone;
+        if (!crRisk && !redemptionRisk && !pegRisk) return false;
         if (cr >= guardTargetCR) return false;
 
         _deleverFlash(guardTargetCR, price);
@@ -338,6 +362,18 @@ contract CoilAccount is IPoolCallee {
     function setRescueSlippage(uint16 bps) external onlyOwner {
         if (bps == 0 || bps > RESCUE_SLIPPAGE_CAP) revert BadSlippage();
         rescueSlippageBps = bps;
+    }
+
+    /// @notice Park MUSD (`withdraw` false) or send it back to the owner. Approve this clone before a deposit.
+    function moveReserve(uint256 amount, bool withdraw) external onlyOwner nonReentrant {
+        CoilLegacy.moveReserve(_env(), address(park), amount, withdraw);
+    }
+
+    /// @notice `maxOpenBps` is the pool-vs-oracle gap `flashLoop` accepts. `guardBps` of 0 turns the peg trigger off.
+    function setPegBounds(uint16 maxOpenBps, uint16 guardBps) external onlyOwner {
+        if (maxOpenBps == 0 || maxOpenBps > PEG_DEVIATION_CAP || guardBps > PEG_DEVIATION_CAP) revert BadSlippage();
+        maxPegDeviationBps = maxOpenBps;
+        pegGuardBps = guardBps;
     }
 
     function sweep() external onlyOwner nonReentrant {
@@ -538,6 +574,8 @@ contract CoilAccount is IPoolCallee {
     }
 
     function _deleverFlash(uint256 targetCR, uint256 price) internal {
+        CoilLegacy.applyReserve(_env(), address(park), targetCR, price);
+        if (_active() && _cr(price) >= targetCR) return;
         if (_paused()) {
             _deleverTo(targetCR, price);
             return;
@@ -582,6 +620,8 @@ contract CoilAccount is IPoolCallee {
     function _flashLoop(uint256 targetCR, uint256 slip) internal {
         uint256 price = priceFeed.fetchPrice();
         if (troveManager.checkRecoveryMode(price)) revert RecoveryMode();
+        (uint256 poolMusd, uint256 poolBtc) = _reserves();
+        if (CoilLegacy.deviationBps(poolMusd, poolBtc, price) > maxPegDeviationBps) revert PegOff();
         bool exists = _active();
         if (!exists && msg.value == 0) revert ZeroAmount();
         if (exists && msg.value == 0 && _cr(price) <= targetCR) revert AlreadyAtTarget();

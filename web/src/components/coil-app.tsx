@@ -30,28 +30,34 @@ import {
   erc20Abi,
   factoryFeeAbi,
   mezoTestnet,
+  parkAbi,
   poolAbi,
   priceFeedAbi,
   sortedTrovesAbi,
   troveManagerAbi,
+  troveRecoveryAbi,
   type Position,
 } from "@/lib/mezo";
 import {
   QuoteError,
   crToPercent,
+  deviationBps,
   formatBtc,
   formatMusd,
   formatPercent,
   formatUsd,
   icrFromNominal,
   leverageLabel,
+  musdBelowPegBps,
   nominalIcr,
   percentToCr,
   poolReserves,
   quoteFlashLoop,
   quoteLoop,
+  sensibleOpen,
   type Market,
 } from "@/lib/quote";
+import { loadMainnetMarket } from "@/lib/mainnet";
 import {
   Activity,
   Banner,
@@ -95,6 +101,7 @@ export function CoilApp() {
   const [guardPct, setGuardPct] = useState(220);
   const [zone, setZone] = useState(8);
   const [tipText, setTipText] = useState("5");
+  const [reserveText, setReserveText] = useState("100");
   const [tail, setTail] = useState<bigint[]>([]);
   const [market, setMarket] = useState<Market | null>(null);
   const [marketError, setMarketError] = useState<string | null>(null);
@@ -278,6 +285,44 @@ export function CoilApp() {
   });
   const separateRescue = typeof rescueRaw === "bigint" || typeof rescueRaw === "number";
 
+  const { data: implPark, isError: parkMissing, isFetched: parkFetched } = useReadContract({
+    address: implementation,
+    abi: coilAccountAbi,
+    functionName: "park",
+    query: { enabled: Boolean(implementation), retry: false },
+  });
+  const reserveFactory = parkFetched && !parkMissing && typeof implPark === "string" && implPark !== ZERO;
+  const { data: parkedRaw, refetch: refetchParked } = useReadContract({
+    address: typeof implPark === "string" ? implPark : undefined,
+    abi: parkAbi,
+    functionName: "assetsOf",
+    args: account ? [account] : undefined,
+    query: { enabled: Boolean(reserveFactory && account && implPark), refetchInterval: 15_000 },
+  });
+  const parked = typeof parkedRaw === "bigint" ? parkedRaw : 0n;
+  const { data: pegGuardRaw } = useReadContract({
+    address: account,
+    abi: coilAccountAbi,
+    functionName: "pegGuardBps",
+    query: { enabled: Boolean(reserveFactory && account), retry: false },
+  });
+  const { data: maxPegRaw } = useReadContract({
+    address: account,
+    abi: coilAccountAbi,
+    functionName: "maxPegDeviationBps",
+    query: { enabled: Boolean(reserveFactory && account), retry: false },
+  });
+  const pegGuardBps = typeof pegGuardRaw === "number" ? pegGuardRaw : Number(pegGuardRaw ?? 0);
+  const maxPegBps = typeof maxPegRaw === "number" ? maxPegRaw : Number(maxPegRaw ?? 200);
+  const { data: recoveryRaw } = useReadContract({
+    address: addr.troveManager,
+    abi: troveRecoveryAbi,
+    functionName: "checkRecoveryMode",
+    args: market ? [market.price] : undefined,
+    query: { enabled: Boolean(market), refetchInterval: 20_000 },
+  });
+  const inRecovery = recoveryRaw === true;
+
   useEffect(() => {
     setRescueDirty(false);
   }, [account]);
@@ -357,6 +402,7 @@ export function CoilApp() {
     if (receipt.status !== "success") throw new Error("The transaction reverted.");
     await refetchAccount();
     await refetchPosition();
+    await refetchParked();
   }
 
   function begin() {
@@ -472,6 +518,94 @@ export function CoilApp() {
       }),
     )
       .then(() => setStatus("Account created."))
+      .catch(fail)
+      .finally(() => setBusy(false));
+  }
+
+  function depositReserve() {
+    if (!account) return;
+    let amount: bigint;
+    try {
+      amount = parseEther(reserveText || "0");
+    } catch {
+      fail(new Error("Enter an MUSD amount."));
+      return;
+    }
+    if (amount === 0n) {
+      fail(new Error("Enter an MUSD amount."));
+      return;
+    }
+    begin();
+    send("Approve MUSD", () =>
+      writeContractAsync({
+        address: addr.musd,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [account, amount],
+        chainId: mezoTestnet.id,
+      }),
+    )
+      .then(() =>
+        send("Park MUSD", () =>
+          writeContractAsync({
+            address: account,
+            abi: coilAccountAbi,
+            functionName: "moveReserve",
+            args: [amount, false],
+            chainId: mezoTestnet.id,
+            gas: 400_000n,
+          }),
+        ),
+      )
+      .then(() => setStatus("MUSD parked. A rescue spends this before it sells BTC."))
+      .catch(fail)
+      .finally(() => setBusy(false));
+  }
+
+  function withdrawReserve() {
+    if (!account) return;
+    let amount: bigint;
+    try {
+      amount = parseEther(reserveText || "0");
+    } catch {
+      fail(new Error("Enter an MUSD amount."));
+      return;
+    }
+    if (amount === 0n) {
+      fail(new Error("Enter an MUSD amount."));
+      return;
+    }
+    begin();
+    send("Withdraw reserve", () =>
+      writeContractAsync({
+        address: account,
+        abi: coilAccountAbi,
+        functionName: "moveReserve",
+        args: [amount, true],
+        chainId: mezoTestnet.id,
+        gas: 300_000n,
+      }),
+    )
+      .then(() => setStatus("Reserve returned to your wallet."))
+      .catch(fail)
+      .finally(() => setBusy(false));
+  }
+
+  function savePeg(bps: number) {
+    if (!account) return;
+    const openCap = maxPegBps > 0 && maxPegBps <= 500 ? maxPegBps : 200;
+    begin();
+    send("Set peg guard", () =>
+      writeContractAsync({
+        address: account,
+        abi: coilAccountAbi,
+        functionName: "setPegBounds",
+        args: [openCap, bps],
+        chainId: mezoTestnet.id,
+        gas: 200_000n,
+      }),
+    )
+      .then(() => setStatus(bps === 0 ? "Peg trigger off." : `Peg trigger set to ${bps} bps under $1.`))
       .catch(fail)
       .finally(() => setBusy(false));
   }
@@ -606,8 +740,31 @@ export function CoilApp() {
           ? "closed"
           : "open";
 
+  const poolGap = market ? deviationBps(market.reserveMusd, market.reserveBtc, market.price) : 0n;
+  const belowPeg = market ? musdBelowPegBps(market.reserveMusd, market.reserveBtc, market.price) : 0n;
+  const openCap = reserveFactory ? (maxPegBps > 0 ? maxPegBps : 200) : 200;
+  const pegBlocked = reserveFactory && poolGap > BigInt(openCap);
+  const openBlock = inRecovery
+    ? "Mezo is in Recovery Mode. A new loop is refused."
+    : pegBlocked
+      ? `Pool is ${poolGap.toString()} bps off the oracle. flashLoop refuses above ${openCap} bps.`
+      : null;
+  const sensible = market && collateral && collateral > 0n ? sensibleOpen(collateral, market) : null;
+  const reserveNeed = (() => {
+    if (!position?.active || !market || position.collateral === 0n || position.debt === 0n) return 0n;
+    const target = position.guardTargetCR > 0n ? position.guardTargetCR : 15n * 10n ** 17n;
+    const targetDebt = (position.collateral * market.price) / target;
+    if (targetDebt >= position.debt) return 0n;
+    return position.debt - targetDebt;
+  })();
   const loopReady =
-    !busy && Boolean(factoryAddress) && Boolean(account) && preview.kind === "ok" && collateral !== null && collateral !== 0n;
+    !busy &&
+    !openBlock &&
+    Boolean(factoryAddress) &&
+    Boolean(account) &&
+    preview.kind === "ok" &&
+    collateral !== null &&
+    collateral !== 0n;
   const primary: { label: string; onClick?: () => void; disabled: boolean; icon?: React.ReactNode } = !mounted
     ? { label: "Connect wallet", disabled: true, icon: <Wallet className="size-4" aria-hidden /> }
     : !isConnected
@@ -618,7 +775,9 @@ export function CoilApp() {
           ? { label: "Deploy to enable", disabled: true }
           : !account
             ? { label: busy ? "Creating account…" : "Create your Coil account", onClick: createAccount, disabled: busy }
-            : { label: busy ? "Working…" : `Loop to ${targetPct}% · ${leverageLabel(targetCR)}`, onClick: doLoop, disabled: !loopReady, icon: <Lock className="size-4" aria-hidden /> };
+            : openBlock
+              ? { label: inRecovery ? "Recovery Mode — loop refused" : "Pool is off the oracle", disabled: true, icon: <Lock className="size-4" aria-hidden /> }
+              : { label: busy ? "Working…" : `Loop to ${targetPct}% · ${leverageLabel(targetCR)}`, onClick: doLoop, disabled: !loopReady, icon: <Lock className="size-4" aria-hidden /> };
 
   const setup = [
     { label: "Wallet", done: connected },
@@ -652,6 +811,7 @@ export function CoilApp() {
             <a className="hover:text-foreground" href="#how">How it works</a>
             <a className="hover:text-foreground" href="#app">App</a>
             <Link className="hover:text-foreground" href="/guard">Guard log</Link>
+            <Link className="hover:text-foreground" href="/stats">Stats</Link>
             <a className="hover:text-foreground" href="#proof">Receipts</a>
             <a className="hover:text-foreground" href="#risks">Risks</a>
           </nav>
@@ -757,6 +917,20 @@ export function CoilApp() {
                   }
                 >
                   Coil Labs sends transactions on Mezo testnet (chain 31611). Bitcoin wallets connect through Mezo Passport.
+                </Banner>
+              ) : null}
+              {inRecovery ? (
+                <Banner tone="bad" title="Recovery Mode">
+                  Mezo is in Recovery Mode at the current oracle price. flashLoop refuses to open. Existing troves can still be raised by guard().
+                </Banner>
+              ) : null}
+              {market && poolGap > 0n ? (
+                <Banner tone={poolGap > BigInt(openCap) ? "warn" : "info"} title="Pool versus oracle">
+                  The MUSD/BTC pool is {poolGap.toString()} bps off the oracle.
+                  {belowPeg > 0n ? ` MUSD is ${belowPeg.toString()} bps under $1.` : " MUSD is not under $1 in this pool."}
+                  {reserveFactory
+                    ? ` flashLoop refuses an open past ${openCap} bps.`
+                    : " This factory still attempts the open. The next factory refuses past 200 bps."}
                 </Banner>
               ) : null}
               {connectError && !isConnected ? (
@@ -870,6 +1044,7 @@ export function CoilApp() {
                   </div>
                   <ChipGroup label="Open slippage" options={SLIPPAGE} value={slippageBps as (typeof SLIPPAGE)[number]} onChange={setSlippageBps} render={(v) => `${(v / 100).toFixed(2)}%`} />
                 </div>
+                <PoolDepth deposit={collateral} testnet={market} quote={sensible} />
 
                 <div className="mt-8 grid gap-3 border-t border-border pt-6 sm:grid-cols-3">
                   {[
@@ -1033,6 +1208,16 @@ export function CoilApp() {
                           setRescueBps(v);
                         }}
                         onSaveRescue={saveRescueSlippage}
+                        reserveAvailable={reserveFactory}
+                        parked={parked}
+                        reserveNeed={reserveNeed}
+                        reserveText={reserveText}
+                        setReserveText={setReserveText}
+                        onDepositReserve={depositReserve}
+                        onWithdrawReserve={withdrawReserve}
+                        pegAvailable={reserveFactory}
+                        pegGuardBps={pegGuardBps}
+                        onSavePeg={savePeg}
                       />
                     </div>
                   ) : (
@@ -1071,6 +1256,16 @@ export function CoilApp() {
                             setRescueBps(v);
                           }}
                           onSaveRescue={saveRescueSlippage}
+                          reserveAvailable={reserveFactory}
+                          parked={parked}
+                          reserveNeed={reserveNeed}
+                          reserveText={reserveText}
+                          setReserveText={setReserveText}
+                          onDepositReserve={depositReserve}
+                          onWithdrawReserve={withdrawReserve}
+                          pegAvailable={reserveFactory}
+                          pegGuardBps={pegGuardBps}
+                          onSavePeg={savePeg}
                           bare
                         />
                       }
@@ -1381,6 +1576,145 @@ function OpenPosition({
   );
 }
 
+function describeSensible(quote: ReturnType<typeof sensibleOpen> | null) {
+  if (!quote) return "Enter a BTC amount to see the largest leverage that stays under 1% price impact.";
+  if (quote.targetCR === 0n) return "This deposit cannot open. Mezo requires at least 1,800 MUSD of debt.";
+  if (!quote.capped) {
+    return `No leverage stays under 1% impact. The gentlest open is ${quote.leverage} at ${quote.impact.toString()} bps.`;
+  }
+  return `Max sensible leverage now: ${quote.leverage}, at ${quote.impact.toString()} bps of pool impact.`;
+}
+
+function PoolDepth({
+  deposit,
+  testnet,
+  quote,
+}: {
+  deposit: bigint | null;
+  testnet: Market | null;
+  quote: ReturnType<typeof sensibleOpen> | null;
+}) {
+  const [main, setMain] = useState<Market | null>(null);
+  const [mainError, setMainError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    loadMainnetMarket()
+      .then((next) => {
+        if (!cancelled) {
+          setMain(next);
+          setMainError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setMainError(error instanceof Error ? error.message : "Mainnet RPC failed.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const mainQuote = main && deposit && deposit > 0n ? sensibleOpen(deposit, main) : null;
+  const testLine = testnet ? describeSensible(quote) : "Waiting for the testnet pool.";
+  const mainLine = mainError ? "Could not read the mainnet pool." : describeSensible(mainQuote);
+  return (
+    <div className="mt-6 grid gap-3 sm:grid-cols-2">
+      <div className="rounded-2xl border border-border px-4 py-3">
+        <p className="eyebrow">Testnet depth</p>
+        <p className="mt-2 text-sm leading-relaxed">{testLine}</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">Quoted from the live Mezo testnet pool. Cap is 1% impact.</p>
+      </div>
+      <div className="rounded-2xl border border-border px-4 py-3">
+        <p className="eyebrow">Mainnet depth</p>
+        <p className="mt-2 text-sm leading-relaxed">{mainLine}</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">Read-only. Coil is not deployed on Mezo mainnet.</p>
+      </div>
+    </div>
+  );
+}
+
+const PEG_GUARD = [0, 50, 100, 200] as const;
+
+function ReserveBlock({
+  available,
+  parked,
+  need,
+  text,
+  setText,
+  busy,
+  disabled,
+  onDeposit,
+  onWithdraw,
+  pegAvailable,
+  pegGuardBps,
+  onSavePeg,
+}: {
+  available: boolean;
+  parked: bigint;
+  need: bigint;
+  text: string;
+  setText?: (v: string) => void;
+  busy: boolean;
+  disabled: boolean;
+  onDeposit?: () => void;
+  onWithdraw?: () => void;
+  pegAvailable: boolean;
+  pegGuardBps: number;
+  onSavePeg?: (bps: number) => void;
+}) {
+  const covered =
+    need === 0n
+      ? `Parked ${formatMusd(parked)} MUSD. Nothing to repay at the guard target.`
+      : parked >= need
+        ? `Reserve covers the full ${formatMusd(need)} MUSD a rescue would repay. No BTC sale.`
+        : `Reserve covers ${((Number((parked * 10000n) / need) / 100) || 0).toFixed(0)}% of a rescue (${formatMusd(parked)} of ${formatMusd(need)} MUSD). The rest sells BTC.`;
+  return (
+    <div className="mt-4 space-y-3 rounded-2xl border border-border p-3">
+      <p className="eyebrow">MUSD reserve</p>
+      {available ? (
+        <>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">{covered}</p>
+          <Input
+            inputMode="decimal"
+            value={text}
+            onChange={(event) => setText?.(event.target.value)}
+            aria-label="MUSD reserve amount"
+            className="h-11 rounded-xl bg-black/25 font-mono md:text-sm dark:bg-black/25"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" variant="outline" className="h-10 rounded-2xl" disabled={busy || disabled} onClick={onDeposit}>
+              Park MUSD
+            </Button>
+            <Button type="button" variant="outline" className="h-10 rounded-2xl" disabled={busy || disabled} onClick={onWithdraw}>
+              Withdraw
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Plain MUSD. No verified sMUSD address is published, so the park stays in MUSD until the governor points it at a savings vault.
+          </p>
+        </>
+      ) : (
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          This factory has no MUSD reserve. A rescue still sells BTC. The next factory repays parked MUSD first, and can later hold a savings vault if an sMUSD address is verified.
+        </p>
+      )}
+      {pegAvailable && onSavePeg ? (
+        <div className="space-y-2">
+          <p className="eyebrow">Peg trigger</p>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            When MUSD is this far under $1 and the trove is near the front of the redemption queue, guard() acts. Off leaves the trigger disabled. Current setting {pegGuardBps} bps.
+          </p>
+          <ChipGroup
+            label="Peg trigger"
+            options={PEG_GUARD}
+            value={(PEG_GUARD as readonly number[]).includes(pegGuardBps) ? (pegGuardBps as (typeof PEG_GUARD)[number]) : 0}
+            onChange={onSavePeg}
+            render={(v) => (v === 0 ? "Off" : `${(v / 100).toFixed(2)}%`)}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function GuardPanel({
   floorPct,
   setFloorPct,
@@ -1401,6 +1735,16 @@ function GuardPanel({
   separateRescue = false,
   onRescueBps,
   onSaveRescue,
+  reserveAvailable = false,
+  parked = 0n,
+  reserveNeed = 0n,
+  reserveText = "",
+  setReserveText,
+  onDepositReserve,
+  onWithdrawReserve,
+  pegAvailable = false,
+  pegGuardBps = 0,
+  onSavePeg,
   bare = false,
 }: {
   floorPct: number;
@@ -1422,6 +1766,16 @@ function GuardPanel({
   separateRescue?: boolean;
   onRescueBps?: (v: number) => void;
   onSaveRescue?: () => void;
+  reserveAvailable?: boolean;
+  parked?: bigint;
+  reserveNeed?: bigint;
+  reserveText?: string;
+  setReserveText?: (v: string) => void;
+  onDepositReserve?: () => void;
+  onWithdrawReserve?: () => void;
+  pegAvailable?: boolean;
+  pegGuardBps?: number;
+  onSavePeg?: (bps: number) => void;
   bare?: boolean;
 }) {
   const min = 110;
@@ -1438,7 +1792,22 @@ function GuardPanel({
       <p className="text-xs leading-relaxed text-muted-foreground">
         If the ratio drops under the floor, or the trove enters the redemption zone, anyone may call <span className="font-mono text-foreground/90">guard()</span>.
         It can only raise the ratio. It cannot loop, unwind, or withdraw. {flash ? "The caller earns MEZO only when the ratio rises." : "MEZO tips ship with the Wave 2 factory."}
+        {" "}A rescue spends parked MUSD first and sells BTC only for the remainder.
       </p>
+      <ReserveBlock
+        available={reserveAvailable}
+        parked={parked}
+        need={reserveNeed}
+        text={reserveText}
+        setText={setReserveText}
+        busy={busy}
+        disabled={disabled}
+        onDeposit={onDepositReserve}
+        onWithdraw={onWithdrawReserve}
+        pegAvailable={pegAvailable}
+        pegGuardBps={pegGuardBps}
+        onSavePeg={onSavePeg}
+      />
       <div className="relative mt-5 h-10" aria-hidden>
         <div className="absolute inset-x-0 top-4 h-1.5 rounded-full opacity-60" style={{ background: "linear-gradient(90deg,var(--danger) 0%,var(--danger) 16.7%,var(--warn) 16.7%,var(--warn) 37.5%,var(--safe) 37.5%)" }} />
         <div className="absolute top-4 h-1.5 bg-foreground/80" style={{ left: at(floorPct), width: `calc(${at(guardPct)} - ${at(floorPct)})` }} />

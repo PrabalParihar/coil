@@ -8,6 +8,7 @@ import {
   type PublicClient,
   type WalletClient,
 } from "viem";
+import { musdBelowPegBps, needsGuard, notify, telegramFromEnv, type Telegram } from "./alerts.js";
 import { accountErrors, revertReason } from "./revert.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { mezoTestnet } from "./chain.js";
@@ -87,52 +88,31 @@ type Position = {
 
 const OUTSIDE = (1n << 256n) - 1n;
 const ZERO = "0x0000000000000000000000000000000000000000" as Address;
+const MUSD = "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503";
+const PRICE_FEED = "0x86bCF0841622a5dAC14A313a15f96A95421b9366";
+const POOL = "0xd16A5Df82120ED8D626a1a15232bFcE2366d6AA9";
+
+const priceAbi = [
+  { type: "function", name: "fetchPrice", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+] as const;
+const poolAbi = [
+  { type: "function", name: "token0", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  {
+    type: "function",
+    name: "getReserves",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }, { type: "uint256" }, { type: "uint256" }],
+  },
+] as const;
+const pegAbi = [
+  { type: "function", name: "pegGuardBps", stateMutability: "view", inputs: [], outputs: [{ type: "uint16" }] },
+] as const;
 
 function pct(cr: bigint) {
   if (cr === 0n) return "—";
   const hundredths = (cr * 10000n) / 10n ** 18n;
   return `${hundredths / 100n}.${(hundredths % 100n).toString().padStart(2, "0")}%`;
-}
-
-function needsGuard(position: Position) {
-  if (!position.active || position.guardTargetCR === 0n) return null;
-  const crRisk = position.floorCR > 0n && position.cr < position.floorCR;
-  const inZone =
-    position.redemptionZone > 0 &&
-    position.redemptionRank > 0n &&
-    position.redemptionRank !== OUTSIDE &&
-    position.redemptionRank <= BigInt(position.redemptionZone);
-  if (position.cr >= position.guardTargetCR) return null;
-  if (crRisk) return "collateral ratio is under the floor";
-  if (inZone) return "trove is inside the redemption zone";
-  return null;
-}
-
-type Telegram = {
-  token: string;
-  chatId: string;
-  offset: number;
-};
-
-function telegramFromEnv(): Telegram | null {
-  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
-  const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
-  if (!token || !chatId) return null;
-  return { token, chatId, offset: 0 };
-}
-
-async function notify(tg: Telegram | null, text: string) {
-  if (!tg) return;
-  const url = `https://api.telegram.org/bot${tg.token}/sendMessage`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: tg.chatId, text, disable_web_page_preview: true }),
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    console.error(`telegram ${response.status}: ${body.slice(0, 200)}`);
-  }
 }
 
 type WatchFile = { addresses: Address[] };
@@ -184,7 +164,7 @@ async function pollCommands(tg: Telegram | null) {
     } else if (command === "/help" || command === "/start") {
       await notify(
         tg,
-        "Coil Labs keeper. /watch 0xClone and /unwatch 0xClone. Alerts fire when a trove is under its floor or inside its redemption zone. guard() pays MEZO only on the Wave 2 factory, and only if the ratio rose.",
+        "Coil Labs keeper. /watch 0xClone and /unwatch 0xClone. Alerts fire when a trove is under its floor, inside its redemption zone, or near the queue while MUSD is under $1. guard() pays MEZO only on the Wave 2 factory, and only if the ratio rose. The bot token is never printed.",
       );
     }
   }
@@ -222,6 +202,17 @@ async function scan(opts: {
   const { publicClient, wallet, factory, execute, tg } = opts;
   const accounts = await listAccounts(publicClient, factory);
   console.log(`Coil Labs keeper · ${accounts.length} account(s) · ${execute ? "EXECUTE" : "dry run"}`);
+  let belowPeg = 0n;
+  try {
+    const price = await publicClient.readContract({ address: PRICE_FEED, abi: priceAbi, functionName: "fetchPrice" });
+    const token0 = await publicClient.readContract({ address: POOL, abi: poolAbi, functionName: "token0" });
+    const reserves = await publicClient.readContract({ address: POOL, abi: poolAbi, functionName: "getReserves" });
+    const musdFirst = token0.toLowerCase() === MUSD.toLowerCase();
+    belowPeg = musdBelowPegBps(musdFirst ? reserves[0] : reserves[1], musdFirst ? reserves[1] : reserves[0], price);
+    console.log(`MUSD under $1 by ${belowPeg.toString()} bps`);
+  } catch (error) {
+    console.log(`peg read skipped (${error instanceof Error ? error.message.slice(0, 140) : "error"})`);
+  }
   const signer = wallet?.account?.address ?? ZERO;
 
   for (const account of accounts) {
@@ -240,7 +231,15 @@ async function scan(opts: {
       console.log(`${account} idle`);
       continue;
     }
-    const reason = needsGuard(position);
+    let pegGuardBps = 0;
+    try {
+      pegGuardBps = Number(
+        await publicClient.readContract({ address: account, abi: pegAbi, functionName: "pegGuardBps" }),
+      );
+    } catch {
+      pegGuardBps = 0;
+    }
+    const reason = needsGuard(position, { belowPegBps: belowPeg, pegGuardBps });
     const rank =
       position.redemptionRank === OUTSIDE ? "outside top 32" : position.redemptionRank.toString();
     console.log(

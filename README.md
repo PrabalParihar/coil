@@ -8,7 +8,7 @@ Built by [Prabal Pratap Singh](https://prabal.pro) ([GitHub](https://github.com/
 
 **Live app:** [coil.up.railway.app](https://coil.up.railway.app) (Mezo testnet, chain 31611). The product name is Coil Labs. A different Wave 1 project also used the name Coil.
 
-Clones are EIP-1167 and are not upgradeable. The live app and keeper use the Wave 2 factory `0x6A38f560cF8612cc81cF966831890DBb310e31F7`. This branch changes `CoilAccount` (a separate rescue slippage), so that factory does not pick the change up. A new implementation and factory are required before the split is live. `NEXT_PUBLIC_COIL_FACTORY` selects the factory. The code default is the current live factory.
+Clones are EIP-1167 and are not upgradeable. The live app and keeper use the Wave 2 factory `0x6A38f560cF8612cc81cF966831890DBb310e31F7`. This branch changes `CoilAccount` again (rescue slippage, an MUSD reserve, and a peg check), so that factory does not pick the change up. A new implementation and factory are required. `NEXT_PUBLIC_COIL_FACTORY` selects the factory. The code default is the current live factory. Nothing in this branch is deployed to Mezo mainnet.
 
 ## Problem
 
@@ -45,6 +45,31 @@ Mezo Pools is the venue. The router is Tigris-style: `swapExactTokensForTokens(a
 Repay does not approve MUSD. `BorrowerOperations.repayMUSD` burns it. `closeTrove` burns whatever is left, including the gas compensation, which `repayMUSD` is not allowed to clear on its own.
 
 MEZO (`0x7B7c000000000000000000000000000000000001`, 18 decimals, same address on testnet and mainnet) pays the keeper. The owner approves the clone and calls `fundTips`. `guard()` transfers `min(tipMezo, balance)` to the caller only after the collateral ratio has risen, at most once per block. An empty jar still rescues. `withdrawTips` is owner-only. `transfer` and `balanceOf` on MEZO each count as a precompile call.
+
+## Mezo contracts and precompiles
+
+Every address below is the one this repository calls. Testnet and mainnet values live in `src/MezoAddresses.sol`. The app reads mainnet only to quote depth. It does not send a mainnet transaction.
+
+| What | Role in Coil | Counts toward the 20-precompile cap |
+| --- | --- | --- |
+| BorrowerOperations | `openTrove`, `addColl`, `withdrawMUSD`, `repayMUSD`, `refinance`, `closeTrove`, `getCompositeDebt` | A price fetch inside `repayMUSD` is +2. The reserve path uses that. |
+| TroveManager | ICR, debt, collateral, status, `checkRecoveryMode` | `fetchPrice` is not here. ICR reads are protocol calls. `checkRecoveryMode` is one call and is not a BTC precompile. |
+| SortedTroves | Hints and the redemption walk (`getLast`, `getPrev`) | No. |
+| HintHelpers | `getApproxHint` for inserts | No. |
+| PriceFeed | `fetchPrice` | Yes. One fetch is 2 precompile calls. |
+| Mezo Pools pool | `getReserves`, `token0`, `swap` (flash) | The MUSD→BTC swap is 3 BTC precompile calls. BTC→MUSD inside a flash repay is 4. |
+| Pool factory | `getFee`, pause flag | No. |
+| Router | Wave 1 exact-in swaps | The router's swap is the same BTC precompile family as the pool. |
+| BTC precompile `0x7b7c…0000` | Collateral. `balanceOf` and `transfer` | Yes, each. |
+| MEZO precompile `0x7b7c…0001` | Keeper tip. `balanceOf` and `transfer` | Yes, each. The tip path is +2. |
+| MUSD | Debt token. Normal ERC-20, not a precompile | No. |
+| Savings vault (optional) | `CoilPark.setVault` when an ERC-4626 asset is MUSD | No. No sMUSD address is set. See below. |
+
+Documented budgets, from `precompileBudget()`: flash loop 7, unwind 8, de-lever 10, guard plus tip 12. A reserve repay adds one price fetch (+2). A second top-up from the park adds another. Worst case on a rescue that spends the reserve and then flashes is 16, under 20. MUSD `transfer` does not count.
+
+`CoilPark` holds the reserve outside the clone so `sweep` cannot take it. The owner deposits MUSD. `guard` draws that MUSD and calls `repayMUSD` before any BTC is sold. There is no published sMUSD address on testnet or mainnet in the Mezo docs this repo checked, so the park holds plain MUSD. The implementation's deployer (`park.governor`) can later call `setVault` with an ERC-4626 whose `asset()` is MUSD. One park is shared by every clone of that implementation.
+
+`foundry.toml` sets `bytecode_hash = "none"` so `CoilAccount` stays under EIP-170 after the reserve and peg checks. `forge verify` reads that setting. A verifier that assumes the default IPFS hash will not match.
 
 ## Live testnet (Wave 2 factory)
 
@@ -186,7 +211,7 @@ PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
   forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:18545 --broadcast
 ```
 
-The script needs only `PRIVATE_KEY`. It deploys `CoilAccount` with the testnet addresses in `src/MezoAddresses.sol`, including the MUSD/BTC pool, then `CoilFactory(implementation, deployer)`. Foundry deploys `CoilLegacy` in that same broadcast and links it. `CoilAccount`'s constructor deploys `FlashSizer`. The log lines are `legacy`, `sizer`, `implementation`, and `factory`.
+The script needs only `PRIVATE_KEY`. It deploys `CoilAccount` with the testnet addresses in `src/MezoAddresses.sol`, including the MUSD/BTC pool, then `CoilFactory(implementation, deployer)`. Foundry deploys `CoilLegacy` in that same broadcast and links it. `CoilAccount`'s constructor deploys `FlashSizer` (nonce 1) and `CoilPark` (nonce 2). The log lines are `legacy`, `sizer`, `park`, `implementation`, and `factory`. `verify.sh` does not take the park address. Verify the park on its own if you want it on Blockscout.
 
 `forge create` against `https://rpc.test.mezo.org` has been seen talking to `http://localhost:8545`. `forge script` is the path that takes `--rpc-url`. Fund the deployer from [faucet.test.mezo.org](https://faucet.test.mezo.org) (the faucet can require a captcha). Then:
 
@@ -212,7 +237,16 @@ COIL_FACTORY=0x6A38f560cF8612cc81cF966831890DBb310e31F7 npm start -- --watch
 COIL_FACTORY=0x… KEEPER_PRIVATE_KEY=0x… npm start -- --execute
 ```
 
-Railway: the keeper service is already running against the live Wave 2 factory. From `keeper/`, the Dockerfile and `railway.json` are the service shape. Set `COIL_FACTORY`, `MEZO_TESTNET_RPC`, `KEEPER_PRIVATE_KEY`, `COIL_EXECUTE=true`, `KEEPER_WATCH=true`, and optionally the two Telegram variables. Do not put the key in the repo. A failed `guard()` simulation logs the decoded revert, for example `Slippage()`. The Wave 1 “owner/keeper only” line is printed only when the revert is `NotKeeper()`. Rebuilding the Railway service is what picks that logging up. On the Wave 1 factory, `guard()` is still the owner or the factory keeper.
+Railway: the keeper service is already running against the live Wave 2 factory. From `keeper/`, the Dockerfile and `railway.json` are the service shape. Set `COIL_FACTORY`, `MEZO_TESTNET_RPC`, `KEEPER_PRIVATE_KEY`, `COIL_EXECUTE=true`, and `KEEPER_WATCH=true`. Do not put the key in the repo. A failed `guard()` simulation logs the decoded revert, for example `Slippage()`. The Wave 1 “owner/keeper only” line is printed only when the revert is `NotKeeper()`. Rebuilding the Railway service is what picks that logging up. On the Wave 1 factory, `guard()` is still the owner or the factory keeper.
+
+Telegram is optional and off when either variable is empty. Set both on Railway later. Do not commit the token.
+
+| Variable | Meaning |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Bot token from BotFather. It is sent only to `api.telegram.org` and is never printed. A failed send logs the HTTP status and a short body. |
+| `TELEGRAM_CHAT_ID` | The chat that receives alerts and is allowed to send `/watch`, `/unwatch`, and `/help`. |
+
+Alerts fire when a trove is under its floor, inside its redemption zone, or near the queue while MUSD is under $1 by at least `pegGuardBps` (0 disables that trigger). A successful `guard()` and a reverted one each send a message with the explorer link. `npm run check` in `keeper/` covers the revert decoder and these rules without a token.
 
 ### Frontend
 
@@ -223,7 +257,11 @@ npm run dev          # http://127.0.0.1:43123
 npm run build        # static export in web/out
 ```
 
-The page defaults to factory `0x6A38f560cF8612cc81cF966831890DBb310e31F7`. Override with `NEXT_PUBLIC_COIL_FACTORY`. Open slippage defaults to 1%. Rescue and close use a separate 2% cap when the account exposes `rescueSlippageBps`; the live factory does not, so the same control calls `setSlippage` there (still capped at 3%). `/guard` reads logs from block 16400159 in chunks of 9,999 blocks and shows an RPC error instead of an empty log. The live site gets that paging when the web service is rebuilt.
+The page defaults to factory `0x6A38f560cF8612cc81cF966831890DBb310e31F7`. Override with `NEXT_PUBLIC_COIL_FACTORY`. Open slippage defaults to 1%. Rescue and close use a separate 2% cap when the account exposes `rescueSlippageBps`; the live factory does not, so the same control calls `setSlippage` there (still capped at 3%). `/guard` and `/stats` read logs from block 16400159 in chunks of 9,999 blocks and show an RPC error instead of an empty page. The live site gets that paging when the web service is rebuilt.
+
+Wallet connect uses the Unisat, OKX, and Xverse connectors from `@mezo-org/orangekit`, which is what Mezo Passport 0.17.2 ships, plus an injected wallet and WalletConnect. Passport itself does not compile: `dist/src/constants.js` imports `mezoTestnet` from `@mezo-org/orangekit`, and orangekit 1.0.0-beta.40 (the version Passport depends on) does not re-export it. The desk still offers those Bitcoin wallets next to EVM wallets.
+
+The desk quotes max sensible leverage from the live testnet pool and, read-only, from the mainnet MUSD/BTC pool. The cap is 1% price impact. Mainnet is not a deploy target. The reserve panel appears when the factory's implementation exposes `park()`. The live factory does not, so the panel explains that a rescue still sells BTC.
 
 ```bash
 cd keeper && npx tsc --noEmit
@@ -240,10 +278,15 @@ Deployed on Mezo testnet and exercised end to end. See the table above and [DEPL
 
 This branch, not yet deployed:
 
-- `rescueSlippageBps`, owner-set, default 2%, hard cap 3%. `guard` and flash close use it. Open keeps `slippageBps`. A new `CoilAccount`, linked `CoilLegacy`, `FlashSizer`, and factory are required. `script/Deploy.s.sol` is unchanged.
-- `/guard` log paging and the keeper revert decoder. Those ship when the web app and the keeper process are rebuilt. They do not need a new factory.
+- `rescueSlippageBps`, owner-set, default 2%, hard cap 3%. `guard` and flash close use it. Open keeps `slippageBps`.
+- MUSD reserve in `CoilPark`. `guard` repays from it before selling BTC. Optional ERC-4626 adapter, no sMUSD address configured.
+- Peg gate on `flashLoop` (default 200 bps, hard cap 500) and an opt-in peg trigger on `guard`. Recovery Mode still reverts a new loop.
+- Depth quote: `FlashSizer.sensibleTarget`, capped at 100 bps of impact. The UI shows the same idea for testnet and for mainnet, read-only.
+- `/stats` and the Telegram rules above. Those ship when the web app and the keeper process are rebuilt. They do not need a new factory. The reserve, the peg gate, and the rescue-slippage split do.
 
-Not done: Blockscout verification, a second end-to-end run on the new factory, a recut video, an AKINDO comment, a mainnet deploy, and a vault share token. No gauge.
+A new `CoilAccount`, linked `CoilLegacy`, `FlashSizer`, `CoilPark`, and factory are required before any of the contract changes are live. `script/Deploy.s.sol` is still one broadcast and now also logs the park.
+
+Not done: Blockscout verification, a second end-to-end run on the new factory, a recut video, an AKINDO comment, a mainnet deploy, and a live sMUSD address. Gauge code is intentionally absent. The design is in [docs/GAUGE.md](docs/GAUGE.md). See [CHANGELOG.md](CHANGELOG.md) and [THREAT_MODEL.md](THREAT_MODEL.md).
 
 Invariants and the test names are in [SECURITY.md](SECURITY.md). The Wave 2 update text, for the submission form, is in [docs/SUBMISSION.md](docs/SUBMISSION.md).
 

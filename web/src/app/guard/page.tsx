@@ -6,11 +6,9 @@ import { formatUnits, type Address } from "viem";
 import { usePublicClient } from "wagmi";
 import { CoilMark, shorten } from "@/components/shell";
 import { coilAccountAbi, coilFactoryAbi, FACTORY_DEPLOY_BLOCK, factoryAddress, mezoTestnet } from "@/lib/mezo";
-import type { AbiEvent, PublicClient } from "viem";
+import { getLogsChunked } from "@/lib/logs";
 
 const EXPLORER = "https://explorer.test.mezo.org";
-/** Mezo's eth_getLogs rejects a from/to distance above 10,000. Stay under it. */
-const LOG_CHUNK = 9_999n;
 
 type Row = {
   kind: "rescue" | "delever" | "heartbeat";
@@ -193,45 +191,6 @@ export default function GuardPage() {
       </main>
     </div>
   );
-}
-
-type ChunkLog = {
-  args?: unknown;
-  blockNumber: bigint | null;
-  transactionHash: `0x${string}` | null;
-  address: Address;
-};
-
-async function getLogsChunked(
-  client: Pick<PublicClient, "getLogs">,
-  args: {
-    address: Address | Address[];
-    event: AbiEvent;
-    fromBlock: bigint;
-    toBlock: bigint;
-  },
-): Promise<{ logs: ChunkLog[]; errors: string[] }> {
-  const logs: ChunkLog[] = [];
-  const errors: string[] = [];
-  if (args.fromBlock > args.toBlock) return { logs, errors };
-  let cursor = args.fromBlock;
-  while (cursor <= args.toBlock) {
-    const end = cursor + LOG_CHUNK > args.toBlock ? args.toBlock : cursor + LOG_CHUNK;
-    try {
-      const batch = await client.getLogs({
-        address: args.address,
-        event: args.event,
-        fromBlock: cursor,
-        toBlock: end,
-      });
-      logs.push(...(batch as ChunkLog[]));
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : "Mezo rejected the log request.");
-    }
-    if (end === args.toBlock) break;
-    cursor = end + 1n;
-  }
-  return { logs, errors };
 }
 
 function pct(cr?: bigint) {

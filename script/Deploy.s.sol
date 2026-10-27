@@ -33,12 +33,15 @@ contract Deploy is Script {
         vm.stopBroadcast();
 
         // FlashSizer is the implementation constructor's first CREATE (nonce 1).
+        // CoilPark is the second (nonce 2).
         address sizer = vm.computeCreateAddress(address(implementation), 1);
+        address park = vm.computeCreateAddress(address(implementation), 2);
         address legacy = _linkedLegacy(address(implementation));
 
         console2.log("deployer", deployer);
         console2.log("legacy", legacy);
         console2.log("sizer", sizer);
+        console2.log("park", park);
         console2.log("implementation", address(implementation));
         console2.log("factory", address(factory));
     }

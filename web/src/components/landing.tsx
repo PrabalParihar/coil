@@ -517,6 +517,7 @@ export function Footer() {
         <nav aria-label="Footer" className="flex flex-wrap gap-x-6 gap-y-2">
           <a className="hover:text-foreground" href="#app">App</a>
           <Link className="hover:text-foreground" href="/guard">Guard log</Link>
+          <Link className="hover:text-foreground" href="/stats">Stats</Link>
           <a className="hover:text-foreground" href="#proof">Receipts</a>
           <a className="hover:text-foreground" href="#risks">Risks</a>
           <a className="inline-flex items-center gap-1.5 hover:text-foreground" href="https://github.com/PrabalParihar/coil" target="_blank" rel="noreferrer noopener">

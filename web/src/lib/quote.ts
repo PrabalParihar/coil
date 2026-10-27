@@ -343,3 +343,97 @@ export function poolReserves(
   }
   return { reserveMusd: reserve1, reserveBtc: reserve0 };
 }
+
+/** Price impact of selling `amountIn_` of the input reserve. Matches `FlashSizer.impactBps`. */
+export function impactBps(reserveIn: bigint, reserveOut: bigint, amountIn_: bigint, feeBps: bigint) {
+  if (amountIn_ === 0n || reserveIn === 0n || reserveOut === 0n || feeBps >= BPS) return 0n;
+  const spot = (amountIn_ * reserveOut) / reserveIn;
+  if (spot === 0n) return BPS;
+  const fee = (amountIn_ * feeBps) / BPS;
+  if (fee >= amountIn_) return BPS;
+  const kept = amountIn_ - fee;
+  const outAmt = (reserveOut * kept) / (reserveIn + kept);
+  if (outAmt >= spot) return 0n;
+  return ((spot - outAmt) * BPS) / spot;
+}
+
+export type SensibleOpen = {
+  targetCR: bigint;
+  impact: bigint;
+  leverage: string;
+  capped: boolean;
+};
+
+const SENSIBLE_RUNGS = [
+  { cr: (4n * 10n ** 18n) / 3n, leverage: "4.00×" },
+  { cr: (3n * 10n ** 18n) / 2n, leverage: "3.00×" },
+  { cr: 2n * 10n ** 18n, leverage: "2.00×" },
+  { cr: 3n * 10n ** 18n, leverage: "1.50×" },
+  { cr: 4n * 10n ** 18n, leverage: "1.33×" },
+] as const;
+
+function flashOwed(deposit: bigint, targetCR: bigint, market: Market): bigint | null {
+  if (deposit <= 0n || market.price <= 0n || market.reserveBtc < 5n) return null;
+  const minAmt =
+    (market.minNetDebt * WAD + (WAD + market.borrowRate) - 1n) / (WAD + market.borrowRate);
+  let hi = market.reserveBtc / 5n;
+  let lo = 0n;
+  let best = 0n;
+  for (let i = 0; i < 72; i++) {
+    const mid = (lo + hi + 1n) / 2n;
+    if (flashFits(deposit, targetCR, market, minAmt, mid).ok) {
+      best = mid;
+      lo = mid;
+    } else if (mid === 0n) {
+      break;
+    } else {
+      hi = mid - 1n;
+    }
+  }
+  let chosen = flashFits(deposit, targetCR, market, minAmt, best);
+  if (!chosen.ok) chosen = flashFits(deposit, targetCR, market, minAmt, 0n);
+  if (!chosen.ok || chosen.minted === 0n) return null;
+  return chosen.owed;
+}
+
+/**
+ * Highest leverage whose MUSD sale stays within `maxImpactBps` (default 1%).
+ * Keep this in lockstep with `FlashSizer.sensibleTarget`.
+ * `capped` is false when every rung that can open is over the cap.
+ */
+export function sensibleOpen(deposit: bigint, market: Market, maxImpactBps = 100n): SensibleOpen {
+  let bestImpact = (1n << 256n) - 1n;
+  let best = SENSIBLE_RUNGS[SENSIBLE_RUNGS.length - 1]!;
+  let any = false;
+  for (const rung of SENSIBLE_RUNGS) {
+    const owed = flashOwed(deposit, rung.cr, market);
+    if (owed === null) continue;
+    const bps = impactBps(market.reserveMusd, market.reserveBtc, owed, market.feeBps);
+    any = true;
+    if (bps < bestImpact) {
+      bestImpact = bps;
+      best = rung;
+    }
+    if (bps <= maxImpactBps) {
+      return { targetCR: rung.cr, impact: bps, leverage: rung.leverage, capped: true };
+    }
+  }
+  if (!any) return { targetCR: 0n, impact: bestImpact, leverage: "—", capped: false };
+  return { targetCR: best.cr, impact: bestImpact, leverage: best.leverage, capped: false };
+}
+
+/** Absolute pool-vs-oracle gap. Matches `CoilLegacy.deviationBps`. */
+export function deviationBps(reserveMusd: bigint, reserveBtc: bigint, oraclePrice: bigint) {
+  if (reserveBtc === 0n || oraclePrice === 0n) return (1n << 256n) - 1n;
+  const poolPrice = (reserveMusd * WAD) / reserveBtc;
+  const diff = poolPrice > oraclePrice ? poolPrice - oraclePrice : oraclePrice - poolPrice;
+  return (diff * BPS) / oraclePrice;
+}
+
+/** How far MUSD sits under $1. Zero when the pool price is at or below the oracle. */
+export function musdBelowPegBps(reserveMusd: bigint, reserveBtc: bigint, oraclePrice: bigint) {
+  if (reserveBtc === 0n || oraclePrice === 0n) return 0n;
+  const poolPrice = (reserveMusd * WAD) / reserveBtc;
+  if (poolPrice <= oraclePrice) return 0n;
+  return ((poolPrice - oraclePrice) * BPS) / poolPrice;
+}

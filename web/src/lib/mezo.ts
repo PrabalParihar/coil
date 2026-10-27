@@ -96,6 +96,16 @@ export const priceFeedAbi = [
   },
 ] as const;
 
+export const troveRecoveryAbi = [
+  {
+    type: "function",
+    name: "checkRecoveryMode",
+    stateMutability: "view",
+    inputs: [{ name: "_price", type: "uint256" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+] as const;
+
 export const borrowerAbi = [
   {
     type: "function",
@@ -218,6 +228,31 @@ export const coilFactoryAbi = [
       { name: "keeper", type: "address", indexed: true },
       { name: "timestamp", type: "uint256", indexed: false },
     ],
+  },
+  {
+    type: "event",
+    name: "AccountCreated",
+    inputs: [
+      { name: "owner", type: "address", indexed: true },
+      { name: "account", type: "address", indexed: true },
+    ],
+  },
+] as const;
+
+export const parkAbi = [
+  {
+    type: "function",
+    name: "assetsOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "vault",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
   },
 ] as const;
 
@@ -429,6 +464,54 @@ export const coilAccountAbi = [
     name: "setRescueSlippage",
     stateMutability: "nonpayable",
     inputs: [{ name: "bps", type: "uint16" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "park",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "sizer",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "moveReserve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "amount", type: "uint256" },
+      { name: "withdraw", type: "bool" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "maxPegDeviationBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint16" }],
+  },
+  {
+    type: "function",
+    name: "pegGuardBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint16" }],
+  },
+  {
+    type: "function",
+    name: "setPegBounds",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "maxOpenBps", type: "uint16" },
+      { name: "guardBps", type: "uint16" },
+    ],
     outputs: [],
   },
   {
