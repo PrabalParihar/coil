@@ -25,8 +25,11 @@ export const addr = {
   sortedTroves: "0x722E4D24FD6Ff8b0AC679450F3D91294607268fA",
 } as const;
 
-/** Live Mezo testnet factory. Override with NEXT_PUBLIC_COIL_FACTORY. */
-const DEPLOYED_FACTORY = "0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e" as const;
+/** Live Wave 2 Mezo testnet factory. Override with NEXT_PUBLIC_COIL_FACTORY. */
+const DEPLOYED_FACTORY = "0x6A38f560cF8612cc81cF966831890DBb310e31F7" as const;
+
+/** Block of the Wave 2 factory deploy. /guard starts its log scan here. */
+export const FACTORY_DEPLOY_BLOCK = 16_400_159n;
 
 const factoryEnv = process.env.NEXT_PUBLIC_COIL_FACTORY ?? "";
 
@@ -406,6 +409,37 @@ export const coilAccountAbi = [
       { name: "cr", type: "uint256", indexed: false },
       { name: "debt", type: "uint256", indexed: false },
     ],
+  },
+  {
+    type: "function",
+    name: "setSlippage",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "bps", type: "uint16" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "rescueSlippageBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint16" }],
+  },
+  {
+    type: "function",
+    name: "setRescueSlippage",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "bps", type: "uint16" }],
+    outputs: [],
+  },
+  {
+    type: "error",
+    name: "Slippage",
+    inputs: [],
+  },
+  {
+    type: "error",
+    name: "BadSlippage",
+    inputs: [],
   },
   {
     type: "function",

@@ -315,7 +315,7 @@ export function HowItWorks() {
         </div>
         <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
           The clone owns the trove. A Mezo Pools flash swap borrows the BTC, posts it, and repays the pool before the transaction ends.
-          Mezo allows 20 precompile calls. The flash loop uses 7. The two-swap loop remains on the Wave 1 factory.
+          Mezo allows 20 precompile calls. The flash loop uses 7. The two-swap loop remains the fallback when the pool is paused.
         </p>
       </div>
       <ol className="mt-10 grid gap-4 md:grid-cols-3">
@@ -345,14 +345,25 @@ type Receipt = { label: string; hash: `0x${string}` };
 
 const PROOF: { kicker: string; big: string; title: string; body: string; receipts: Receipt[] }[] = [
   {
-    kicker: "loop(200%, 1%)",
+    kicker: "Wave 2 · flashLoop",
+    big: "4.00×",
+    title: "0.015 BTC to 133.33% in one transaction",
+    body: "The Wave 2 factory opened 0.05183 BTC of collateral against 3,100.8 MUSD. A keeper then raised 133.30% to 150.00% for 1 MEZO, and one flashUnwind closed the trove.",
+    receipts: [
+      { label: "flashLoop", hash: "0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef" },
+      { label: "guard", hash: "0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a" },
+      { label: "flashUnwind", hash: "0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2" },
+    ],
+  },
+  {
+    kicker: "Wave 1 · loop(200%, 1%)",
     big: "200.09%",
     title: "0.0475 BTC looped in one transaction",
     body: "Collateral went from 0.0475 to 0.0939 BTC with 3,859.73 MUSD of debt, landing just above the 200% target.",
     receipts: [{ label: "Loop", hash: "0xfb9af4255b2317ea89feb36c530c29bfeace97b0098a3c6074fec015f52d7f85" }],
   },
   {
-    kicker: "deleverTo(300%)",
+    kicker: "Wave 1 · deleverTo(300%)",
     big: "288.04%",
     title: "De-lever raised the ratio",
     body: "One sale repaid the debt to exactly 2,000 MUSD, Mezo's floor for that trove. A second call succeeded without selling.",
@@ -362,7 +373,7 @@ const PROOF: { kicker: string; big: string; title: string; body: string; receipt
     ],
   },
   {
-    kicker: "unwind(100%)",
+    kicker: "Wave 1 · unwind(100%)",
     big: "2 txs",
     title: "A fresh 200% trove, fully closed",
     body: "A new 0.046 BTC loop at 200.09% unwound in two transactions: repay to the floor at 281.99%, then close the trove.",
@@ -385,10 +396,10 @@ export function Proof() {
           </h2>
         </div>
         <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-          These receipts are the Wave 1 factory. Flash loop, unwind, and de-lever are one transaction each on the Wave 2 contracts and need a new factory before they are mined. Click any hash to check it on the Mezo explorer.
+          The first card is the Wave 2 factory. The other three are the earlier Wave 1 factory. Click any hash to check it on the Mezo explorer.
         </p>
       </div>
-      <div className="mt-10 grid gap-4 lg:grid-cols-3">
+            <div className="mt-10 grid gap-4 lg:grid-cols-2">
         {PROOF.map((item) => (
           <article key={item.title} className="panel flex flex-col p-6">
             <p className="font-mono text-xs text-filament">{item.kicker}</p>

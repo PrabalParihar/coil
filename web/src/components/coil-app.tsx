@@ -79,14 +79,17 @@ import { Footer, HowItWorks, Hero, Proof, Risks, Ticker } from "@/components/lan
 
 const WAD = 10n ** 18n;
 const PRESETS = ["0.01", "0.025", "0.04", "0.05"] as const;
-const SLIPPAGE = [25, 50, 100, 150] as const;
+const SLIPPAGE = [50, 100, 150, 200] as const;
+const RESCUE_SLIPPAGE = [50, 100, 150, 200, 300] as const;
 
 export function CoilApp() {
   const [mounted, setMounted] = useState(false);
   const [btcText, setBtcText] = useState("0.04");
   const [targetPct, setTargetPct] = useState(200);
   const [deleverPct, setDeleverPct] = useState(300);
-  const [slippageBps, setSlippageBps] = useState(50);
+  const [slippageBps, setSlippageBps] = useState(100);
+  const [rescueBps, setRescueBps] = useState(200);
+  const [rescueDirty, setRescueDirty] = useState(false);
   const [unwindPct, setUnwindPct] = useState(100);
   const [floorPct, setFloorPct] = useState(170);
   const [guardPct, setGuardPct] = useState(220);
@@ -266,6 +269,27 @@ export function CoilApp() {
     query: { enabled: Boolean(account && flashFactory), refetchInterval: 20_000 },
   });
   const tipBalance = typeof tipBalanceRaw === "bigint" ? tipBalanceRaw : undefined;
+
+  const { data: rescueRaw, refetch: refetchRescue } = useReadContract({
+    address: account,
+    abi: coilAccountAbi,
+    functionName: "rescueSlippageBps",
+    query: { enabled: Boolean(account), refetchInterval: 15_000 },
+  });
+  const separateRescue = typeof rescueRaw === "bigint" || typeof rescueRaw === "number";
+
+  useEffect(() => {
+    setRescueDirty(false);
+  }, [account]);
+
+  useEffect(() => {
+    if (rescueDirty || !account) return;
+    if (separateRescue) {
+      setRescueBps(Number(rescueRaw));
+      return;
+    }
+    if (position?.slippageBps) setRescueBps(Number(position.slippageBps));
+  }, [account, rescueDirty, separateRescue, rescueRaw, position?.slippageBps]);
 
   useEffect(() => {
     let cancelled = false;
@@ -495,6 +519,30 @@ export function CoilApp() {
       }),
     )
       .then(() => setStatus("Guard saved."))
+      .catch(fail)
+      .finally(() => setBusy(false));
+  }
+
+  function saveRescueSlippage() {
+    if (!account) return;
+    begin();
+    const label = separateRescue ? "Set rescue slippage" : "Set slippage";
+    send(label, () =>
+      writeContractAsync({
+        address: account,
+        abi: coilAccountAbi,
+        functionName: separateRescue ? "setRescueSlippage" : "setSlippage",
+        args: [rescueBps],
+        chainId: mezoTestnet.id,
+        gas: 200_000n,
+      }),
+    )
+      .then(() => {
+        setRescueDirty(false);
+        setStatus(separateRescue ? "Rescue slippage saved." : "Slippage saved. Rescues and closes use this cap.");
+        void refetchPosition();
+        void refetchRescue();
+      })
       .catch(fail)
       .finally(() => setBusy(false));
   }
@@ -817,10 +865,10 @@ export function CoilApp() {
 
                 <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="eyebrow">Max slippage</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Per swap on the MUSD/BTC pool</p>
+                    <p className="eyebrow">Open slippage</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Default 1%. Rescue and close use a separate cap.</p>
                   </div>
-                  <ChipGroup label="Max slippage" options={SLIPPAGE} value={slippageBps as (typeof SLIPPAGE)[number]} onChange={setSlippageBps} render={(v) => `${(v / 100).toFixed(2)}%`} />
+                  <ChipGroup label="Open slippage" options={SLIPPAGE} value={slippageBps as (typeof SLIPPAGE)[number]} onChange={setSlippageBps} render={(v) => `${(v / 100).toFixed(2)}%`} />
                 </div>
 
                 <div className="mt-8 grid gap-3 border-t border-border pt-6 sm:grid-cols-3">
@@ -978,6 +1026,13 @@ export function CoilApp() {
                         tipText={tipText}
                         setTipText={setTipText}
                         tipBalance={tipBalance}
+                        rescueBps={rescueBps}
+                        separateRescue={separateRescue}
+                        onRescueBps={(v) => {
+                          setRescueDirty(true);
+                          setRescueBps(v);
+                        }}
+                        onSaveRescue={saveRescueSlippage}
                       />
                     </div>
                   ) : (
@@ -1009,6 +1064,13 @@ export function CoilApp() {
                           tipText={tipText}
                           setTipText={setTipText}
                           tipBalance={tipBalance}
+                          rescueBps={rescueBps}
+                          separateRescue={separateRescue}
+                          onRescueBps={(v) => {
+                            setRescueDirty(true);
+                            setRescueBps(v);
+                          }}
+                          onSaveRescue={saveRescueSlippage}
                           bare
                         />
                       }
@@ -1335,6 +1397,10 @@ function GuardPanel({
   tipText = "5",
   setTipText,
   tipBalance,
+  rescueBps = 200,
+  separateRescue = false,
+  onRescueBps,
+  onSaveRescue,
   bare = false,
 }: {
   floorPct: number;
@@ -1352,6 +1418,10 @@ function GuardPanel({
   tipText?: string;
   setTipText?: (v: string) => void;
   tipBalance?: bigint;
+  rescueBps?: number;
+  separateRescue?: boolean;
+  onRescueBps?: (v: number) => void;
+  onSaveRescue?: () => void;
   bare?: boolean;
 }) {
   const min = 110;
@@ -1397,6 +1467,26 @@ function GuardPanel({
           </p>
           <Button type="button" variant="outline" className="h-10 w-full rounded-2xl" disabled={busy || disabled} onClick={onFund}>
             Fund MEZO tip
+          </Button>
+        </div>
+      ) : null}
+      {onRescueBps && onSaveRescue ? (
+        <div className="mt-4 space-y-2">
+          <p className="eyebrow">Rescue and close slippage</p>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {separateRescue
+              ? "Separate from the open. Default 2%, hard cap 3%. The keeper cannot change it. A rescue reverts if the pool is worse than this against the oracle."
+              : "This account uses one cap for open, rescue, and close. Raise it when the pool sits under the oracle. Hard cap 3%. The keeper cannot change it."}
+          </p>
+          <ChipGroup
+            label="Rescue and close slippage"
+            options={RESCUE_SLIPPAGE}
+            value={rescueBps as (typeof RESCUE_SLIPPAGE)[number]}
+            onChange={onRescueBps}
+            render={(v) => `${(v / 100).toFixed(2)}%`}
+          />
+          <Button type="button" variant="outline" className="h-10 w-full rounded-2xl" disabled={busy || disabled} onClick={onSaveRescue}>
+            Save slippage
           </Button>
         </div>
       ) : null}

@@ -251,6 +251,48 @@ contract CoilForkTest is Test {
         assertFalse(acted);
     }
 
+    /// @dev The testnet pool can sit ~1.4% under the oracle. Rescue and close
+    ///      use rescueSlippageBps (default 200, cap 300), not the 50 bps open default.
+    function test_guardSucceedsWhenPoolIsBelowOracle() public {
+        uint256 rich = spot * 10_000 / 9_860;
+        _mockPrice(rich);
+
+        uint256 target = uint256(4e18) / 3;
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, target, 50);
+        assertEq(account.rescueSlippageBps(), 200);
+        assertEq(account.slippageBps(), 50);
+        assertLt(account.position().cr, 1.4e18);
+
+        vm.prank(user);
+        account.setGuard(1.4e18, 1.5e18, 0);
+        address stranger = makeAddr("rescue-stranger");
+        vm.prank(stranger);
+        vm.expectRevert(CoilAccount.NotOwner.selector);
+        account.setRescueSlippage(200);
+
+        vm.prank(user);
+        vm.expectRevert(CoilAccount.BadSlippage.selector);
+        account.setRescueSlippage(301);
+
+        vm.prank(user);
+        account.setRescueSlippage(50);
+        vm.prank(stranger);
+        vm.expectRevert(CoilAccount.Slippage.selector);
+        account.guard();
+        vm.prank(user);
+        vm.expectRevert(CoilAccount.Slippage.selector);
+        account.flashUnwind(1e18);
+
+        vm.prank(user);
+        account.setRescueSlippage(200);
+        uint256 crBefore = account.position().cr;
+        vm.prank(stranger);
+        bool acted = account.guard();
+        assertTrue(acted);
+        assertGt(account.position().cr, crBefore);
+        assertGe(account.position().cr, 1.5e18);
+    }
+
     function test_topUpExistingTrove() public {
         (address user, CoilAccount account) = _open(0.15 ether, 2.2e18, 50);
         uint256 collBefore = account.position().collateral;

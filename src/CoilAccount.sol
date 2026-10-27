@@ -72,7 +72,14 @@ contract CoilAccount is IPoolCallee {
     address public owner;
     address public factory;
     address public keeper;
+    /// @notice Slippage for `loop` / `flashLoop`. The owner sets it on each open.
     uint16 public slippageBps;
+    /// @notice Slippage for `guard`, `flashUnwind`, and `flashDeleverTo`.
+    ///         Owner-set, default 2% (200 bps), hard cap 3% (300 bps). A keeper
+    ///         cannot change it. The oracle check still bounds BTC sold to
+    ///         `fair * (1 + rescueSlippageBps)`, so a caller cannot push a
+    ///         rescue through a worse pool than that cap.
+    uint16 public rescueSlippageBps;
     uint256 public floorCR;
     uint256 public guardTargetCR;
     uint32 public redemptionZone;
@@ -100,6 +107,10 @@ contract CoilAccount is IPoolCallee {
     uint256 public constant FLASH_UNWIND_PRECOMPILES = 8;
     uint256 public constant FLASH_DELEVER_PRECOMPILES = 10;
     uint256 public constant GUARD_TIP_PRECOMPILES = 12;
+    /// @dev 2%. Covers the ~1.4% pool-below-oracle gap seen on testnet, plus the pool fee.
+    uint16 public constant RESCUE_SLIPPAGE_DEFAULT = 200;
+    /// @dev Same ceiling as open slippage. Past this, `setRescueSlippage` reverts.
+    uint16 public constant RESCUE_SLIPPAGE_CAP = 300;
 
     struct LoopQuote {
         uint256 collateral;
@@ -207,6 +218,7 @@ contract CoilAccount is IPoolCallee {
         owner = _owner;
         factory = msg.sender;
         slippageBps = 50;
+        rescueSlippageBps = RESCUE_SLIPPAGE_DEFAULT;
     }
 
     receive() external payable {}
@@ -319,6 +331,13 @@ contract CoilAccount is IPoolCallee {
     function setSlippage(uint16 bps) external onlyOwner {
         if (bps == 0 || bps > 300) revert BadSlippage();
         slippageBps = bps;
+    }
+
+    /// @notice Bound for rescues and closes. Does not change the open slippage.
+    ///         Only the owner can set it, and only up to `RESCUE_SLIPPAGE_CAP`.
+    function setRescueSlippage(uint16 bps) external onlyOwner {
+        if (bps == 0 || bps > RESCUE_SLIPPAGE_CAP) revert BadSlippage();
+        rescueSlippageBps = bps;
     }
 
     function sweep() external onlyOwner nonReentrant {
@@ -737,10 +756,12 @@ contract CoilAccount is IPoolCallee {
         return abi.decode(data, (bool));
     }
 
+    /// @dev Oracle bound for a BTC-in / MUSD-out flash. Uses `rescueSlippageBps`,
+    ///      not the open slippage. No precompile calls.
     function _checkOracleSlip(uint256 btcIn, uint256 musdOut, uint256 price) internal view {
         if (btcIn == 0 || price == 0) revert Slippage();
         uint256 fairBtc = musdOut * WAD / price;
-        uint256 cap = fairBtc * (BPS + slippageBps) / BPS;
+        uint256 cap = fairBtc * (BPS + rescueSlippageBps) / BPS;
         if (btcIn > cap) revert Slippage();
     }
 
@@ -794,7 +815,7 @@ contract CoilAccount is IPoolCallee {
 
 
     function _unwindSale(uint256 fractionWad, uint256 price, uint256 toRepay) internal {
-        CoilLegacy.unwindSale(_env(), fractionWad, price, toRepay, slippageBps);
+        CoilLegacy.unwindSale(_env(), fractionWad, price, toRepay, rescueSlippageBps);
     }
 
     function _addColl(uint256 amount) internal {
@@ -802,11 +823,11 @@ contract CoilAccount is IPoolCallee {
     }
 
     function _deleverTo(uint256 targetCR, uint256 price) internal {
-        CoilLegacy.deleverIter(_env(), targetCR, price, slippageBps);
+        CoilLegacy.deleverIter(_env(), targetCR, price, rescueSlippageBps);
     }
 
     function _unwindAll(uint256 price) internal {
-        CoilLegacy.unwindAll(_env(), price, slippageBps);
+        CoilLegacy.unwindAll(_env(), price, rescueSlippageBps);
     }
 
     function _projectedDebt(uint256 debt, uint256 amount, uint256 rate, bool includeRefi, uint8 refiPct)

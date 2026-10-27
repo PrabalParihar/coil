@@ -6,9 +6,9 @@ Deposit Bitcoin. Coil Labs flash-borrows BTC from the Mezo Pools MUSD/BTC pair, 
 
 Built by [Prabal Pratap Singh](https://prabal.pro) ([GitHub](https://github.com/PrabalParihar/coil), [X](https://x.com/0xPrabalParihar)). Source: [github.com/PrabalParihar/coil](https://github.com/PrabalParihar/coil).
 
-**Live app:** [coil.up.railway.app](https://coil.up.railway.app) (Mezo testnet, chain 31611). The site still points at the Wave 1 factory until the Wave 2 factory in this branch is deployed. A different Wave 1 project also used the name Coil. This repository is Coil Labs.
+**Live app:** [coil.up.railway.app](https://coil.up.railway.app) (Mezo testnet, chain 31611). The product name is Coil Labs. A different Wave 1 project also used the name Coil.
 
-Clones are EIP-1167 and are not upgradeable. Wave 2 is a new implementation and a new factory. `NEXT_PUBLIC_COIL_FACTORY` selects it. Until that address changes, the app keeps the Wave 1 two-swap `loop`.
+Clones are EIP-1167 and are not upgradeable. The live app and keeper use the Wave 2 factory `0x6A38f560cF8612cc81cF966831890DBb310e31F7`. This branch changes `CoilAccount` (a separate rescue slippage), so that factory does not pick the change up. A new implementation and factory are required before the split is live. `NEXT_PUBLIC_COIL_FACTORY` selects the factory. The code default is the current live factory.
 
 ## Problem
 
@@ -46,19 +46,41 @@ Repay does not approve MUSD. `BorrowerOperations.repayMUSD` burns it. `closeTrov
 
 MEZO (`0x7B7c000000000000000000000000000000000001`, 18 decimals, same address on testnet and mainnet) pays the keeper. The owner approves the clone and calls `fundTips`. `guard()` transfers `min(tipMezo, balance)` to the caller only after the collateral ratio has risen, at most once per block. An empty jar still rescues. `withdrawTips` is owner-only. `transfer` and `balanceOf` on MEZO each count as a precompile call.
 
-## Live testnet (Wave 1 factory)
+## Live testnet (Wave 2 factory)
 
-The addresses below are the factory the app and keeper use until a Wave 2 deploy. They do not include `flashLoop` or MEZO tips. Deployment steps for the new factory are under [Deploy](#deploy). Nothing in this branch was broadcast.
-
-Chain 31611, RPC `https://rpc.test.mezo.org`, explorer `https://explorer.test.mezo.org`.
+Chain 31611, RPC `https://rpc.test.mezo.org`, explorer `https://explorer.test.mezo.org`. Deployed 27 October 2026 in blocks 16400159–16400160. The app at [coil.up.railway.app](https://coil.up.railway.app) and the Railway keeper use this factory. Blockscout has not verified the contracts. The creation bytecode of that deployed build matched the chain. This branch's `CoilAccount` is a newer implementation and does not match those addresses.
 
 | | Address |
 | --- | --- |
-| Factory (frontend and keeper) | [`0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e`](https://explorer.test.mezo.org/address/0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e) |
-| CoilAccount implementation | [`0x1bc9Ba4c62D62296aba1441fBB16BC9651a460Ce`](https://explorer.test.mezo.org/address/0x1bc9Ba4c62D62296aba1441fBB16BC9651a460Ce) |
-| Demo clone | [`0xC8ad8f93174C27c39FCC8463be05451C5E637650`](https://explorer.test.mezo.org/address/0xC8ad8f93174C27c39FCC8463be05451C5E637650) |
+| Factory (frontend and keeper) | [`0x6A38f560cF8612cc81cF966831890DBb310e31F7`](https://explorer.test.mezo.org/address/0x6A38f560cF8612cc81cF966831890DBb310e31F7) |
+| CoilAccount implementation | [`0x522DED4F0cF62cfc12456A28FbF82b044178564b`](https://explorer.test.mezo.org/address/0x522DED4F0cF62cfc12456A28FbF82b044178564b) (23,101 bytes) |
+| CoilLegacy | [`0xdb2e13c3199C28E69f6EaF39fb6df05900Dd7969`](https://explorer.test.mezo.org/address/0xdb2e13c3199C28E69f6EaF39fb6df05900Dd7969) |
+| FlashSizer | [`0x3d1006Ec18E64238aFD2a176b438F40FBfa6F326`](https://explorer.test.mezo.org/address/0x3d1006Ec18E64238aFD2a176b438F40FBfa6F326) |
+| Deployer | `0xf74E746a8d7A46A8b0f745C6d5944Ee672c1a3AF` |
+| Keeper | `0x1D2621480011C44693a47801C1158E70b25b4B4F` |
 | MUSD | `0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503` |
 | MUSD/BTC pool | `0xd16A5Df82120ED8D626a1a15232bFcE2366d6AA9` |
+
+| What | Transaction |
+| --- | --- |
+| CoilLegacy | [`0x6baa682e…`](https://explorer.test.mezo.org/tx/0x6baa682e4972ad287a493c4b87d40127b45efda7f26476cdbae42ab03a9bc4d6) |
+| CoilAccount implementation | [`0x5e32f0d0…`](https://explorer.test.mezo.org/tx/0x5e32f0d0a591f768907fc3bc9e5d3e6623f522e0871f5616f0aaf3e1dba3ec5d) |
+| CoilFactory | [`0xaaaae8e3…`](https://explorer.test.mezo.org/tx/0xaaaae8e3f0f8390f7595f7b2629159fa50893a219e652ba7e301367d76272f6b) |
+| `flashLoop` 0.015 BTC to 133.33% (4×) | [`0x576e5383…`](https://explorer.test.mezo.org/tx/0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef) |
+| Keeper `guard()`, 133.30% → 150.00%, 1 MEZO | [`0xcb90da85…`](https://explorer.test.mezo.org/tx/0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a) |
+| `flashUnwind`, trove closed | [`0x296bb52c…`](https://explorer.test.mezo.org/tx/0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2) |
+
+FlashSizer was created in the implementation constructor, so it has no separate deploy hash. That rescue needed `setSlippage(200)` first ([`0xf0db4179…`](https://explorer.test.mezo.org/tx/0xf0db4179b8d6101e3fe7df63bf2ea2dfa55ef6147fafa06c0854468380ad25fb)) because `guard()` reused the 0.5% open slippage while the pool sat about 1.4% under the oracle. This branch splits that cap. It is not on the factory above until a new deploy.
+
+### Wave 1 factory
+
+Still on chain. It has no `flashLoop` and no MEZO tip. The app no longer defaults to it.
+
+| | Address |
+| --- | --- |
+| Factory | [`0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e`](https://explorer.test.mezo.org/address/0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e) |
+| CoilAccount implementation | [`0x1bc9Ba4c62D62296aba1441fBB16BC9651a460Ce`](https://explorer.test.mezo.org/address/0x1bc9Ba4c62D62296aba1441fBB16BC9651a460Ce) (21,060 bytes) |
+| Demo clone | [`0xC8ad8f93174C27c39FCC8463be05451C5E637650`](https://explorer.test.mezo.org/address/0xC8ad8f93174C27c39FCC8463be05451C5E637650) |
 
 Throwaway deployer, testnet only: `0xFc58045fFB104D983de0e78F748Ab8e9cb6Bfc61`. The key is not in the repository.
 
@@ -96,7 +118,8 @@ CoilFactory ── EIP-1167 clone ── CoilAccount   ← this address owns the
 | --- | --- | --- |
 | `createAccount()` | wallet | Deploys that wallet's clone. One account per owner. |
 | `flashLoop(targetCR, maxSlippageBps)` + BTC | owner | One flash swap. About 4× (CR 4/3) in one transaction. Reverts `Slippage` if the pool quote is outside the cap. |
-| `loop(targetCR, maxSlippageBps)` + BTC | owner | Wave 1 path. Two borrow-and-swap rounds, then stops. Fallback when the pool is paused, and the only loop on the live factory. |
+| `loop(targetCR, maxSlippageBps)` + BTC | owner | Two borrow-and-swap rounds, then stops. Fallback when the pool is paused. |
+| `setRescueSlippage(bps)` | owner | Slippage for `guard`, `flashUnwind`, and `flashDeleverTo`. Default 200 bps, hard cap 300. A keeper cannot set it. |
 | `unwind` / `flashUnwind(fractionWad)` | owner | One flash repayment. `1e18` closes the trove and returns BTC. |
 | `deleverTo` / `flashDeleverTo(targetCR)` | owner, or keeper up to the guard target | One flash repayment that raises the ratio. Returns when the 1,800 MUSD floor blocks a further raise. |
 | `guard()` | anyone | De-levers to the guard target when the floor or the redemption zone says so. Pays MEZO only if the ratio rose. Cannot loop, unwind, or withdraw. |
@@ -181,15 +204,15 @@ LEGACY=0x… SIZER=0x… IMPL=0x… FACTORY=0x… OWNER=0xYourDeployer ./script/
 ```bash
 cd keeper
 npm install
-# dry run against the live factory, no key, no Telegram
-COIL_FACTORY=0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e npm start
+# dry run against the live Wave 2 factory, no key, no Telegram
+COIL_FACTORY=0x6A38f560cF8612cc81cF966831890DBb310e31F7 npm start
 # poll until you stop it
-COIL_FACTORY=0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e npm start -- --watch
+COIL_FACTORY=0x6A38f560cF8612cc81cF966831890DBb310e31F7 npm start -- --watch
 # send guard()
 COIL_FACTORY=0x… KEEPER_PRIVATE_KEY=0x… npm start -- --execute
 ```
 
-Railway: from `keeper/`, the Dockerfile and `railway.json` are ready. Set `COIL_FACTORY`, `MEZO_TESTNET_RPC`, `KEEPER_PRIVATE_KEY`, `COIL_EXECUTE=true`, `KEEPER_WATCH=true`, and optionally the two Telegram variables. Do not put the key in the repo. Creating the service is a separate step. The MEZO tip is only paid by a Wave 2 factory. On the Wave 1 factory, `guard()` is still the owner or the factory keeper, and the simulation says so.
+Railway: the keeper service is already running against the live Wave 2 factory. From `keeper/`, the Dockerfile and `railway.json` are the service shape. Set `COIL_FACTORY`, `MEZO_TESTNET_RPC`, `KEEPER_PRIVATE_KEY`, `COIL_EXECUTE=true`, `KEEPER_WATCH=true`, and optionally the two Telegram variables. Do not put the key in the repo. A failed `guard()` simulation logs the decoded revert, for example `Slippage()`. The Wave 1 “owner/keeper only” line is printed only when the revert is `NotKeeper()`. Rebuilding the Railway service is what picks that logging up. On the Wave 1 factory, `guard()` is still the owner or the factory keeper.
 
 ### Frontend
 
@@ -200,7 +223,7 @@ npm run dev          # http://127.0.0.1:43123
 npm run build        # static export in web/out
 ```
 
-The page defaults to factory `0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e`. Override with `NEXT_PUBLIC_COIL_FACTORY`.
+The page defaults to factory `0x6A38f560cF8612cc81cF966831890DBb310e31F7`. Override with `NEXT_PUBLIC_COIL_FACTORY`. Open slippage defaults to 1%. Rescue and close use a separate 2% cap when the account exposes `rescueSlippageBps`; the live factory does not, so the same control calls `setSlippage` there (still capped at 3%). `/guard` reads logs from block 16400159 in chunks of 9,999 blocks and shows an RPC error instead of an empty log. The live site gets that paging when the web service is rebuilt.
 
 ```bash
 cd keeper && npx tsc --noEmit
@@ -208,14 +231,19 @@ cd keeper && npx tsc --noEmit
 
 ## Wave 2
 
-Shipped in this branch, not yet deployed:
+Deployed on Mezo testnet and exercised end to end. See the table above and [DEPLOYMENTS.md](DEPLOYMENTS.md).
 
-- `flashLoop`, `flashUnwind`, and `flashDeleverTo`: one transaction each. Fork test reaches about 4.00× (target CR `4e18/3`).
-- Permissionless `guard()` with a MEZO tip only when the ratio rises.
-- Keeper `--watch`, optional Telegram, `keeper/Dockerfile`, `keeper/railway.json`, and a public `/guard` log.
-- Mezo Passport wallet connect, a redemption-rank preview, `script/verify.sh`, and the Coil Labs name.
+- `flashLoop`, `flashUnwind`, and `flashDeleverTo`: one transaction each. Fork test reaches about 4.00× (target CR `4e18/3`). The live run opened 0.015 BTC at 133.33%.
+- Permissionless `guard()` with a MEZO tip only when the ratio rises. The live keeper raised 133.30% to 150.00% and was paid 1 MEZO.
+- Keeper on Railway, optional Telegram, and a public `/guard` log.
+- OrangeKit wallet connect, a redemption-rank preview, `script/verify.sh`, and the Coil Labs name.
 
-Still needs a person: faucet BTC and testnet MEZO for a fresh deployer, the broadcast, the explorer verify, the Railway service, a WalletConnect project id, and a Telegram bot token. No vault share token, no mainnet cap, and no gauge. The Wave 1 video and the AKINDO comment are unchanged.
+This branch, not yet deployed:
+
+- `rescueSlippageBps`, owner-set, default 2%, hard cap 3%. `guard` and flash close use it. Open keeps `slippageBps`. A new `CoilAccount`, linked `CoilLegacy`, `FlashSizer`, and factory are required. `script/Deploy.s.sol` is unchanged.
+- `/guard` log paging and the keeper revert decoder. Those ship when the web app and the keeper process are rebuilt. They do not need a new factory.
+
+Not done: Blockscout verification, a second end-to-end run on the new factory, a recut video, an AKINDO comment, a mainnet deploy, and a vault share token. No gauge.
 
 Invariants and the test names are in [SECURITY.md](SECURITY.md). The Wave 2 update text, for the submission form, is in [docs/SUBMISSION.md](docs/SUBMISSION.md).
 

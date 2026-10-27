@@ -8,6 +8,7 @@ import {
   type PublicClient,
   type WalletClient,
 } from "viem";
+import { accountErrors, revertReason } from "./revert.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { mezoTestnet } from "./chain.js";
 
@@ -67,6 +68,7 @@ const accountAbi = [
     inputs: [],
     outputs: [{ name: "acted", type: "bool" }],
   },
+  ...accountErrors,
 ] as const;
 
 type Position = {
@@ -265,10 +267,12 @@ async function scan(opts: {
         continue;
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(`  simulation reverted: ${message.slice(0, 240)}`);
-      console.log("  Wave 1 guard() is owner/keeper only and pays no MEZO. Wave 2 pays a MEZO tip when the ratio rises.");
-      await notify(tg, `Coil Labs: guard() simulation failed for ${account}. ${message.slice(0, 180)}`);
+      const reason = revertReason(error);
+      console.log(`  simulation reverted: ${reason}`);
+      if (reason === "NotKeeper()") {
+        console.log("  Wave 1 guard() is owner/keeper only and pays no MEZO. Wave 2 pays a MEZO tip when the ratio rises.");
+      }
+      await notify(tg, `Coil Labs: guard() simulation failed for ${account}. ${reason.slice(0, 180)}`);
       continue;
     }
 
@@ -314,8 +318,10 @@ async function scan(opts: {
       });
       console.log(`heartbeat ${hash} signer ${signer}`);
     } catch (error) {
+      const message = error instanceof Error ? error.message : "error";
+      const missing = /not found|does not exist|unknown function/i.test(message);
       console.log(
-        `heartbeat skipped (${error instanceof Error ? error.message.slice(0, 160) : "error"}). Wave 1 factories have no heartbeat().`,
+        `heartbeat skipped (${message.slice(0, 160)})${missing ? ". Wave 1 factories have no heartbeat()." : ""}`,
       );
     }
   }
