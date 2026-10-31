@@ -17,6 +17,10 @@ interface IBorrowerOperations {
 
     function closeTrove() external;
 
+    /// @notice Trove owner surplus claim on musd BorrowerOperations.
+    ///         Selector `0x6f0b0c1c`. Coil does not call this yet.
+    function claimCollateral() external;
+
     function refinance(address _upperHint, address _lowerHint) external;
 
     function minNetDebt() external view returns (uint256);
@@ -72,6 +76,9 @@ interface IHintHelpers {
         returns (address hintAddress, uint256 diff, uint256 latestRandomSeed);
 }
 
+/// @dev musd PriceFeed. `fetchPrice` is `view` and returns 18-decimal USD per 1 BTC.
+///      A price older than 60 seconds reverts "PriceFeed: Oracle is stale."
+///      There is no last-good price. A zero answer is not rejected here.
 interface IPriceFeed {
     function fetchPrice() external view returns (uint256);
 }

@@ -2,9 +2,16 @@
 
 Compared with Wave 1. Wave 1 is the factory at `0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e`. The live Wave 2 factory is `0x2218D33d2f9279A4266b49dB572F5b1343d09De5` (block 16407578). This branch is newer than that factory and is not deployed.
 
+## Oracle minimums
+
+- Router `amountOutMin` comes from `PriceFeed.fetchPrice()` (18-decimal USD per BTC) minus the slippage bound. It is not the pool quote, so a moved pool cannot lower the floor.
+- Open default is 50 bps. Rescue sales stay at 200 bps, cap 300, owner-set.
+- A stale feed (older than 60 seconds) reverts `PriceFeed: Oracle is stale.` Coil does not catch it and does not keep a last price. A zero price reverts `OraclePriceZero`. A zero floor reverts `Slippage`.
+- `IBorrowerOperations.claimCollateral()` is declared (selector `0x6f0b0c1c`). Nothing calls it yet.
+
 ## Close fixes (this branch)
 
-Found on the live factory while the pool sat about 234–236 bps below the oracle.
+Found on the live factory while the pool sat about 234-236 bps below the oracle.
 
 - `unwind` / `flashUnwind` draw parked MUSD before selling BTC. A full close sends any MUSD still in `CoilPark` back to the owner. The 50.24 MUSD left behind in the end-to-end run was this bug.
 - If the oracle cap would reject the flash, the owner still closes when the BTC owed is strictly under the collateral. The rescue cap stays 300 bps and still binds `guard` and `flashDeleverTo`. A close is not stuck when the gap is 2.3% or 4%. The Wave 1 router sale remains the path when a flash does not fit in the collateral. Doing both on the happy path would threaten Mezo's 20-precompile limit, and the BTC precompile only allows one Wave 1 sale per transaction.
