@@ -3,6 +3,7 @@ pragma solidity 0.8.24;
 
 import {IBorrowerOperations, ITroveManager, ISortedTroves, IHintHelpers, IPriceFeed, IRouter, IPool, IPoolFactory, IERC20} from "../interfaces/Mezo.sol";
 import {FlashSizer} from "./FlashMath.sol";
+import {PriceMin} from "./PriceMin.sol";
 import {CoilPark} from "../CoilPark.sol";
 
 /// @notice Router-based loop, sale unwind, and quotes. Deployed on its own and
@@ -64,11 +65,12 @@ library CoilLegacy {
     error RecoveryMode();
     error ShortRepay();
     error Slippage();
+    error OraclePriceZero();
     error TransferFailed();
     error ZeroAmount();
 
     function runLoop(Env memory e, uint256 targetCR, uint256 maxSlippageBps) public {
-        uint256 price = IPriceFeed(e.priceFeed).fetchPrice();
+        uint256 price = _price(e);
         if (ITroveManager(e.troveManager).checkRecoveryMode(price)) revert RecoveryMode();
 
         bool exists = _active(e);
@@ -106,7 +108,7 @@ library CoilLegacy {
         returns (Quote memory q)
     {
         if (collateralIn == 0) revert ZeroAmount();
-        uint256 price = IPriceFeed(e.priceFeed).fetchPrice();
+        uint256 price = _price(e);
         uint256 rate = IBorrowerOperations(e.borrowerOperations).borrowingRate();
         uint8 refiPct = IBorrowerOperations(e.borrowerOperations).refinancingFeePercentage();
         uint256 coll = collateralIn;
@@ -120,7 +122,7 @@ library CoilLegacy {
             uint256 maxAmt = _amountFromCap(debt, cap, rate);
             uint256 amount = _borrowAmount(e, coll, debt, price, targetCR, maxAmt, slippageBps_, rate, feePct);
             if (amount == 0) break;
-            uint256 btcOut = _btcMinOut(e, amount, slippageBps_);
+            uint256 btcOut = _btcMinOut(amount, price, slippageBps_);
             debt = _projectedDebt(debt, amount, rate, !last, feePct);
             coll += btcOut;
             q.musdMinted += amount;
@@ -143,9 +145,9 @@ library CoilLegacy {
             uint256 debt = ITroveManager(e.troveManager).getTroveDebt(address(this));
             uint256 maxW = _maxWithdraw(coll, debt, price);
             if (maxW == 0) break;
-            uint256 sell = _btcInForMusd(e, short, slippageBps);
+            uint256 sell = _btcInForMusd(short, price, slippageBps);
             if (sell == 0 || sell > maxW) sell = maxW;
-            uint256 got = _sellAndRepay(e, sell, short, slippageBps);
+            uint256 got = _sellAndRepay(e, sell, short, price, slippageBps);
             if (got == 0) break;
             repaid += got;
         }
@@ -172,17 +174,17 @@ library CoilLegacy {
                 revert MinDebt();
             }
             uint256 sell = _btcToReach(e, coll, debt, price, targetCR, maxW, slippageBps);
-            uint256 forRoom = _btcInForMusd(e, room, slippageBps);
+            uint256 forRoom = _btcInForMusd(room, price, slippageBps);
             if (forRoom != 0 && (sell == 0 || forRoom < sell)) sell = forRoom;
             if (sell == 0 || sell > maxW) {
                 if (_btcMirror(e)) return;
                 revert MinDebt();
             }
-            if (_crAfterCappedRepay(e, coll, debt, sell, price, slippageBps, room) <= crNow) {
+            if (_crAfterCappedRepay(coll, debt, sell, price, slippageBps, room) <= crNow) {
                 if (_btcMirror(e)) return;
                 revert NotSafer();
             }
-            _sellAndRepay(e, sell, room, slippageBps);
+            _sellAndRepay(e, sell, room, price, slippageBps);
         }
         if (!_btcMirror(e) && _cr(e, price) < targetCR) revert Iterations();
     }
@@ -206,18 +208,18 @@ library CoilLegacy {
             if (maxW == 0) revert MinDebt();
 
             uint256 short = need - have;
-            uint256 btcForShort = _btcInForMusd(e, short, slippageBps);
+            uint256 btcForShort = _btcInForMusd(short, price, slippageBps);
             if (btcForShort != 0 && btcForShort <= maxW) {
-                _withdrawAndSwap(e, btcForShort, slippageBps);
+                _withdrawAndSwap(e, btcForShort, price, slippageBps);
                 sales++;
                 continue;
             }
 
             uint256 room = maxRepay(e, debt);
             if (room == 0) revert MinDebt();
-            uint256 btcForRepay = _btcInForMusd(e, room, slippageBps);
+            uint256 btcForRepay = _btcInForMusd(room, price, slippageBps);
             if (btcForRepay == 0 || btcForRepay > maxW) btcForRepay = maxW;
-            _sellAndRepay(e, btcForRepay, room, slippageBps);
+            _sellAndRepay(e, btcForRepay, room, price, slippageBps);
             sales++;
         }
         if (!_btcMirror(e)) revert Iterations();
@@ -368,25 +370,25 @@ library CoilLegacy {
     {
         parked = CoilPark(park_).assetsOf(address(this));
         if (!_active(e)) return (parked, 0, parked == 0 ? 0 : 10_000);
-        need = reserveNeed(e, targetCR, IPriceFeed(e.priceFeed).fetchPrice());
+        need = reserveNeed(e, targetCR, _price(e));
         if (need == 0) return (parked, 0, 10_000);
         coveredBps = parked >= need ? 10_000 : parked * 10_000 / need;
     }
 
     function deviationBpsView(Env memory e, address pool) public view returns (uint256) {
-        uint256 price = IPriceFeed(e.priceFeed).fetchPrice();
+        uint256 price = _price(e);
         (uint256 poolMusd, uint256 poolBtc) = _poolReserves(pool, e.btc);
         return deviationBps(poolMusd, poolBtc, price);
     }
 
     function belowPegView(Env memory e, address pool) public view returns (uint256) {
-        uint256 price = IPriceFeed(e.priceFeed).fetchPrice();
+        uint256 price = _price(e);
         (uint256 poolMusd, uint256 poolBtc) = _poolReserves(pool, e.btc);
         return musdBelowPegBps(poolMusd, poolBtc, price);
     }
 
     function inRecovery(Env memory e) public view returns (bool) {
-        return ITroveManager(e.troveManager).checkRecoveryMode(IPriceFeed(e.priceFeed).fetchPrice());
+        return ITroveManager(e.troveManager).checkRecoveryMode(_price(e));
     }
 
     function reads(
@@ -438,7 +440,7 @@ library CoilLegacy {
     {
         if (collateralIn == 0) revert ZeroAmount();
         if (targetCR < MIN_TARGET_CR || targetCR > 10e18) revert BadCR();
-        uint256 price = IPriceFeed(e.priceFeed).fetchPrice();
+        uint256 price = _price(e);
         (uint256 poolMusd, uint256 poolBtc) = _poolReserves(pool, e.btc);
         uint256 fee = IPoolFactory(e.poolFactory).getFee(pool, IPool(pool).stable());
         uint256 rate = IBorrowerOperations(e.borrowerOperations).borrowingRate();
@@ -501,7 +503,7 @@ library CoilLegacy {
             return (0, true);
         }
 
-        uint256 minBtc = _btcMinOut(e, amount, slip);
+        uint256 minBtc = _btcMinOut(amount, price, slip);
         if (minBtc == 0) revert Slippage();
         uint256 fee = amount * rate / WAD;
 
@@ -546,21 +548,20 @@ library CoilLegacy {
         if (maxAmount == 0) return 0;
         uint256 minAmount = debt == 0 ? minOpenAmount(e, rate) : 1e16;
         if (minAmount > maxAmount) return 0;
-        if (_projectedCR(e, coll, debt, minAmount, price, slip, rate, refiPct) < targetCR) return 0;
-        if (_projectedCR(e, coll, debt, maxAmount, price, slip, rate, refiPct) >= targetCR) return maxAmount;
+        if (_projectedCR(coll, debt, minAmount, price, slip, rate, refiPct) < targetCR) return 0;
+        if (_projectedCR(coll, debt, maxAmount, price, slip, rate, refiPct) >= targetCR) return maxAmount;
 
         uint256 lo = minAmount;
         uint256 hi = maxAmount;
         for (uint256 i; i < 18; ++i) {
             uint256 mid = (lo + hi + 1) / 2;
-            if (_projectedCR(e, coll, debt, mid, price, slip, rate, refiPct) >= targetCR) lo = mid;
+            if (_projectedCR(coll, debt, mid, price, slip, rate, refiPct) >= targetCR) lo = mid;
             else hi = mid - 1;
         }
         return lo;
     }
 
     function _projectedCR(
-        Env memory e,
         uint256 coll,
         uint256 debt,
         uint256 amount,
@@ -568,8 +569,8 @@ library CoilLegacy {
         uint256 slip,
         uint256 rate,
         uint8 refiPct
-    ) private view returns (uint256) {
-        uint256 btcOut = _btcMinOut(e, amount, slip);
+    ) private pure returns (uint256) {
+        uint256 btcOut = _btcMinOut(amount, price, slip);
         uint256 newDebt = _projectedDebt(debt, amount, rate, true, refiPct);
         if (newDebt == 0) return type(uint256).max;
         return (coll + btcOut) * price / newDebt;
@@ -613,72 +614,74 @@ library CoilLegacy {
         uint256 maxBtc,
         uint256 slip
     ) private view returns (uint256) {
-        uint256 musdAtMax = _musdMinOut(e, maxBtc, slip);
+        uint256 musdAtMax = _musdMinOut(maxBtc, price, slip);
         uint256 cap = maxRepay(e, debt);
         if (cap != 0 && musdAtMax > cap) {
-            uint256 shrunk = _btcInForMusd(e, cap, slip);
+            uint256 shrunk = _btcInForMusd(cap, price, slip);
             if (shrunk != 0 && shrunk < maxBtc) maxBtc = shrunk;
         }
         if (maxBtc == 0) return 0;
-        if (_crAfterSell(e, coll, debt, maxBtc, price, slip) < targetCR) return maxBtc;
+        if (_crAfterSell(coll, debt, maxBtc, price, slip) < targetCR) return maxBtc;
 
         uint256 lo;
         uint256 hi = maxBtc;
         for (uint256 i; i < 18; ++i) {
             uint256 mid = (lo + hi) / 2;
-            if (mid == 0 || _crAfterSell(e, coll, debt, mid, price, slip) < targetCR) lo = mid + 1;
+            if (mid == 0 || _crAfterSell(coll, debt, mid, price, slip) < targetCR) lo = mid + 1;
             else hi = mid;
         }
         return hi;
     }
 
-    function _crAfterSell(Env memory e, uint256 coll, uint256 debt, uint256 btcAmt, uint256 price, uint256 slip)
+    function _crAfterSell(uint256 coll, uint256 debt, uint256 btcAmt, uint256 price, uint256 slip)
         private
-        view
+        pure
         returns (uint256)
     {
         if (btcAmt >= coll) return 0;
-        uint256 musdOut = _musdMinOut(e, btcAmt, slip);
+        uint256 musdOut = _musdMinOut(btcAmt, price, slip);
         if (musdOut >= debt) return type(uint256).max;
         return (coll - btcAmt) * price / (debt - musdOut);
     }
 
     function _crAfterCappedRepay(
-        Env memory e,
         uint256 coll,
         uint256 debt,
         uint256 btcAmt,
         uint256 price,
         uint256 slip,
         uint256 room
-    ) private view returns (uint256) {
+    ) private pure returns (uint256) {
         if (btcAmt == 0 || btcAmt >= coll || room == 0) return 0;
-        uint256 musdOut = _musdMinOut(e, btcAmt, slip);
+        uint256 musdOut = _musdMinOut(btcAmt, price, slip);
         uint256 repaid = musdOut > room ? room : musdOut;
         if (repaid == 0) return 0;
         if (repaid >= debt) return type(uint256).max;
         return (coll - btcAmt) * price / (debt - repaid);
     }
 
-    function _btcInForMusd(Env memory e, uint256 musdOut, uint256 slip) private view returns (uint256) {
+    function _btcInForMusd(uint256 musdOut, uint256 price, uint256 slip) private pure returns (uint256) {
         if (musdOut == 0) return 0;
         uint256 lo;
         uint256 hi = 1e16;
         for (uint256 i; i < 12; ++i) {
-            if (_musdMinOut(e, hi, slip) >= musdOut) break;
+            if (_musdMinOut(hi, price, slip) >= musdOut) break;
             hi *= 2;
         }
-        if (_musdMinOut(e, hi, slip) < musdOut) return 0;
+        if (_musdMinOut(hi, price, slip) < musdOut) return 0;
         for (uint256 i; i < 22; ++i) {
             uint256 mid = (lo + hi) / 2;
-            if (_musdMinOut(e, mid, slip) >= musdOut) hi = mid;
+            if (_musdMinOut(mid, price, slip) >= musdOut) hi = mid;
             else lo = mid + 1;
         }
         return hi;
     }
 
-    function _withdrawAndSwap(Env memory e, uint256 btcAmount, uint256 slippageBps) private returns (uint256 musdGot) {
-        uint256 minMusd = _musdMinOut(e, btcAmount, slippageBps);
+    function _withdrawAndSwap(Env memory e, uint256 btcAmount, uint256 price, uint256 slippageBps)
+        private
+        returns (uint256 musdGot)
+    {
+        uint256 minMusd = _musdMinOut(btcAmount, price, slippageBps);
         if (minMusd == 0) revert Slippage();
         (address upper, address lower) = hintPair(
             e,
@@ -689,11 +692,11 @@ library CoilLegacy {
         musdGot = _swapBtcToMusd(e, btcAmount, minMusd);
     }
 
-    function _sellAndRepay(Env memory e, uint256 btcAmount, uint256 repayCap, uint256 slippageBps)
+    function _sellAndRepay(Env memory e, uint256 btcAmount, uint256 repayCap, uint256 price, uint256 slippageBps)
         private
         returns (uint256 repaid)
     {
-        uint256 got = _withdrawAndSwap(e, btcAmount, slippageBps);
+        uint256 got = _withdrawAndSwap(e, btcAmount, price, slippageBps);
         uint256 debt = ITroveManager(e.troveManager).getTroveDebt(address(this));
         uint256 cap = maxRepay(e, debt);
         if (repayCap < cap) cap = repayCap;
@@ -705,7 +708,10 @@ library CoilLegacy {
         IBorrowerOperations(e.borrowerOperations).repayMUSD(repaid, upper, lower);
     }
 
+    /// @dev `minOut` is the oracle floor from `_btcMinOut`. Zero is not a minimum:
+    ///      the router would then accept any fill, including a sandwiched one.
     function _swapMusdToBtc(Env memory e, uint256 amount, uint256 minOut) private returns (uint256 got) {
+        if (minOut == 0) revert Slippage();
         uint256 nativeBefore = address(this).balance;
         _approve(e.musd, e.router, amount);
         IRouter.Route[] memory routes = _route(e, e.musd, e.btc);
@@ -730,7 +736,10 @@ library CoilLegacy {
         if (got < minOut) revert Slippage();
     }
 
+    /// @dev `minOut` is the oracle floor from `_musdMinOut`. A stale `fetchPrice`
+    ///      never reaches this function: the caller does not catch that revert.
     function _swapBtcToMusd(Env memory e, uint256 amount, uint256 minOut) private returns (uint256 got) {
+        if (minOut == 0) revert Slippage();
         if (_btcMirror(e)) {
             if (address(this).balance < amount) revert Slippage();
         } else {
@@ -758,21 +767,23 @@ library CoilLegacy {
         if (got < minOut) revert Slippage();
     }
 
-    function _btcMinOut(Env memory e, uint256 musdAmount, uint256 slip) private view returns (uint256) {
+    /// @dev MUSD in, BTC out. 18-decimal price, 18-decimal tokens.
+    ///      Not the router quote: a moved pool must not move this floor.
+    function _btcMinOut(uint256 musdAmount, uint256 price, uint256 slip) private pure returns (uint256) {
         if (musdAmount == 0) return 0;
-        uint256 quoted = _quotedOut(e, musdAmount, e.musd, e.btc);
-        return quoted * (BPS - slip) / BPS;
+        return PriceMin.tokenOutMin(musdAmount, PriceMin.MUSD_DECIMALS, price, PriceMin.BTC_DECIMALS, slip);
     }
 
-    function _musdMinOut(Env memory e, uint256 btcAmount, uint256 slip) private view returns (uint256) {
+    /// @dev BTC in, MUSD out. 18-decimal price, 18-decimal tokens.
+    function _musdMinOut(uint256 btcAmount, uint256 price, uint256 slip) private pure returns (uint256) {
         if (btcAmount == 0) return 0;
-        uint256 quoted = _quotedOut(e, btcAmount, e.btc, e.musd);
-        return quoted * (BPS - slip) / BPS;
+        return PriceMin.stableOutMin(btcAmount, PriceMin.BTC_DECIMALS, price, PriceMin.MUSD_DECIMALS, slip);
     }
 
-    function _quotedOut(Env memory e, uint256 amountIn, address from, address to) private view returns (uint256) {
-        uint256[] memory amounts = IRouter(e.router).getAmountsOut(amountIn, _route(e, from, to));
-        return amounts[amounts.length - 1];
+    /// @dev No try/catch. Stale data reverts inside the feed. A zero answer is not a price.
+    function _price(Env memory e) private view returns (uint256 price) {
+        price = IPriceFeed(e.priceFeed).fetchPrice();
+        if (price == 0) revert OraclePriceZero();
     }
 
     function _route(Env memory e, address from, address to) private pure returns (IRouter.Route[] memory routes) {

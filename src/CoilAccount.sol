@@ -5,6 +5,7 @@ import {IBorrowerOperations, ITroveManager, ISortedTroves, IHintHelpers, IPriceF
 import {ICoilFactory} from "./ICoilFactory.sol";
 import {MezoAddresses} from "./MezoAddresses.sol";
 import {FlashSizer} from "./libraries/FlashMath.sol";
+import {PriceMin} from "./libraries/PriceMin.sol";
 import {CoilLegacy} from "./libraries/CoilLegacy.sol";
 import {CoilExit} from "./libraries/CoilExit.sol";
 import {CoilPark} from "./CoilPark.sol";
@@ -178,6 +179,7 @@ contract CoilAccount is IPoolCallee {
     error BelowTarget();
     error RecoveryMode();
     error Slippage();
+    error OraclePriceZero();
     error Iterations();
     error MinDebt();
     error ShortRepay();
@@ -238,7 +240,7 @@ contract CoilAccount is IPoolCallee {
         initialized = true;
         owner = _owner;
         factory = msg.sender;
-        slippageBps = 50;
+        slippageBps = PriceMin.DEFAULT_SLIPPAGE_BPS;
         rescueSlippageBps = RESCUE_SLIPPAGE_DEFAULT;
         maxPegDeviationBps = PEG_DEVIATION_DEFAULT;
     }
@@ -296,7 +298,7 @@ contract CoilAccount is IPoolCallee {
     function guard() external nonReentrant returns (bool acted) {
         if (guardTargetCR == 0 || !_active()) return false;
 
-        uint256 price = priceFeed.fetchPrice();
+        uint256 price = _price();
         uint256 cr = _cr(price);
         bool crRisk = floorCR != 0 && cr < floorCR;
         uint256 rank = redemptionRank();
@@ -396,7 +398,7 @@ contract CoilAccount is IPoolCallee {
         p.slippageBps = slippageBps;
         p.active = _active();
         if (!p.active) return p;
-        uint256 price = priceFeed.fetchPrice();
+        uint256 price = _price();
         p.collateral = troveManager.getTroveColl(address(this));
         p.debt = troveManager.getTroveDebt(address(this));
         p.cr = p.debt == 0 ? 0 : troveManager.getCurrentICR(address(this), price);
@@ -405,8 +407,10 @@ contract CoilAccount is IPoolCallee {
     }
 
     /// @notice Dry-run of `loop` for `collateralIn` of BTC and no existing trove.
-    ///         Uses router quotes at `slippageBps` worse than the current pool, so the
-    ///         executed ratio should land at or above `quote.cr`.
+    ///         The BTC in the quote is the oracle floor at `slippageBps`, not a pool
+    ///         quote, so a moved pool cannot lower the floor. The executed ratio should
+    ///         land at or above `quote.cr` when the pool can fill that floor.
+    ///         A stale oracle reverts here with the feed's own error.
     function quoteLoop(uint256 collateralIn, uint256 targetCR, uint256 slippageBps_)
         external
         view
@@ -478,7 +482,7 @@ contract CoilAccount is IPoolCallee {
         if (collateralIn == 0) revert ZeroAmount();
         if (targetCR < MIN_TARGET_CR || targetCR > 10e18) revert BadCR();
         if (slippageBps_ == 0 || slippageBps_ > 300) revert BadSlippage();
-        uint256 price = priceFeed.fetchPrice();
+        uint256 price = _price();
         (uint256 flash, uint256 owed, uint256 minted, bool fits) =
             _solveFlash(collateralIn, 0, 0, false, targetCR, price);
         if (!fits || minted == 0) revert CannotOpen();
@@ -532,7 +536,7 @@ contract CoilAccount is IPoolCallee {
     function _unwind(uint256 fractionWad) internal {
         if (fractionWad == 0 || fractionWad > WAD) revert BadFraction();
         if (!_active()) revert NoTrove();
-        uint256 price = priceFeed.fetchPrice();
+        uint256 price = _price();
         (uint256 musdOut, bool emitNow) = CoilExit.stageUnwind(
             _env(), address(park), address(pool), address(sizer), fractionWad, price, rescueSlippageBps
         );
@@ -555,7 +559,7 @@ contract CoilAccount is IPoolCallee {
             if (guardTargetCR == 0) revert NoGuard();
             if (targetCR > guardTargetCR) revert KeeperLimited();
         }
-        uint256 price = priceFeed.fetchPrice();
+        uint256 price = _price();
         uint256 beforeCr = _cr(price);
         if (beforeCr >= targetCR) revert AlreadyAtTarget();
         _deleverFlash(targetCR, price);
@@ -576,7 +580,7 @@ contract CoilAccount is IPoolCallee {
     }
 
     function _flashLoop(uint256 targetCR, uint256 slip) internal {
-        uint256 price = priceFeed.fetchPrice();
+        uint256 price = _price();
         if (troveManager.checkRecoveryMode(price)) revert RecoveryMode();
         (uint256 poolMusd, uint256 poolBtc) = _reserves();
         if (CoilLegacy.deviationBps(poolMusd, poolBtc, price) > maxPegDeviationBps) revert PegOff();
@@ -856,6 +860,13 @@ contract CoilAccount is IPoolCallee {
         e.router = address(router);
         e.poolFactory = poolFactory;
         e.owner = owner;
+    }
+
+    /// @dev One `fetchPrice`. A stale feed reverts "PriceFeed: Oracle is stale."
+    ///      and this function does not catch it. A zero answer is not used as a floor.
+    function _price() internal view returns (uint256 price) {
+        price = priceFeed.fetchPrice();
+        if (price == 0) revert OraclePriceZero();
     }
 
     function _active() internal view returns (bool) {

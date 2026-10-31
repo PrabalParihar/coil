@@ -8,6 +8,8 @@ import {CoilPark} from "../src/CoilPark.sol";
 import {FlashSizer} from "../src/libraries/FlashMath.sol";
 import {MezoAddresses} from "../src/MezoAddresses.sol";
 import {IBorrowerOperations, ITroveManager, IPriceFeed, IRouter, IERC20} from "../src/interfaces/Mezo.sol";
+import {PriceMin} from "../src/libraries/PriceMin.sol";
+import {MockStalePriceFeed} from "./MockStalePriceFeed.sol";
 
 interface IPoolView {
     function token0() external view returns (address);
@@ -824,6 +826,99 @@ contract CoilForkTest is Test {
         if (withinCap) assertLe(sensibleImpact, 100);
     }
 
+    /// @notice One sandwich check. A pool moved outside the oracle bound reverts.
+    ///         The same open against the unmoved pool passes. The attacker sells
+    ///         with no floor. Coil does not.
+    function test_sandwichOutsideOracleBoundReverts() public {
+        (, CoilAccount opened) = _open(0.12 ether, 2e18, PriceMin.DEFAULT_SLIPPAGE_BPS);
+        CoilAccount.Position memory within = opened.position();
+        assertTrue(within.active);
+        assertGe(within.cr, 2e18);
+        assertEq(opened.slippageBps(), 50);
+
+        uint256 snap = vm.snapshotState();
+
+        address attacker = makeAddr("sandwicher");
+        uint256 musdIn = reserveMusd / 20;
+        assertGt(musdIn, 1_000e18);
+        deal(MezoAddresses.TESTNET_MUSD, attacker, musdIn);
+        IRouter.Route[] memory routes = new IRouter.Route[](1);
+        routes[0] = IRouter.Route({
+            from: MezoAddresses.TESTNET_MUSD,
+            to: MezoAddresses.BTC,
+            stable: false,
+            factory: MezoAddresses.TESTNET_POOL_FACTORY
+        });
+        vm.startPrank(attacker);
+        IERC20(MezoAddresses.TESTNET_MUSD).approve(MezoAddresses.TESTNET_ROUTER, musdIn);
+        IRouter(MezoAddresses.TESTNET_ROUTER).swapExactTokensForTokens(musdIn, 0, routes, attacker, block.timestamp);
+        vm.stopPrank();
+
+        (uint256 musdNow, uint256 btcNow,) = IPoolView(MezoAddresses.TESTNET_MUSD_BTC_POOL).getReserves();
+        uint256 moved = musdNow * 1e18 / btcNow;
+        assertGt(moved, spot);
+        uint256 gapBps = (moved - spot) * 10_000 / spot;
+        assertGt(gapBps, 300, "pool was not pushed outside the cap");
+
+        address victim = makeAddr("sandwich-victim");
+        vm.deal(victim, 1 ether);
+        vm.prank(victim);
+        factory.createAccount();
+        CoilAccount victimAcct = CoilAccount(payable(factory.accountOf(victim)));
+        vm.prank(victim);
+        vm.expectRevert();
+        victimAcct.loop{value: 0.12 ether}(2e18, 300);
+        assertFalse(victimAcct.position().active);
+        assertEq(victim.balance, 1 ether);
+
+        assertTrue(vm.revertToState(snap));
+        (, CoilAccount again) = _open(0.12 ether, 2e18, PriceMin.DEFAULT_SLIPPAGE_BPS);
+        assertTrue(again.position().active);
+        assertGe(again.position().cr, 2e18);
+    }
+
+    /// @dev 60 seconds is still fresh (`<= MAX_PRICE_DELAY`). 61 seconds reverts
+    ///      with the feed's own string. Coil does not catch it or keep a last price.
+    function test_staleOracleRevertsOnLoop() public {
+        (address user, CoilAccount account) = _openAccount();
+        vm.deal(user, 1 ether);
+
+        _etchFeed(spot, block.timestamp - 60);
+        assertEq(IPriceFeed(MezoAddresses.TESTNET_PRICE_FEED).fetchPrice(), spot);
+
+        _etchFeed(spot, block.timestamp - 61);
+        vm.prank(user);
+        vm.expectRevert(bytes("PriceFeed: Oracle is stale."));
+        account.quoteLoop(0.2 ether, 2e18, 50);
+
+        vm.prank(user);
+        vm.expectRevert(bytes("PriceFeed: Oracle is stale."));
+        account.loop{value: 0.2 ether}(2e18, 50);
+        assertEq(user.balance, 1 ether);
+        assertEq(
+            uint256(ITroveManager(MezoAddresses.TESTNET_TROVE_MANAGER).getTroveStatus(address(account))),
+            uint256(ITroveManager.Status.nonExistent)
+        );
+
+        vm.prank(user);
+        vm.expectRevert(bytes("PriceFeed: Oracle is stale."));
+        account.loop{value: 0.2 ether}(2e18, 50);
+    }
+
+    function test_zeroOracleDoesNotOpen() public {
+        (address user, CoilAccount account) = _openAccount();
+        vm.deal(user, 1 ether);
+        _etchFeed(0, block.timestamp);
+        vm.prank(user);
+        vm.expectRevert(CoilAccount.OraclePriceZero.selector);
+        account.loop{value: 0.2 ether}(2e18, 50);
+        assertEq(user.balance, 1 ether);
+        assertEq(
+            uint256(ITroveManager(MezoAddresses.TESTNET_TROVE_MANAGER).getTroveStatus(address(account))),
+            uint256(ITroveManager.Status.nonExistent)
+        );
+    }
+
     function test_twoUsersGetDistinctClones() public {
         (, CoilAccount a) = _open(0.12 ether, 2.5e18, 50);
         (, CoilAccount b) = _open(0.12 ether, 2.5e18, 50);
@@ -895,6 +990,16 @@ contract CoilForkTest is Test {
     /// @dev Oracle above the pool price by `bps`. Deviation is `bps` of the oracle.
     function _oracleAbovePool(uint256 bps) internal view returns (uint256) {
         return spot * 10_000 / (10_000 - bps);
+    }
+
+    /// @dev Replaces the feed code. Slot 0 is the price, slot 1 is `updatedAt`.
+    ///      Clears the setUp mock so the etched `fetchPrice` actually runs.
+    function _etchFeed(uint256 price, uint256 updatedAt) internal {
+        vm.clearMockedCalls();
+        MockStalePriceFeed logic = new MockStalePriceFeed();
+        vm.etch(MezoAddresses.TESTNET_PRICE_FEED, address(logic).code);
+        vm.store(MezoAddresses.TESTNET_PRICE_FEED, bytes32(uint256(0)), bytes32(price));
+        vm.store(MezoAddresses.TESTNET_PRICE_FEED, bytes32(uint256(1)), bytes32(updatedAt));
     }
 
     function _mockPrice(uint256 price) internal {

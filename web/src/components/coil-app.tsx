@@ -93,7 +93,7 @@ export function CoilApp() {
   const [btcText, setBtcText] = useState("0.04");
   const [targetPct, setTargetPct] = useState(200);
   const [deleverPct, setDeleverPct] = useState(300);
-  const [slippageBps, setSlippageBps] = useState(100);
+  const [slippageBps, setSlippageBps] = useState(50);
   const [rescueBps, setRescueBps] = useState(200);
   const [rescueDirty, setRescueDirty] = useState(false);
   const [unwindPct, setUnwindPct] = useState(100);
@@ -798,7 +798,7 @@ export function CoilApp() {
           : !account
             ? { label: busy ? "Creating account…" : "Create your Coil account", onClick: createAccount, disabled: busy }
             : openBlock
-              ? { label: inRecovery ? "Recovery Mode — loop refused" : "PegOff — raise the open cap", disabled: true, icon: <Lock className="size-4" aria-hidden /> }
+              ? { label: inRecovery ? "Recovery Mode: loop refused" : "PegOff: raise the open cap", disabled: true, icon: <Lock className="size-4" aria-hidden /> }
               : { label: busy ? "Working…" : `Loop to ${targetPct}% · ${leverageLabel(targetCR)}`, onClick: doLoop, disabled: !loopReady, icon: <Lock className="size-4" aria-hidden /> };
 
   const setup = [
@@ -1213,7 +1213,7 @@ export function CoilApp() {
                   ) : !connected ? (
                     <div className="grid items-center gap-6 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                       <div className="well px-4 py-6 opacity-70">
-                        <CrGauge percent={110} empty label="—" sub="collateral ratio" />
+                        <CrGauge percent={110} empty label="-" sub="collateral ratio" />
                       </div>
                       <EmptyState
                         icon={<Wallet className="mb-4 size-10 text-filament" strokeWidth={1.5} aria-hidden />}
@@ -1883,7 +1883,7 @@ function GuardPanel({
             className="h-11 rounded-xl bg-black/25 font-mono md:text-sm dark:bg-black/25"
           />
           <p className="text-[11px] text-muted-foreground">
-            Jar {tipBalance !== undefined ? `${formatMusd(tipBalance)} MEZO` : "—"}. Paid once per block, and only if the ratio rose.
+            Jar {tipBalance !== undefined ? `${formatMusd(tipBalance)} MEZO` : "-"}. Paid once per block, and only if the ratio rose.
           </p>
           <Button type="button" variant="outline" className="h-10 w-full rounded-2xl" disabled={busy || disabled} onClick={onFund}>
             Fund MEZO tip
@@ -1948,7 +1948,7 @@ function leverageNumber(cr: bigint) {
 }
 
 function rankLabel(rank: bigint) {
-  if (rank === 0n) return "—";
+  if (rank === 0n) return "-";
   if (rank > 32n) return "Outside 32";
   return `#${rank.toString()}`;
 }

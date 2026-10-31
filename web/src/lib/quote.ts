@@ -79,9 +79,10 @@ export function quoteLoop(
   let reserveBtc = market.reserveBtc;
   let iterations = 0;
 
+  // 18-decimal USD per BTC, same floor the contract passes as amountOutMin.
+  // A pool quote is not the floor. If the pool pays less, the swap must not run.
   const btcMinOut = (musdIn: bigint) => {
-    const quoted = amountOut(musdIn, reserveMusd, reserveBtc, market.feeBps);
-    return (quoted * (BPS - slippageBps)) / BPS;
+    return (musdIn * WAD * (BPS - slippageBps)) / (market.price * BPS);
   };
 
   for (let i = 0; i < MAX_SWAPS; i++) {
@@ -123,8 +124,15 @@ export function quoteLoop(
 
     if (amount === 0n) break;
     const quoted = amountOut(amount, reserveMusd, reserveBtc, market.feeBps);
-    const received = (quoted * (BPS - slippageBps)) / BPS;
-    if (received === 0n) break;
+    const received = btcMinOut(amount);
+    if (received === 0n) {
+      throw new QuoteError("The price feed produced a zero minimum. The swap will not run.");
+    }
+    if (quoted < received) {
+      throw new QuoteError(
+        "The pool quote is outside the oracle slippage bound. Coil will not swap with a zero minimum.",
+      );
+    }
     const afterFee = amount - (amount * market.feeBps) / BPS;
     reserveMusd += afterFee;
     reserveBtc -= quoted;
@@ -288,7 +296,7 @@ export function icrFromNominal(nicr: bigint, price: bigint) {
 }
 
 export function leverageLabel(cr: bigint) {
-  if (cr <= WAD) return "—";
+  if (cr <= WAD) return "-";
   const bps = (cr * 100n) / (cr - WAD);
   const whole = bps / 100n;
   const frac = (bps % 100n).toString().padStart(2, "0");
@@ -418,7 +426,7 @@ export function sensibleOpen(deposit: bigint, market: Market, maxImpactBps = 100
       return { targetCR: rung.cr, impact: bps, leverage: rung.leverage, capped: true };
     }
   }
-  if (!any) return { targetCR: 0n, impact: bestImpact, leverage: "—", capped: false };
+  if (!any) return { targetCR: 0n, impact: bestImpact, leverage: "-", capped: false };
   return { targetCR: best.cr, impact: bestImpact, leverage: best.leverage, capped: false };
 }
 
