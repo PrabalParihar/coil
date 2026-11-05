@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "deployments": {
+    "31611": {
+      "chainId": 31611,
+      "name": "Mezo Testnet",
+      "rpcUrl": "https://rpc.test.mezo.org",
+      "explorerUrl": "https://explorer.test.mezo.org",
+      "status": "legacy",
+      "factory": "0xff3335576f998EE872596d4EB7ABECb71a0D5BC8",
+      "deploymentBlock": "16408315",
+      "implementation": "0xd4495f969995b3e48998573b5adc6f3106672b80",
+      "keeper": "0x1D2621480011C44693a47801C1158E70b25b4B4F",
+      "contracts": {
+        "CoilFactory": "0xff3335576f998EE872596d4EB7ABECb71a0D5BC8",
+        "CoilAccount": "0xd4495f969995b3e48998573b5adc6f3106672b80",
+        "CoilLegacy": "0xb75d1F6Fe5D9Ab999CbcdDE99589976e66B25eC4",
+        "CoilExit": "0x43D76243f5E5383c37557a364647F16DfBe8D03a",
+        "FlashSizer": "0x757dec022926b1d05d295aede98a52e60e455c87",
+        "CoilPark": "0x1cc8c8df3f4cb25e4201b3aa892b51c2e9954333"
+      },
+      "capabilities": { "policy": false, "coilFee": false, "ownerActions": false }
+    },
+    "31612": {
+      "chainId": 31612,
+      "name": "Mezo",
+      "rpcUrl": "https://mezo.drpc.org",
+      "explorerUrl": "https://explorer.mezo.org",
+      "status": "pending",
+      "factory": null,
+      "deploymentBlock": null,
+      "implementation": null,
+      "keeper": null,
+      "contracts": {},
+      "capabilities": { "policy": false, "coilFee": false, "ownerActions": false }
+    }
+  }
+}
