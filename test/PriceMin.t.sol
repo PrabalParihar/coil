@@ -2,6 +2,7 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {CoilExit} from "../src/libraries/CoilExit.sol";
 import {PriceMin} from "../src/libraries/PriceMin.sol";
 import {IBorrowerOperations} from "../src/interfaces/Mezo.sol";
 import {MockStalePriceFeed} from "./MockStalePriceFeed.sol";
@@ -12,6 +13,15 @@ import {MockStalePriceFeed} from "./MockStalePriceFeed.sol";
 contract PriceMinTest is Test {
     /// @dev Preflight sample from matsnet block 16482230. 18-decimal USD per 1 BTC.
     uint256 internal constant SAMPLE = 77_311.89259e18;
+
+    function testFuzz_saleFillAcceptsExactPriceMinFloorOnly(uint96 rawAmount, uint16 rawSlip) public pure {
+        uint256 amount = bound(rawAmount, 1e8, 1e18);
+        uint256 slip = bound(rawSlip, 1, 300);
+        uint256 floor = PriceMin.stableOutMin(amount, 18, SAMPLE, 18, slip);
+        assertTrue(CoilExit.oracleAllows(amount, floor, SAMPLE, slip));
+        assertFalse(CoilExit.oracleAllows(amount, floor - 1, SAMPLE, slip));
+        assertFalse(CoilExit.oracleAllows(1, 1, 1, slip));
+    }
 
     function test_btc18ToMusd18UsesEighteenDecimalPrice() public pure {
         assertEq(PriceMin.PRICE_DECIMALS, 18);

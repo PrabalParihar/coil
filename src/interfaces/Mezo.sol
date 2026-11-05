@@ -18,7 +18,7 @@ interface IBorrowerOperations {
     function closeTrove() external;
 
     /// @notice Trove owner surplus claim on musd BorrowerOperations.
-    ///         Selector `0x6f0b0c1c`. Coil does not call this yet.
+    ///         Selector `0x6f0b0c1c`. The clone claims and forwards only recovered native BTC.
     function claimCollateral() external;
 
     function refinance(address _upperHint, address _lowerHint) external;

@@ -30,6 +30,15 @@ contract FlashMathTest is Test {
         assertGe((uint256(reserveIn) + kept) * outLeft, uint256(reserveIn) * reserveOut);
     }
 
+    function testFuzz_grossUpAlwaysCoversPoolAfterRoundedFee(uint128 net, uint16 bps) public view {
+        bps = uint16(bound(bps, 1, 50));
+        uint256 gross = sizer.grossUp(net, bps);
+        uint256 fee = gross * bps / 10_000;
+        assertGe(gross - fee, net);
+        assertLe(gross - fee, uint256(net) + 1);
+        assertEq(gross, (uint256(net) * 10_000 + 10_000 - bps - 1) / (10_000 - bps));
+    }
+
     function test_zeroOutReturnsZero() public view {
         assertEq(sizer.amountIn(1e24, 1e21, 0, 4), 0);
     }
