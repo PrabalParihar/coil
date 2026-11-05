@@ -19,7 +19,9 @@ import {
 import { cn } from "cn";
 import { formatBtc, formatMusd, formatUsd, percentToCr, quoteFlashLoop, type Market } from "@/lib/quote";
 import { factoryAddress } from "@/lib/mezo";
-import { EXPLORER, EXPLORER_ADDRESS, dropToLiquidation, shorten, useMotionOk } from "@/components/shell";
+import { deployment, selectedChain } from "@/lib/network";
+import { DEPLOYMENTS } from "@/lib/deployment.generated";
+import { dropToLiquidation, shorten, useMotionOk } from "@/components/shell";
 
 const RING = "M240 70 a170 170 0 1 1 0 340 a170 170 0 1 1 0 -340";
 
@@ -169,7 +171,7 @@ export function Hero({ market, marketError }: { market: Market | null; marketErr
             <span className="absolute inline-flex size-full animate-ping rounded-full bg-safe opacity-70" />
             <span className="relative inline-flex size-1.5 rounded-full bg-safe" />
           </span>
-          Live on Mezo testnet · chain 31611
+          {selectedChain.name} · chain {selectedChain.id} · {deployment.status}
         </p>
         <h1 className="mt-6 text-[2.9rem] leading-[0.95] font-semibold tracking-[-0.045em] sm:text-7xl lg:text-[5.4rem]">
           <span className="rise rise-1 block">Stack more</span>
@@ -315,7 +317,7 @@ export function HowItWorks() {
         </div>
         <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
           The clone owns the trove. A Mezo Pools flash swap borrows the BTC, posts it, and repays the pool before the transaction ends.
-          Mezo allows 20 precompile calls. The flash loop uses 7. The two-swap loop remains the fallback when the pool is paused.
+          Transaction paths are checked against Mezo’s 20-call limit; the two-swap loop remains the fallback when the pool is paused.
         </p>
       </div>
       <ol className="mt-10 grid gap-4 md:grid-cols-3">
@@ -396,7 +398,7 @@ export function Proof() {
           </h2>
         </div>
         <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-          The first card is the Wave 2 factory. The other three are the earlier Wave 1 factory. Click any hash to check it on the Mezo explorer.
+          Historical legacy testnet receipts: the first card is the earlier Wave 2 factory; the other three are Wave 1. They do not prove the new fee/owner-action release or recruited user evidence.
         </p>
       </div>
             <div className="mt-10 grid gap-4 lg:grid-cols-2">
@@ -414,7 +416,7 @@ export function Proof() {
                     {r.label}
                   </span>
                   <a
-                    href={`${EXPLORER}${r.hash}`}
+                    href={`${DEPLOYMENTS["31611"].explorerUrl}/tx/${r.hash}`}
                     target="_blank"
                     rel="noreferrer noopener"
                     className="inline-flex items-center gap-1 font-mono text-foreground/90 underline decoration-filament/40 underline-offset-[3px] hover:decoration-filament"
@@ -431,8 +433,8 @@ export function Proof() {
       </div>
       <p className="mt-5 text-xs text-muted-foreground">
         Factory{" "}
-        <a className="link font-mono text-foreground" href={`${EXPLORER_ADDRESS}${factoryAddress}`} target="_blank" rel="noreferrer noopener">
-          {factoryAddress}
+        <a className="link font-mono text-foreground" href={`${DEPLOYMENTS["31611"].explorerUrl}/address/${DEPLOYMENTS["31611"].factory}`} target="_blank" rel="noreferrer noopener">
+          {DEPLOYMENTS["31611"].factory}
         </a>{" "}
         on chain 31611. Full log in{" "}
         <a className="link text-foreground" href="https://github.com/PrabalParihar/coil/blob/main/DEPLOYMENTS.md" target="_blank" rel="noreferrer noopener">
@@ -467,7 +469,7 @@ const RISKS = [
   {
     icon: TimerReset,
     title: "Exits can take a few txs",
-    body: "A big de-lever or a full unwind sells collateral once per transaction because of Mezo's 20-precompile limit. The app sends the next one and links each hash.",
+    body: "Pool exits require the oracle price bound and Mezo permission. Full close is blocked in Recovery Mode; owner MUSD repayment can reduce debt safely without selling collateral.",
   },
 ];
 
@@ -491,7 +493,7 @@ export function Risks() {
           </div>
         ))}
       </div>
-      <p className="mt-5 text-xs text-muted-foreground">Testnet prototype. The contracts are not audited and are not deployed on mainnet.</p>
+      <p className="mt-5 text-xs text-muted-foreground">Unaudited prototype. Mainnet writes require a confirmed deployment and explicit release enablement.</p>
     </section>
   );
 }

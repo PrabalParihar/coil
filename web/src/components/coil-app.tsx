@@ -24,12 +24,11 @@ import {
   ZERO,
   coilAccountAbi,
   coilFactoryAbi,
-  factoryAddress,
   addr,
   borrowerAbi,
   erc20Abi,
   factoryFeeAbi,
-  mezoTestnet,
+  selectedChain as mezoTestnet,
   parkAbi,
   poolAbi,
   priceFeedAbi,
@@ -57,6 +56,11 @@ import {
   sensibleOpen,
   type Market,
 } from "@/lib/quote";
+import { deployment as activeDeployment, walletConnectProjectId } from "@/lib/network";
+import { canWrite, isUnsupportedPolicy, loopArguments, ownerActionState, ownerTransactions } from "@/lib/readiness";
+import { DEPLOYMENTS, RETAINED_DEPLOYMENTS } from "@/lib/deployment.generated";
+import { discoverOwnerAccounts, ownerDeploymentCatalog, selectOwnerDeployment, type OwnerDeployment } from "@/lib/owner-accounts";
+import { readStateAwareQuote, selectPositionPreview, startPositionQuote, type PositionQuoteState } from "@/lib/position-quote";
 import { loadMainnetMarket } from "@/lib/mainnet";
 import {
   Activity,
@@ -102,6 +106,8 @@ export function CoilApp() {
   const [zone, setZone] = useState(8);
   const [tipText, setTipText] = useState("5");
   const [reserveText, setReserveText] = useState("100");
+  const [ownerMusd, setOwnerMusd] = useState("100");
+  const [topUpText, setTopUpText] = useState("0.001");
   const [tail, setTail] = useState<bigint[]>([]);
   const [market, setMarket] = useState<Market | null>(null);
   const [marketError, setMarketError] = useState<string | null>(null);
@@ -120,6 +126,32 @@ export function CoilApp() {
   const { switchChainAsync } = useSwitchChain();
   const publicClient = usePublicClient({ chainId: mezoTestnet.id });
   const { writeContractAsync } = useWriteContract();
+  const catalog = useMemo(() => ownerDeploymentCatalog(activeDeployment, [DEPLOYMENTS[String(mezoTestnet.id)], ...(RETAINED_DEPLOYMENTS[String(mezoTestnet.id)] ?? [])]), []);
+  const ownerKey = `${mezoTestnet.id}:${address?.toLowerCase() ?? "disconnected"}`;
+  const [discoveryRound, setDiscoveryRound] = useState(0);
+  const discoveryKey = `${ownerKey}:${discoveryRound}`;
+  const [discovered, setDiscovered] = useState<{ key: string; choices: OwnerDeployment[] } | null>(null);
+  const [manualChoice, setManualChoice] = useState<{ ownerKey: string; key: string } | null>(null);
+  const discoveredChoices = discovered?.key === discoveryKey ? discovered.choices : catalog;
+  const selectedChoice = selectOwnerDeployment(discoveredChoices, manualChoice?.ownerKey === ownerKey ? manualChoice.key : undefined);
+  const deployment = selectedChoice.deployment;
+  const factoryAddress = deployment.factory ?? undefined;
+  const writesEnabled = canWrite(deployment, process.env.NEXT_PUBLIC_COIL_ENABLE_MAINNET_WRITES === "true");
+  const discoveryPending = Boolean(address && discovered?.key !== discoveryKey);
+  useEffect(() => {
+    if (!address || !publicClient) return;
+    let current = true;
+    let generation = 0;
+    const refresh = async () => {
+      const request = ++generation;
+      const choices = await discoverOwnerAccounts(publicClient, address, catalog);
+      if (current && request === generation) setDiscovered({ key: discoveryKey, choices });
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 30_000);
+    return () => { current = false; clearInterval(timer); };
+  }, [address, publicClient, catalog, discoveryKey]);
+
   const { data: balance } = useBalance({
     address,
     chainId: mezoTestnet.id,
@@ -210,32 +242,94 @@ export function CoilApp() {
   }, [btcText]);
 
   const { data: implementation } = useReadContract({
+    chainId: mezoTestnet.id,
     address: factoryAddress,
     abi: coilFactoryAbi,
     functionName: "implementation",
   });
   const { data: budget, isError: budgetMissing } = useReadContract({
+    chainId: mezoTestnet.id,
     address: implementation,
     abi: coilAccountAbi,
     functionName: "precompileBudget",
     query: { enabled: Boolean(implementation), retry: false },
   });
+  const { data: policy, isFetched: policyFetched, error: policyError } = useReadContract({
+    chainId: mezoTestnet.id,
+    address: factoryAddress, abi: coilFactoryAbi, functionName: "policy",
+    query: { enabled: Boolean(factoryAddress), retry: false, refetchInterval: 15_000 },
+  });
+  const hasPolicy = Boolean(policy);
+  const policyUnreadable = !policy && policyFetched && !isUnsupportedPolicy(policyError);
+  const newCapabilities = deployment.capabilities.policy || hasPolicy;
+  const effectiveMarket = useMemo(() => market ? { ...market, coilFeeBps: BigInt(policy?.feeBps ?? 0) } : null, [market, policy]);
   const flashFactory = Boolean(implementation) && Boolean(budget) && !budgetMissing;
 
-  const preview = useMemo(() => {
-    if (!market) return { kind: "loading" as const };
+  const { data: coilAccount, refetch: refetchAccount } = useReadContract({
+    chainId: mezoTestnet.id,
+    address: factoryAddress,
+    abi: coilFactoryAbi,
+    functionName: "accountOf",
+    args: address ? [address] : undefined,
+    query: { enabled: Boolean(factoryAddress && address) },
+  });
+
+  const account =
+    coilAccount === undefined ? selectedChoice.account : coilAccount !== ZERO ? (coilAccount as `0x${string}`) : undefined;
+
+  const { data: positionRaw, refetch: refetchPosition } = useReadContract({
+    chainId: mezoTestnet.id,
+    address: account,
+    abi: coilAccountAbi,
+    functionName: "position",
+    query: { enabled: Boolean(account), refetchInterval: 15_000 },
+  });
+  const position = (positionRaw ?? selectedChoice.position) as Position | undefined;
+
+  const freshPreview = useMemo(() => {
+    if (!effectiveMarket) return { kind: "loading" as const };
+    if (policyUnreadable || (newCapabilities && !policy)) return { kind: "error" as const, message: "Factory policy is unavailable. Fee-bearing opens are disabled." };
     if (collateral === null) return { kind: "error" as const, message: "Enter a BTC amount." };
     try {
       const target = percentToCr(targetPct);
       const quote = flashFactory
-        ? quoteFlashLoop(collateral, target, BigInt(slippageBps), market)
-        : { ...quoteLoop(collateral, target, BigInt(slippageBps), market), flashBtc: 0n, poolFeeMusd: 0n };
+        ? quoteFlashLoop(collateral, target, BigInt(slippageBps), effectiveMarket)
+        : { ...quoteLoop(collateral, target, BigInt(slippageBps), effectiveMarket), flashBtc: 0n, poolFeeMusd: 0n };
       return { kind: "ok" as const, quote };
     } catch (error) {
       const message = error instanceof QuoteError ? error.message : "Preview failed.";
       return { kind: "error" as const, message };
     }
-  }, [market, collateral, targetPct, slippageBps, flashFactory]);
+  }, [effectiveMarket, collateral, targetPct, slippageBps, flashFactory, newCapabilities, policy, policyUnreadable]);
+
+  const [positionQuote, setPositionQuote] = useState<PositionQuoteState | null>(null);
+  const [quoteRetry, setQuoteRetry] = useState(0);
+  // Before a new clone is created the JS estimate describes a fresh account.
+  // Once connected to a new clone, only its state-aware view can authorize a loop.
+  const needsStateQuote = Boolean(account && newCapabilities);
+  const positionQuoteKey = [mezoTestnet.id, factoryAddress, account, collateral, targetPct, slippageBps,
+    policy?.feeBps, position?.active, position?.collateral, position?.debt, market?.borrowRate,
+    market?.refiPct, market?.price, flashFactory, quoteRetry].join(":");
+  useEffect(() => {
+    if (!needsStateQuote || !account || !publicClient || collateral === null || collateral <= 0n || !policy) return;
+    let cancel: (() => void) | undefined;
+    const refresh = () => {
+      cancel?.();
+      cancel = startPositionQuote(positionQuoteKey, () => readStateAwareQuote(publicClient, {
+        account, chainId: mezoTestnet.id, deposit: collateral, target: percentToCr(targetPct),
+        slippage: BigInt(slippageBps), flash: flashFactory,
+      }), setPositionQuote);
+    };
+    refresh();
+    const timer = setInterval(refresh, 15_000);
+    return () => { cancel?.(); clearInterval(timer); };
+  }, [needsStateQuote, account, publicClient, collateral, policy, positionQuoteKey, targetPct, slippageBps, flashFactory]);
+  const preview = useMemo(() => collateral === null || collateral <= 0n
+    ? { kind: "error" as const, message: "Enter a positive BTC amount." }
+    : policyUnreadable || (newCapabilities && !policy)
+    ? { kind: "error" as const, message: "Factory policy is unavailable. Fee-bearing opens are disabled." }
+    : selectPositionPreview(needsStateQuote, positionQuoteKey, positionQuote, freshPreview),
+    [collateral, policyUnreadable, newCapabilities, policy, needsStateQuote, positionQuoteKey, positionQuote, freshPreview]);
 
   const redemption = useMemo(() => {
     if (preview.kind !== "ok" || tail.length === 0 || !market) return null;
@@ -250,26 +344,8 @@ export function CoilApp() {
     return { rank, inside, suggested };
   }, [preview, tail, zone, market]);
 
-  const { data: coilAccount, refetch: refetchAccount } = useReadContract({
-    address: factoryAddress,
-    abi: coilFactoryAbi,
-    functionName: "accountOf",
-    args: address ? [address] : undefined,
-    query: { enabled: Boolean(factoryAddress && address) },
-  });
-
-  const account =
-    coilAccount && coilAccount !== ZERO ? (coilAccount as `0x${string}`) : undefined;
-
-  const { data: positionRaw, refetch: refetchPosition } = useReadContract({
-    address: account,
-    abi: coilAccountAbi,
-    functionName: "position",
-    query: { enabled: Boolean(account), refetchInterval: 15_000 },
-  });
-  const position = positionRaw as Position | undefined;
-
   const { data: tipBalanceRaw } = useReadContract({
+    chainId: mezoTestnet.id,
     address: account,
     abi: coilAccountAbi,
     functionName: "tipBalance",
@@ -278,6 +354,7 @@ export function CoilApp() {
   const tipBalance = typeof tipBalanceRaw === "bigint" ? tipBalanceRaw : undefined;
 
   const { data: rescueRaw, refetch: refetchRescue } = useReadContract({
+    chainId: mezoTestnet.id,
     address: account,
     abi: coilAccountAbi,
     functionName: "rescueSlippageBps",
@@ -286,6 +363,7 @@ export function CoilApp() {
   const separateRescue = typeof rescueRaw === "bigint" || typeof rescueRaw === "number";
 
   const { data: implPark, isError: parkMissing, isFetched: parkFetched } = useReadContract({
+    chainId: mezoTestnet.id,
     address: implementation,
     abi: coilAccountAbi,
     functionName: "park",
@@ -293,6 +371,7 @@ export function CoilApp() {
   });
   const reserveFactory = parkFetched && !parkMissing && typeof implPark === "string" && implPark !== ZERO;
   const { data: parkedRaw, refetch: refetchParked } = useReadContract({
+    chainId: mezoTestnet.id,
     address: typeof implPark === "string" ? implPark : undefined,
     abi: parkAbi,
     functionName: "assetsOf",
@@ -301,12 +380,14 @@ export function CoilApp() {
   });
   const parked = typeof parkedRaw === "bigint" ? parkedRaw : 0n;
   const { data: pegGuardRaw } = useReadContract({
+    chainId: mezoTestnet.id,
     address: account,
     abi: coilAccountAbi,
     functionName: "pegGuardBps",
     query: { enabled: Boolean(reserveFactory && account), retry: false },
   });
   const { data: maxPegRaw } = useReadContract({
+    chainId: mezoTestnet.id,
     address: account,
     abi: coilAccountAbi,
     functionName: "maxPegDeviationBps",
@@ -315,6 +396,7 @@ export function CoilApp() {
   const pegGuardBps = typeof pegGuardRaw === "number" ? pegGuardRaw : Number(pegGuardRaw ?? 0);
   const maxPegBps = typeof maxPegRaw === "number" ? maxPegRaw : Number(maxPegRaw ?? 200);
   const { data: recoveryRaw } = useReadContract({
+    chainId: mezoTestnet.id,
     address: addr.troveManager,
     abi: troveRecoveryAbi,
     functionName: "checkRecoveryMode",
@@ -377,6 +459,7 @@ export function CoilApp() {
   }, [publicClient]);
 
   async function ensureChain() {
+    if (!writesEnabled) throw new Error("Transactions are disabled: this chain needs a confirmed Coil deployment and explicit mainnet enablement.");
     if (chainId !== mezoTestnet.id) {
       await switchChainAsync({ chainId: mezoTestnet.id });
     }
@@ -403,9 +486,11 @@ export function CoilApp() {
     await refetchAccount();
     await refetchPosition();
     await refetchParked();
+    setDiscoveryRound(value => value + 1);
   }
 
   function begin() {
+    setManualChoice({ ownerKey, key: selectedChoice.key });
     setBusy(true);
     setTxError(null);
     setTxs([]);
@@ -633,14 +718,14 @@ export function CoilApp() {
   }
 
   function doLoop() {
-    if (!account || collateral === null) return;
+    if (!account || collateral === null || !loopReady || preview.kind !== "ok") return;
     begin();
     send(`Loop to ${targetPct}%`, () =>
       writeContractAsync({
         address: account,
         abi: coilAccountAbi,
         functionName: flashFactory ? "flashLoop" : "loop",
-        args: [targetCR, BigInt(slippageBps)],
+        args: loopArguments(targetCR, BigInt(slippageBps), policy?.feeBps ?? 0, hasPolicy),
         value: collateral,
         chainId: mezoTestnet.id,
         gas: 8_000_000n,
@@ -649,6 +734,36 @@ export function CoilApp() {
       .then(() => setStatus("Loop confirmed."))
       .catch(fail)
       .finally(() => setBusy(false));
+  }
+
+  async function ownerAction(action: "repay" | "close" | "claim") {
+    if (!account || !newCapabilities) return;
+    begin();
+    try {
+      const amount = action === "claim" ? 0n : parseEther(ownerMusd);
+      const steps = ownerTransactions(action, account, addr.musd, amount, recoveryRaw !== false);
+      for (const step of steps) {
+        if (step.functionName === "approve") {
+          await send("Approve MUSD for your account", () => writeContractAsync({ address: step.address, abi: erc20Abi, functionName: "approve", args: step.args, chainId: mezoTestnet.id }));
+        } else if (step.functionName === "claimCollateral") {
+          await send("Claim recovered collateral", () => writeContractAsync({ address: step.address, abi: coilAccountAbi, functionName: "claimCollateral", chainId: mezoTestnet.id, gas: 2_000_000n }));
+        } else {
+          await send(action === "repay" ? "Repay with owner MUSD" : "Close with owner MUSD", () => writeContractAsync({ address: step.address, abi: coilAccountAbi, functionName: step.functionName, args: step.args, chainId: mezoTestnet.id, gas: 6_000_000n }));
+        }
+      }
+      setStatus(action === "repay" ? "Repayment confirmed. Unused funds return to your wallet; minimum remaining debt applies." : action === "claim" ? "Collateral claim confirmed." : "Close confirmed.");
+    } catch (error) { fail(error); } finally { setBusy(false); }
+  }
+
+  async function topUp() {
+    if (!account || !newCapabilities) return;
+    begin();
+    try {
+      const amount = parseEther(topUpText);
+      if (amount <= 0n) throw new Error("Enter a positive BTC amount.");
+      await send("Add collateral safely", () => writeContractAsync({ address: account, abi: coilAccountAbi, functionName: "addCollateral", value: amount, chainId: mezoTestnet.id, gas: 3_000_000n }));
+      setStatus("Collateral added. No Coil fee.");
+    } catch (error) { fail(error); } finally { setBusy(false); }
   }
 
   function setGuard() {
@@ -766,12 +881,15 @@ export function CoilApp() {
   const belowPeg = market ? musdBelowPegBps(market.reserveMusd, market.reserveBtc, market.price) : 0n;
   const openCap = reserveFactory ? (maxPegBps > 0 ? maxPegBps : 200) : 200;
   const pegBlocked = reserveFactory && poolGap > BigInt(openCap);
-  const openBlock = inRecovery
+  const capExceeded = preview.kind === "ok" && policy && (preview.quote.collateral > policy.maxCollateral || preview.quote.debt > policy.maxDebt);
+  const openingPolicyBlock = policyUnreadable ? "Factory policy read failed. Retry after RPC recovers; opens remain disabled." : recoveryRaw === undefined ? "Mezo Recovery Mode status is unavailable. Opens remain disabled." : !writesEnabled ? "Transactions disabled for this deployment." : !policyFetched ? "Checking factory policy…" : newCapabilities && !policy ? "Factory policy could not be read. Opens are disabled." : policy?.opensPaused ? "Factory opens are paused. Repay, claim, collateral top-up and permitted exits remain available." : capExceeded ? "This preview exceeds the factory collateral or debt limit." : marketError ? "Market data could not refresh. Wait for a fresh preview." : null;
+  const ownerState = ownerActionState(newCapabilities, recoveryRaw !== false, Boolean(account && connected && writesEnabled && !discoveryPending));
+  const openBlock = openingPolicyBlock ?? (inRecovery
     ? "Mezo is in Recovery Mode. A new loop is refused."
     : pegBlocked
       ? `PegOff: the pool is ${poolGap.toString()} bps off the oracle, and this account's open cap is ${openCap} bps. Raise the cap (maximum 500) to loop.`
-      : null;
-  const sensible = market && collateral && collateral > 0n ? sensibleOpen(collateral, market) : null;
+      : null);
+  const sensible = effectiveMarket && collateral && collateral > 0n ? sensibleOpen(collateral, effectiveMarket) : null;
   const reserveNeed = (() => {
     if (!position?.active || !market || position.collateral === 0n || position.debt === 0n) return 0n;
     const target = position.guardTargetCR > 0n ? position.guardTargetCR : 15n * 10n ** 17n;
@@ -781,6 +899,7 @@ export function CoilApp() {
   })();
   const loopReady =
     !busy &&
+    !discoveryPending &&
     !openBlock &&
     Boolean(factoryAddress) &&
     Boolean(account) &&
@@ -791,19 +910,23 @@ export function CoilApp() {
     ? { label: "Connect wallet", disabled: true, icon: <Wallet className="size-4" aria-hidden /> }
     : !isConnected
       ? { label: connecting ? "Connecting…" : "Connect wallet", onClick: connectWallet, disabled: connecting, icon: <Wallet className="size-4" aria-hidden /> }
+      : !writesEnabled
+        ? { label: "Read-only · deployment not enabled", disabled: true }
+      : discoveryPending
+        ? { label: "Discovering current and retained accounts…", disabled: true }
       : wrongChain
-        ? { label: "Switch to Mezo testnet", onClick: () => void switchChainAsync({ chainId: mezoTestnet.id }).catch(fail), disabled: false, icon: <Plug className="size-4" aria-hidden /> }
+        ? { label: `Switch to ${mezoTestnet.name}`, onClick: () => void switchChainAsync({ chainId: mezoTestnet.id }).catch(fail), disabled: false, icon: <Plug className="size-4" aria-hidden /> }
         : !factoryAddress
           ? { label: "Deploy to enable", disabled: true }
           : !account
-            ? { label: busy ? "Creating account…" : "Create your Coil account", onClick: createAccount, disabled: busy }
+            ? { label: busy ? "Creating account…" : "Create your Coil account", onClick: createAccount, disabled: busy || discoveryPending || !implementation || implementation === ZERO }
             : openBlock
-              ? { label: inRecovery ? "Recovery Mode: loop refused" : "PegOff: raise the open cap", disabled: true, icon: <Lock className="size-4" aria-hidden /> }
+              ? { label: inRecovery ? "Recovery Mode: loop refused" : "Opening unavailable", disabled: true, icon: <Lock className="size-4" aria-hidden /> }
               : { label: busy ? "Working…" : `Loop to ${targetPct}% · ${leverageLabel(targetCR)}`, onClick: doLoop, disabled: !loopReady, icon: <Lock className="size-4" aria-hidden /> };
 
   const setup = [
     { label: "Wallet", done: connected },
-    { label: "Mezo testnet", done: connected && !wrongChain },
+    { label: mezoTestnet.name, done: connected && !wrongChain },
     { label: "Coil account", done: Boolean(account) },
     { label: "Loop", done: Boolean(position?.active) },
   ];
@@ -826,7 +949,7 @@ export function CoilApp() {
             <CoilMark className="size-8" />
             <span className="text-lg font-semibold tracking-tight">Coil Labs</span>
             <span className="hidden rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
-              testnet
+              {mezoTestnet.id === 31611 ? "testnet" : "mainnet"}
             </span>
           </a>
           <nav aria-label="Primary" className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
@@ -834,6 +957,7 @@ export function CoilApp() {
             <a className="hover:text-foreground" href="#app">App</a>
             <Link className="hover:text-foreground" href="/guard">Guard log</Link>
             <Link className="hover:text-foreground" href="/stats">Stats</Link>
+            <Link className="hover:text-foreground" href="/keeper">Keeper</Link>
             <a className="hover:text-foreground" href="#proof">Receipts</a>
             <a className="hover:text-foreground" href="#risks">Risks</a>
           </nav>
@@ -863,7 +987,7 @@ export function CoilApp() {
             ) : (
               <span className="hidden items-center gap-1.5 rounded-full border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground sm:flex">
                 <span className="size-1.5 rounded-full bg-safe" aria-hidden />
-                Mezo 31611
+                {mezoTestnet.name} {mezoTestnet.id}
               </span>
             )}
             {connected ? (
@@ -888,7 +1012,7 @@ export function CoilApp() {
 
       <div className="mx-auto flex w-full max-w-7xl flex-col px-4 sm:px-6 lg:px-8">
         <main aria-busy={busy}>
-          <Hero market={market} marketError={marketError} />
+          <Hero market={effectiveMarket} marketError={marketError} />
           <Ticker />
           <HowItWorks />
 
@@ -919,8 +1043,19 @@ export function CoilApp() {
             </div>
 
             <div className="mt-6 space-y-3">
+              {connected ? <div className="well space-y-2 p-4">
+                <Label htmlFor="owner-deployment">Your account generation / factory</Label>
+                <select id="owner-deployment" disabled={busy} className="w-full rounded border border-border bg-background p-2 text-sm" value={selectedChoice.key} onChange={event => setManualChoice({ ownerKey, key: event.target.value })}>
+                  {discoveredChoices.map(choice => <option key={choice.key} value={choice.key}>{choice.current ? "Current" : "Retained legacy"} · {shorten(choice.deployment.factory ?? undefined)} · block {choice.deployment.deploymentBlock ?? "pending"} · {choice.position?.active ? "funded position" : choice.account ? choice.readError ? "position unavailable" : "existing account" : choice.readError ? "lookup unavailable" : "no account"}</option>)}
+                </select>
+                <p className="break-all font-mono text-xs">Selected factory {factoryAddress ?? "pending"} · deployment block {deployment.deploymentBlock ?? "pending"} · {hasPolicy ? "policy-enabled generation" : "legacy capability / policy probe"}{account ? ` · clone ${account}` : ""}</p>
+                <p className="text-xs text-muted-foreground">Funded older positions remain selectable when a new factory is configured. Existing clones keep their own implementation; the selected factory controls capability reads and owner calls.</p>
+                {discoveryPending ? <p className="text-sm">Checking current and retained accounts…</p> : null}
+                {discoveredChoices.some(choice => choice.readError) ? <p className="text-sm text-warn" role="alert">Some account/position reads are unavailable. Older accounts are retained in the selector; unavailable reads do not mean funds are empty.</p> : null}
+                <button type="button" disabled={busy} className="link text-xs" onClick={() => setDiscoveryRound(value => value + 1)}>Retry account discovery</button>
+              </div> : null}
               {marketError ? (
-                <Banner tone="bad" title="Could not read Mezo testnet">
+                <Banner tone="bad" title={`Could not read ${mezoTestnet.name}`}>
                   {shortError(marketError)} The preview retries every 20 seconds.
                 </Banner>
               ) : null}
@@ -934,16 +1069,23 @@ export function CoilApp() {
                       className="btn-btc h-10 rounded-full px-5 font-semibold"
                       onClick={() => switchChainAsync({ chainId: mezoTestnet.id }).catch(fail)}
                     >
-                      Switch to Mezo testnet
+                      Switch to {mezoTestnet.name}
                     </Button>
                   }
                 >
-                  Coil Labs sends transactions on Mezo testnet (chain 31611). Bitcoin wallets connect through Mezo Passport.
+                  Selected network: {mezoTestnet.name} (chain {mezoTestnet.id}). Bitcoin wallets use OrangeKit while Passport remains unavailable.
                 </Banner>
               ) : null}
+              <Banner tone="warn" title={`${mezoTestnet.name} · ${deployment.status} deployment`}>
+                Unaudited contracts and thin pool liquidity. Mainnet starts at 200% CR (about 2×).
+                {policy ? ` Coil fee ${policy.feeBps} bps; opens ${policy.opensPaused ? "paused" : "enabled"}. Position limits: ${formatBtc(policy.maxCollateral)} BTC / ${formatMusd(policy.maxDebt)} MUSD total debt.` : " Legacy accounts retain their original capabilities; no upgrade is implied."}
+                {!writesEnabled ? " Transactions remain disabled until deployment and release gates are satisfied." : ""}
+                {!walletConnectProjectId ? " WalletConnect is unavailable: no project ID configured. Injected and Bitcoin wallets remain available." : ""}
+              </Banner>
+              {openingPolicyBlock ? <Banner tone="warn" title="Opening status">{openingPolicyBlock}</Banner> : null}
               {inRecovery ? (
                 <Banner tone="bad" title="Recovery Mode">
-                  Mezo is in Recovery Mode at the current oracle price. flashLoop refuses to open. Existing troves can still be raised by guard().
+                  Mezo is in Recovery Mode. Opens and full close are blocked. Repay with owner MUSD or funded reserves to reduce debt safely; minimum debt rules still apply. Submit your own close after Mezo permits it. No close is queued.
                 </Banner>
               ) : null}
               {market && (poolGap > 0n || reserveFactory) ? (
@@ -986,7 +1128,7 @@ export function CoilApp() {
               {connectError && !isConnected ? (
                 <Banner tone="info" title="No wallet connected">
                   {/provider|not found|ethereum/i.test(connectError.message)
-                    ? "No browser wallet was found. Install MetaMask or another injected wallet, add Mezo testnet, and try again."
+                    ? `No browser wallet was found. Install an injected wallet, add ${mezoTestnet.name}, and try again.`
                     : shortError(connectError.message)}
                 </Banner>
               ) : null}
@@ -1003,11 +1145,11 @@ export function CoilApp() {
                       <span className="font-mono text-[11px] text-muted-foreground">
                         Wallet <span className="text-foreground">{formatBtc(balance.value)}</span> BTC
                       </span>
-                    ) : (
+                    ) : mezoTestnet.id === 31611 ? (
                       <a className="font-mono text-[11px] text-muted-foreground hover:text-foreground" href="https://faucet.test.mezo.org" target="_blank" rel="noreferrer noopener">
                         Get test BTC ↗
                       </a>
-                    )}
+                    ) : null}
                   </div>
                   <div className="well flex items-center gap-3 px-4 py-3 focus-within:border-filament/60">
                     <Input
@@ -1119,7 +1261,7 @@ export function CoilApp() {
                   <h3 id="review-title" className="text-lg font-semibold tracking-tight">Review before you sign</h3>
                   {preview.kind === "ok" ? <RiskPill percent={crToPercent(preview.quote.cr)} /> : null}
                 </div>
-                <ReviewCard preview={preview} deposit={collateral} currentPrice={currentPrice} redemption={redemption} zone={zone} flash={flashFactory} />
+                <ReviewCard preview={preview} existing={needsStateQuote && position?.active ? position : undefined} deposit={collateral} currentPrice={currentPrice} redemption={redemption} zone={zone} flash={flashFactory} />
 
                 <div className="mt-5 space-y-2">
                   <p className="eyebrow">Transactions</p>
@@ -1142,6 +1284,7 @@ export function CoilApp() {
                   </ol>
                 </div>
 
+                {needsStateQuote ? <button type="button" className="link mt-4 text-xs" disabled={busy} onClick={() => setQuoteRetry(value => value + 1)}>Refresh state-aware fee quote</button> : null}
                 <Button
                   type="button"
                   className={cn("mt-6 h-13 w-full rounded-2xl text-[15px] font-semibold", primary.disabled ? "" : "btn-btc")}
@@ -1153,7 +1296,7 @@ export function CoilApp() {
                   {primary.label}
                 </Button>
                 <p className="mt-3 text-center text-[11px] text-muted-foreground">
-                  Your wallet shows the exact call before anything is sent. The clone stays yours: only your wallet can loop or unwind.
+                  {needsStateQuote ? "State-aware contract quote includes existing collateral, total debt and refinancing. " : position?.active ? "Legacy fresh-position estimate: actual increase totals may differ. " : "Fresh-position estimate. "}Contract limits apply to actual totals. Your wallet shows the exact call before anything is sent. The clone stays yours: only your wallet can loop or unwind.
                 </p>
 
                 {scope === "compose" ? (
@@ -1199,6 +1342,23 @@ export function CoilApp() {
                 ) : null}
               </div>
 
+              {account && newCapabilities && !discoveryPending ? (
+                <div className="well mt-5 space-y-3 p-4">
+                  <h4 className="font-semibold">Owner actions · zero Coil fee</h4>
+                  <p className="text-xs text-muted-foreground">MUSD approval targets your account. Repayment returns unused funds and respects minimum debt. Full close uses your account/reserve funds plus your approved maximum; Mezo may refuse it. Claims recover only surplus released by Mezo.</p>
+                  <Label htmlFor="owner-musd">Owner MUSD amount / maximum for close</Label>
+                  <Input id="owner-musd" inputMode="decimal" value={ownerMusd} onChange={e => setOwnerMusd(e.target.value)} />
+                  <div className="flex flex-wrap gap-2">
+                    <Button disabled={busy || !ownerState.repay || !position?.active} onClick={() => void ownerAction("repay")}>Approve & repay MUSD</Button>
+                    <Button disabled={busy || !ownerState.close || !position?.active} onClick={() => void ownerAction("close")}>Approve & close with MUSD</Button>
+                    <Button disabled={busy || !ownerState.claim} onClick={() => void ownerAction("claim")}>Claim surplus collateral</Button>
+                  </div>
+                  <Label htmlFor="topup-btc">BTC collateral top-up</Label>
+                  <Input id="topup-btc" inputMode="decimal" value={topUpText} onChange={e => setTopUpText(e.target.value)} />
+                  <Button disabled={busy || !ownerState.topUp || !position?.active} onClick={() => void topUp()}>Add BTC collateral</Button>
+                  <p className="text-xs text-muted-foreground">Risk-reducing top-ups are available while opens are paused and are exempt from opening caps.</p>
+                </div>
+              ) : account ? <p className="mt-4 text-xs text-muted-foreground">Legacy account: funded repayment, direct close, top-up and surplus claim require a new implementation. Existing exit controls remain below.</p> : null}
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div
                   key={positionKey}
@@ -1208,8 +1368,8 @@ export function CoilApp() {
                   transition={{ duration: motionOk ? 0.35 : 0, ease: [0.16, 1, 0.3, 1] }}
                   className="mt-6"
                 >
-                  {!factoryAddress ? (
-                    <EmptyState title="Nothing on-chain yet" body="The preview uses live Mezo state. After a testnet deploy, this card shows the trove the clone owns." />
+                  {discoveryPending ? <p className="text-sm text-muted-foreground">Discovering your current and retained positions…</p> : !factoryAddress ? (
+                    <EmptyState title="Nothing on-chain yet" body="The preview uses the selected chain market. A confirmed Coil deployment is required before this card can show a clone position." />
                   ) : !connected ? (
                     <div className="grid items-center gap-6 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                       <div className="well px-4 py-6 opacity-70">
@@ -1218,15 +1378,15 @@ export function CoilApp() {
                       <EmptyState
                         icon={<Wallet className="mb-4 size-10 text-filament" strokeWidth={1.5} aria-hidden />}
                         title="Connect to see your trove"
-                        body={<>Use any injected wallet on Mezo testnet. Test BTC comes from <a className="link" href="https://faucet.test.mezo.org" target="_blank" rel="noreferrer noopener">faucet.test.mezo.org</a>.</>}
+                        body={<>Use an injected or supported Bitcoin wallet on {mezoTestnet.name}.{mezoTestnet.id === 31611 ? <> Test BTC comes from <a className="link" href="https://faucet.test.mezo.org" target="_blank" rel="noreferrer noopener">faucet.test.mezo.org</a>.</> : " Mainnet transactions remain subject to the release gate."}</>}
                         action={mounted ? { label: connecting ? "Connecting…" : "Connect wallet", onClick: connectWallet, disabled: connecting } : undefined}
                       />
                     </div>
                   ) : !account ? (
                     <EmptyState
                       title="No Coil account yet"
-                      body="Create one. It is a minimal proxy that owns your trove. Your wallet can always unwind, and the keeper cannot take funds."
-                      action={wrongChain ? undefined : { label: busy ? "Creating…" : "Create your Coil account", onClick: createAccount, disabled: busy }}
+                      body="Create an account that owns your trove. Owner exits obey pool bounds and Mezo protocol rules; the keeper cannot take funds."
+                      action={wrongChain ? undefined : { label: busy ? "Creating…" : "Create your Coil account", onClick: createAccount, disabled: busy || !writesEnabled || !implementation || implementation === ZERO }}
                     />
                   ) : !position?.active ? (
                     <div className="grid gap-5 md:grid-cols-2">
@@ -1243,7 +1403,7 @@ export function CoilApp() {
                         zone={zone}
                         setZone={setZone}
                         busy={busy}
-                        disabled={!account}
+                        disabled={!account || !writesEnabled || wrongChain}
                         onSave={setGuard}
                         onFund={fundTips}
                         position={position}
@@ -1272,13 +1432,14 @@ export function CoilApp() {
                     </div>
                   ) : (
                     <OpenPosition
+                      recovery={recoveryRaw !== false}
                       position={position}
                       market={market}
                       deleverPct={deleverPct}
                       setDeleverPct={setDeleverPct}
                       unwindPct={unwindPct}
                       setUnwindPct={setUnwindPct}
-                      busy={busy}
+                      busy={busy || !writesEnabled || wrongChain}
                       onDelever={() => account && delever(account)}
                       onUnwind={() => account && unwind(account)}
                       flash={flashFactory}
@@ -1291,7 +1452,7 @@ export function CoilApp() {
                           zone={zone}
                           setZone={setZone}
                           busy={busy}
-                          disabled={!account}
+                          disabled={!account || !writesEnabled || wrongChain}
                           onSave={setGuard}
                           onFund={fundTips}
                           position={position}
@@ -1356,6 +1517,7 @@ type PreviewState =
   | { kind: "ok"; quote: PreviewQuote };
 
 function ReviewCard({
+  existing,
   preview,
   deposit,
   currentPrice,
@@ -1363,6 +1525,7 @@ function ReviewCard({
   zone,
   flash,
 }: {
+  existing?: Position;
   preview: PreviewState;
   deposit: bigint | null;
   currentPrice: string | null;
@@ -1413,8 +1576,10 @@ function ReviewCard({
         </div>
       </div>
       <dl className="mt-3 divide-y divide-border">
-        <ReviewRow label="Collateral" before={deposit ? `${formatBtc(deposit)}` : "0"} after={`${formatBtc(q.collateral)} BTC`} />
-        <ReviewRow label="Debt" before="0" after={<><TweenValue canonical={formatMusd(q.debt)} numeric={wad(q.debt, 2)} digits={2} /> MUSD</>} />
+        <ReviewRow label="Total collateral" before={existing ? `${formatBtc(existing.collateral)} BTC` : deposit ? `${formatBtc(deposit)}` : "0"} after={`${formatBtc(q.collateral)} BTC`} />
+        <ReviewRow label="Coil fee (minted notional)" after={`${formatMusd(q.coilFeeMusd)} MUSD`} />
+        <ReviewRow label="Gross MUSD minted" after={`${formatMusd(q.musdMinted)} MUSD`} />
+        <ReviewRow label="Total debt (includes protocol fees)" before={existing ? `${formatMusd(existing.debt)} MUSD` : "0"} after={<><TweenValue canonical={formatMusd(q.debt)} numeric={wad(q.debt, 2)} digits={2} /> MUSD</>} />
         <ReviewRow
           label="Collateral ratio"
           after={<TweenValue canonical={formatPercent(q.cr)} numeric={ratio} digits={2} suffix="%" />}
@@ -1468,6 +1633,7 @@ function ReviewCard({
 }
 
 function OpenPosition({
+  recovery,
   position,
   market,
   deleverPct,
@@ -1480,6 +1646,7 @@ function OpenPosition({
   guard,
   flash,
 }: {
+  recovery: boolean;
   position: Position;
   market: Market | null;
   deleverPct: number;
@@ -1609,12 +1776,12 @@ function OpenPosition({
               <p className="text-xs leading-relaxed text-muted-foreground">
                 {unwindPct === 100
                   ? flash
-                    ? "One flash swap repays the debt, closes the trove, and returns leftover BTC to your wallet."
+                    ? "A bounded flash swap closes the trove when Mezo permits it. Full close is unavailable in Recovery Mode; use owner MUSD repayment instead."
                     : "Sells collateral to repay everything and closes the trove. On this factory a full close can take more than one transaction."
                   : "Sells collateral to repay part of the debt, down toward the 2,000 MUSD floor."}
               </p>
-              <Button type="button" variant="outline" className="h-12 w-full rounded-2xl font-semibold" disabled={busy} onClick={onUnwind}>
-                {unwindPct === 100 ? "Unwind and close" : "Unwind"}
+              <Button type="button" variant="outline" className="h-12 w-full rounded-2xl font-semibold" disabled={busy || (recovery && unwindPct === 100)} onClick={onUnwind}>
+                {recovery && unwindPct === 100 ? "Full close unavailable: Mezo mode" : unwindPct === 100 ? "Unwind and close" : "Unwind"}
               </Button>
             </div>
           ) : (
@@ -1663,19 +1830,19 @@ function PoolDepth({
     };
   }, []);
   const mainQuote = main && deposit && deposit > 0n ? sensibleOpen(deposit, main) : null;
-  const testLine = testnet ? describeSensible(quote) : "Waiting for the testnet pool.";
+  const testLine = testnet ? describeSensible(quote) : `Waiting for the ${mezoTestnet.name} pool.`;
   const mainLine = mainError ? "Could not read the mainnet pool." : describeSensible(mainQuote);
   return (
     <div className="mt-6 grid gap-3 sm:grid-cols-2">
       <div className="rounded-2xl border border-border px-4 py-3">
-        <p className="eyebrow">Testnet depth</p>
+        <p className="eyebrow">{mezoTestnet.name} depth</p>
         <p className="mt-2 text-sm leading-relaxed">{testLine}</p>
-        <p className="mt-1 text-[11px] text-muted-foreground">Quoted from the live Mezo testnet pool. Cap is 1% impact.</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">Quoted from the selected chain pool. Cap is 1% impact.</p>
       </div>
       <div className="rounded-2xl border border-border px-4 py-3">
         <p className="eyebrow">Mainnet depth</p>
         <p className="mt-2 text-sm leading-relaxed">{mainLine}</p>
-        <p className="mt-1 text-[11px] text-muted-foreground">Read-only. Coil is not deployed on Mezo mainnet.</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">Read-only market comparison. Mainnet writes require a confirmed deployment and explicit enablement.</p>
       </div>
     </div>
   );
@@ -1716,7 +1883,7 @@ function ReserveBlock({
       ? `Parked ${formatMusd(parked)} MUSD. Nothing to repay at the guard target.`
       : parked >= need
         ? `Reserve covers the full ${formatMusd(need)} MUSD a rescue would repay. No BTC sale.`
-        : `Reserve covers ${((Number((parked * 10000n) / need) / 100) || 0).toFixed(0)}% of a rescue (${formatMusd(parked)} of ${formatMusd(need)} MUSD). The rest sells BTC.`;
+        : `Reserve covers ${((Number((parked * 10000n) / need) / 100) || 0).toFixed(0)}% of a rescue (${formatMusd(parked)} of ${formatMusd(need)} MUSD). The rest requires a permitted bounded BTC sale.`;
   return (
     <div className="mt-4 space-y-3 rounded-2xl border border-border p-3">
       <p className="eyebrow">MUSD reserve</p>
@@ -1920,7 +2087,7 @@ function GuardPanel({
           <span className="chip">Zone {position.redemptionZone}</span>
         </p>
       ) : (
-        <p className="mt-3 text-xs text-muted-foreground">Unset, the keeper cannot touch the trove. You can always unwind yourself.</p>
+        <p className="mt-3 text-xs text-muted-foreground">Unset, the keeper cannot touch the trove. Owner exits remain subject to pool bounds and Mezo protocol rules.</p>
       )}
     </div>
   );

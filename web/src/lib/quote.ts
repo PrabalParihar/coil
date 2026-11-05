@@ -16,6 +16,7 @@ export type Market = {
   reserveMusd: bigint;
   reserveBtc: bigint;
   feeBps: bigint;
+  coilFeeBps?: bigint;
 };
 
 export type LoopPreview = {
@@ -24,6 +25,7 @@ export type LoopPreview = {
   cr: bigint;
   liquidationPrice: bigint;
   musdMinted: bigint;
+  coilFeeMusd: bigint;
   iterations: number;
   leverage: string;
 };
@@ -75,6 +77,7 @@ export function quoteLoop(
   let coll = collateralIn;
   let debt = 0n;
   let minted = 0n;
+  let coilFeeMusd = 0n;
   let reserveMusd = market.reserveMusd;
   let reserveBtc = market.reserveBtc;
   let iterations = 0;
@@ -90,7 +93,7 @@ export function quoteLoop(
     const last = i + 1 >= MAX_SWAPS;
     const refiPct = last ? 0n : market.refiPct;
     const projectedCR = (amount: bigint) => {
-      const out = btcMinOut(amount);
+      const out = btcMinOut(amount - coilFee(amount, market.coilFeeBps ?? 0n));
       const nextDebt = projectedDebt(debt, amount, market.borrowRate, refiPct);
       if (nextDebt === 0n) return 2n ** 256n - 1n;
       return ((coll + out) * market.price) / nextDebt;
@@ -123,8 +126,10 @@ export function quoteLoop(
     }
 
     if (amount === 0n) break;
-    const quoted = amountOut(amount, reserveMusd, reserveBtc, market.feeBps);
-    const received = btcMinOut(amount);
+    const charged = coilFee(amount, market.coilFeeBps ?? 0n);
+    const swapAmount = amount - charged;
+    const quoted = amountOut(swapAmount, reserveMusd, reserveBtc, market.feeBps);
+    const received = btcMinOut(swapAmount);
     if (received === 0n) {
       throw new QuoteError("The price feed produced a zero minimum. The swap will not run.");
     }
@@ -133,12 +138,13 @@ export function quoteLoop(
         "The pool quote is outside the oracle slippage bound. Coil will not swap with a zero minimum.",
       );
     }
-    const afterFee = amount - (amount * market.feeBps) / BPS;
+    const afterFee = swapAmount - (swapAmount * market.feeBps) / BPS;
     reserveMusd += afterFee;
     reserveBtc -= quoted;
     debt = projectedDebt(debt, amount, market.borrowRate, refiPct);
     coll += received;
     minted += amount;
+    coilFeeMusd += charged;
     iterations += 1;
     if (last || (coll * market.price) / debt <= targetCR + CR_BUFFER) break;
   }
@@ -155,6 +161,7 @@ export function quoteLoop(
     cr: (coll * market.price) / debt,
     liquidationPrice: (MCR * debt) / coll,
     musdMinted: minted,
+    coilFeeMusd,
     iterations,
     leverage: leverageLabel((coll * market.price) / debt),
   };
@@ -204,7 +211,8 @@ function flashFits(
     owed = amountIn(market.reserveMusd, market.reserveBtc, flash, market.feeBps);
     if (owed === 0n) return { ok: false, owed: 0n, minted: 0n };
   }
-  const minted = owed < minAmt ? minAmt : owed;
+  const grossOwed = grossUpCoilFee(owed, market.coilFeeBps ?? 0n);
+  const minted = grossOwed < minAmt ? minAmt : grossOwed;
   const coll = deposit + flash;
   if (coll === 0n || minted === 0n) return { ok: false, owed, minted };
   const debt = openDebt(minted, market.borrowRate);
@@ -260,7 +268,7 @@ export function quoteFlashLoop(
   }
   if (flash > 0n) {
     const fair = (flash * market.price) / WAD;
-    if (fair === 0n || chosen.owed > (fair * (BPS + slippageBps)) / BPS) {
+    if (fair === 0n || flash < (chosen.owed * WAD * (BPS - slippageBps)) / (market.price * BPS)) {
       throw new QuoteError(
         "The pool quote is outside your slippage. Raise the slippage limit or choose a higher collateral ratio.",
       );
@@ -276,6 +284,7 @@ export function quoteFlashLoop(
     cr,
     liquidationPrice: (MCR * debt) / coll,
     musdMinted: chosen.minted,
+    coilFeeMusd: coilFee(chosen.minted, market.coilFeeBps ?? 0n),
     iterations: flash === 0n ? 0 : 1,
     leverage: leverageLabel(cr),
     flashBtc: flash,
@@ -444,4 +453,16 @@ export function musdBelowPegBps(reserveMusd: bigint, reserveBtc: bigint, oracleP
   const poolPrice = (reserveMusd * WAD) / reserveBtc;
   if (poolPrice <= oraclePrice) return 0n;
   return ((poolPrice - oraclePrice) * BPS) / poolPrice;
+}
+
+/** Fee is floor(gross * bps / 10000), separate from protocol and pool fees. */
+export function coilFee(gross: bigint, bps: bigint): bigint {
+  if (gross < 0n || bps < 0n || bps >= BPS) throw new QuoteError("Invalid Coil fee.");
+  return gross * bps / BPS;
+}
+
+/** Conservative gross-up: post-fee mint always covers the requested pool repayment. */
+export function grossUpCoilFee(net: bigint, bps: bigint): bigint {
+  if (net < 0n || bps < 0n || bps >= BPS) throw new QuoteError("Invalid Coil fee.");
+  return (net * BPS + BPS - bps - 1n) / (BPS - bps);
 }

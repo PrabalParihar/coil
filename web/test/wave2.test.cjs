@@ -1,0 +1,354 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- Node built-in test runner loads TypeScript without another dependency. */
+const ts = require('typescript');
+const fs = require('node:fs');
+require.extensions['.ts'] = (module, file) => module._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, file);
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const quote = require('../src/lib/quote.ts');
+const readiness = require('../src/lib/readiness.ts');
+const W = 10n ** 18n;
+const market = { price: 100000n * W, borrowRate: 5n * 10n ** 15n, minNetDebt: 1800n * W, refiPct: 0n, reserveMusd: 1000000000n * W, reserveBtc: 10000n * W, feeBps: 30n };
+test('Coil fee gross-up repays the requested net with integer rounding', () => {
+  assert.equal(typeof quote.grossUpCoilFee, 'function');
+  assert.equal(quote.grossUpCoilFee(10000n, 25n), 10026n);
+  assert.equal(quote.grossUpCoilFee(1n, 50n), 2n);
+  assert.throws(() => quote.grossUpCoilFee(1n, 10000n));
+});
+test('legacy previews have zero separate Coil fee and preserve debt', () => {
+  const legacy = quote.quoteFlashLoop(W / 10n, 2n * W, 100n, market);
+  assert.equal(legacy.coilFeeMusd, 0n);
+  const explicit = quote.quoteFlashLoop(W / 10n, 2n * W, 100n, { ...market, coilFeeBps: 0n });
+  assert.deepEqual(legacy, explicit);
+});
+test('flash preview sizes gross debt including the separately shown Coil fee', () => {
+  const legacy = quote.quoteFlashLoop(W / 10n, 2n * W, 100n, market);
+  const paid = quote.quoteFlashLoop(W / 10n, 2n * W, 100n, { ...market, coilFeeBps: 50n });
+  assert.equal(paid.coilFeeMusd, paid.musdMinted * 50n / 10000n);
+  assert.ok(paid.flashBtc < legacy.flashBtc);
+  assert.ok(paid.cr >= 2n * W);
+  assert.equal(paid.debt, 200n * W + paid.musdMinted + paid.musdMinted * market.borrowRate / W);
+});
+test('router preview swaps post-Coil-fee MUSD', () => {
+  const paid = quote.quoteLoop(W / 10n, 2n * W, 100n, { ...market, coilFeeBps: 50n });
+  assert.ok(paid.coilFeeMusd > 0n);
+  assert.ok(paid.cr >= 2n * W);
+});
+test('deployment overrides reject partial, zero and malformed address/block pairs', () => {
+  assert.equal(typeof readiness.resolveDeployment, 'function');
+  const base = { chainId: 31611, factory: '0xff3335576f998EE872596d4EB7ABECb71a0D5BC8', deploymentBlock: '16408315', status: 'legacy' };
+  assert.throws(() => readiness.resolveDeployment(base, '0x1111111111111111111111111111111111111111', undefined));
+  assert.throws(() => readiness.resolveDeployment(base, undefined, '1'));
+  assert.throws(() => readiness.resolveDeployment(base, '0x0000000000000000000000000000000000000000', '1'));
+  assert.throws(() => readiness.resolveDeployment(base, base.factory, '-1'));
+  assert.equal(readiness.resolveDeployment(base).deploymentBlock, '16408315');
+});
+test('unsupported or pending mainnet deployment never enables transactions', () => {
+  assert.equal(typeof readiness.canWrite, 'function');
+  assert.equal(readiness.canWrite({ chainId: 31612, status: 'pending', factory: null, deploymentBlock: null }, true), false);
+  assert.equal(readiness.canWrite({ chainId: 31612, status: 'ready', factory: '0x1111111111111111111111111111111111111111', deploymentBlock: '1' }, false), false);
+  assert.equal(readiness.canWrite({ chainId: 1, status: 'ready', factory: '0x1111111111111111111111111111111111111111', deploymentBlock: '1' }, true), false);
+});
+test('policy capability selects accepted-fee overload and legacy keeps two arguments', () => {
+  assert.equal(typeof readiness.loopArguments, 'function');
+  assert.deepEqual(readiness.loopArguments(2n * W, 50n, 25, true), [2n * W, 50n, 25]);
+  assert.deepEqual(readiness.loopArguments(2n * W, 50n, 0, false), [2n * W, 50n]);
+});
+test('RM offers owner repayment but never a full or automatic close', () => {
+  assert.equal(typeof readiness.ownerActionState, 'function');
+  assert.deepEqual(readiness.ownerActionState(true, true, true), { repay: true, close: false, claim: true, topUp: true });
+  assert.equal(readiness.ownerActionState(false, true, true).close, false);
+  assert.equal(readiness.ownerActionState(true, false, true).close, true);
+});
+test('heartbeat requires authenticated expected keeper and expires without fresh chain evidence', () => {
+  assert.equal(typeof readiness.heartbeatState, 'function');
+  const keeper = '0x1111111111111111111111111111111111111111';
+  assert.equal(readiness.heartbeatState({ now: 1000, timestamp: 990, sender: keeper, expectedKeeper: keeper, authenticated: false }).state, 'unconfigured');
+  assert.equal(readiness.heartbeatState({ now: 1000, timestamp: 990, sender: keeper, expectedKeeper: keeper, authenticated: true }).state, 'fresh');
+  assert.equal(readiness.heartbeatState({ now: 2000, timestamp: 990, sender: keeper, expectedKeeper: keeper, authenticated: true }).state, 'stale');
+  assert.equal(readiness.heartbeatState({ now: 1000, timestamp: 1010, sender: keeper, expectedKeeper: keeper, authenticated: true }).state, 'stale');
+});
+test('owner-funded repayment approves the clone and close cannot be submitted during RM', () => {
+  assert.equal(typeof readiness.ownerTransactions, 'function');
+  const clone = '0x1111111111111111111111111111111111111111';
+  const token = '0x2222222222222222222222222222222222222222';
+  assert.deepEqual(readiness.ownerTransactions('repay', clone, token, 100n, false), [
+    { address: token, functionName: 'approve', args: [clone, 100n] },
+    { address: clone, functionName: 'repayWithMUSD', args: [100n] },
+  ]);
+  assert.throws(() => readiness.ownerTransactions('close', clone, token, 100n, true));
+  assert.throws(() => readiness.ownerTransactions('repay', clone, token, 0n, true));
+  assert.deepEqual(readiness.ownerTransactions('claim', clone, token, 0n, true), [{ address: clone, functionName: 'claimCollateral', args: [] }]);
+});
+test('recent history shows a bounded latest window before paginating older blocks', () => {
+  assert.deepEqual(readiness.recentRange(20000n, 10n), { fromBlock: 10002n, toBlock: 20000n });
+  assert.deepEqual(readiness.recentRange(20000n, 10n, 10002n), { fromBlock: 10n, toBlock: 10001n });
+});
+
+test('reserve-funded direct close works with a zero owner allowance', () => {
+  assert.deepEqual(readiness.ownerTransactions('close', '0x1111111111111111111111111111111111111111', '0x2222222222222222222222222222222222222222', 0n, false), [{ address: '0x1111111111111111111111111111111111111111', functionName: 'closeWithMUSD', args: [0n] }]);
+});
+test('an override clears unrelated deployment keeper and capability provenance', () => {
+  const overridden = readiness.resolveDeployment({ chainId: 31611, factory: '0x1111111111111111111111111111111111111111', deploymentBlock: '1', status: 'legacy', keeper: '0x2222222222222222222222222222222222222222', implementation: '0x2222222222222222222222222222222222222222', capabilities: { policy: true, coilFee: true, ownerActions: true } }, '0x3333333333333333333333333333333333333333', '20');
+  assert.equal(overridden.keeper, null);
+  assert.equal(overridden.implementation, null);
+  assert.deepEqual(overridden.capabilities, { policy: false, coilFee: false, ownerActions: false });
+});
+test('new ABI encodes owner-approved fee ceiling on both loop paths', () => {
+  const { encodeFunctionData, decodeFunctionData } = require('viem');
+  const { coilAccountAbi } = require('../src/lib/mezo.ts');
+  for (const functionName of ['loop', 'flashLoop']) {
+    const data = encodeFunctionData({ abi: coilAccountAbi, functionName, args: readiness.loopArguments(2n * W, 50n, 25, true) });
+    assert.deepEqual(decodeFunctionData({ abi: coilAccountAbi, data }).args, [2n * W, 50n, 25]);
+  }
+});
+test('selected mainnet uses mainnet protocol/explorer and pending metadata blocks writes', () => {
+  const keys = ['NEXT_PUBLIC_COIL_CHAIN_ID', 'NEXT_PUBLIC_COIL_ENABLE_MAINNET_WRITES', 'NEXT_PUBLIC_COIL_FACTORY', 'NEXT_PUBLIC_COIL_FACTORY_DEPLOY_BLOCK', 'NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID'];
+  const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  const modules = ['../src/lib/network.ts', '../src/lib/mezo.ts'];
+  try {
+    keys.forEach(key => delete process.env[key]);
+    process.env.NEXT_PUBLIC_COIL_CHAIN_ID = '31612';
+    process.env.NEXT_PUBLIC_COIL_ENABLE_MAINNET_WRITES = 'true';
+    modules.forEach(file => delete require.cache[require.resolve(file)]);
+    const n = require('../src/lib/network.ts');
+    const m = require('../src/lib/mezo.ts');
+    assert.deepEqual({ chain: n.selectedChain.id, write: n.writesEnabled, factory: m.factoryAddress ?? null, explorer: n.explorerUrl, musd: m.addr.musd, walletConnect: n.walletConnectProjectId ?? null }, { chain: 31612, write: false, factory: null, explorer: 'https://explorer.mezo.org', musd: '0xdD468A1DDc392dcdbEf6db6e34E89AA338F9F186', walletConnect: null });
+  } finally {
+    keys.forEach(key => saved[key] === undefined ? delete process.env[key] : process.env[key] = saved[key]);
+    modules.forEach(file => delete require.cache[require.resolve(file)]);
+  }
+});
+test('an RPC failure cannot downgrade a new factory to fee-free legacy selectors', () => {
+  assert.equal(typeof readiness.isUnsupportedPolicy, 'function');
+  const { ContractFunctionZeroDataError, ContractFunctionRevertedError, BaseError } = require('viem');
+  assert.equal(readiness.isUnsupportedPolicy(new BaseError('unavailable', { cause: new Error('RPC unavailable') })), false);
+  assert.equal(readiness.isUnsupportedPolicy(new ContractFunctionZeroDataError({ functionName: 'policy' })), true);
+  assert.equal(readiness.isUnsupportedPolicy(new ContractFunctionRevertedError({ abi: [], functionName: 'policy', data: '0x' })), true);
+});
+test('keeper state stays stale with an old RPC block even when heartbeat time looks fresh', () => {
+  assert.equal(typeof readiness.chainEvidenceFresh, 'function');
+  assert.equal(readiness.chainEvidenceFresh(1000, 990), true);
+  assert.equal(readiness.chainEvidenceFresh(1000, 700), false);
+  assert.equal(readiness.chainEvidenceFresh(1000, 1100), false);
+});
+test('a different mainnet override cannot inherit a confirmed release write gate', () => {
+  const changed = readiness.resolveDeployment({ chainId: 31612, factory: '0x1111111111111111111111111111111111111111', deploymentBlock: '1', status: 'ready' }, '0x2222222222222222222222222222222222222222', '2');
+  assert.equal(readiness.canWrite(changed, true), false);
+});
+let positionQuotes = {}; try { positionQuotes = require('../src/lib/position-quote.ts'); } catch {}
+const increasedQuote = { collateral: 3n * W / 10n, debt: 15000n * W, cr: 2n * W, liquidationPrice: 55000n * W, musdMinted: 4010n * W, iterations: 1n };
+const freshEstimate = { kind: 'error', message: 'Fresh deposit is below minimum debt' };
+test('active fee-bearing account uses state-aware total debt and gross fee instead of fresh estimate', async () => {
+  assert.equal(typeof positionQuotes.readStateAwareQuote, 'function');
+  const request = { account: '0x1111111111111111111111111111111111111111', chainId: 31611, deposit: W / 100n, target: 2n * W, slippage: 50n, flash: true };
+  const actual = await positionQuotes.readStateAwareQuote({ readContract: async call => {
+    assert.equal(call.address, request.account);
+    assert.equal(call.functionName, 'quoteFlashLoopWithFee');
+    assert.deepEqual(call.args, [W / 100n, 2n * W, 50n]);
+    return [increasedQuote, W / 20n, 12n * W, 10025n * W / 1000n];
+  } }, request);
+  assert.equal(actual.debt, 15000n * W);
+  assert.equal(actual.musdMinted, 4010n * W);
+  assert.equal(actual.coilFeeMusd, 10025n * W / 1000n);
+  assert.equal(actual.flashBtc, W / 20n);
+  assert.equal(actual.poolFeeMusd, 12n * W);
+  assert.equal(actual.iterations, 1);
+  const selected = positionQuotes.selectPositionPreview(true, 'active', { key: 'active', kind: 'ok', quote: actual }, freshEstimate);
+  assert.equal(selected.kind, 'ok');
+  assert.equal(selected.quote.debt, 15000n * W);
+});
+test('router increase uses state-aware fee quote and keeps protocol total debt', async () => {
+  assert.equal(typeof positionQuotes.readStateAwareQuote, 'function');
+  const actual = await positionQuotes.readStateAwareQuote({ readContract: async call => {
+    assert.equal(call.functionName, 'quoteLoopWithFee');
+    return [increasedQuote, 10025n * W / 1000n];
+  } }, { account: '0x1111111111111111111111111111111111111111', chainId: 31611, deposit: W / 100n, target: 2n * W, slippage: 50n, flash: false });
+  assert.equal(actual.debt, 15000n * W);
+  assert.equal(actual.coilFeeMusd, 10025n * W / 1000n);
+  assert.equal(actual.flashBtc, 0n);
+});
+test('active fee consent fails closed on unavailable or input-stale on-chain quotes', () => {
+  assert.equal(typeof positionQuotes.selectPositionPreview, 'function');
+  assert.equal(positionQuotes.selectPositionPreview(true, 'new-input', { key: 'old-input', kind: 'ok', quote: increasedQuote }, freshEstimate).kind, 'loading');
+  assert.equal(positionQuotes.selectPositionPreview(true, 'active', null, freshEstimate).kind, 'loading');
+  assert.deepEqual(positionQuotes.selectPositionPreview(true, 'active', { key: 'active', kind: 'error', message: 'Quote RPC failed' }, { kind: 'ok', quote: increasedQuote }), { kind: 'error', message: 'Quote RPC failed' });
+  assert.equal(positionQuotes.selectPositionPreview(false, 'fresh', null, freshEstimate), freshEstimate);
+});
+test('cancelled quote read cannot publish a previous account or chain result', async () => {
+  assert.equal(typeof positionQuotes.startPositionQuote, 'function');
+  let finish;
+  const deferred = new Promise(resolve => { finish = resolve; });
+  const states = [];
+  const cancel = positionQuotes.startPositionQuote('old-account-chain-input', () => deferred, state => states.push(state));
+  cancel();
+  finish(increasedQuote);
+  await deferred; await Promise.resolve();
+  assert.deepEqual(states, [{ key: 'old-account-chain-input', kind: 'loading' }]);
+});
+test('quote refresh clears fee consent while loading and publishes errors without stale data', async () => {
+  assert.equal(typeof positionQuotes.startPositionQuote, 'function');
+  const states = [];
+  positionQuotes.startPositionQuote('current', async () => { throw new Error('provider unavailable'); }, state => states.push(state));
+  await Promise.resolve(); await Promise.resolve();
+  assert.deepEqual(states, [{ key: 'current', kind: 'loading' }, { key: 'current', kind: 'error', message: 'State-aware quote unavailable. Refresh or wait for the selected chain RPC to recover.' }]);
+});
+let keeperService = {}; try { keeperService = require('../src/lib/keeper-service.ts'); } catch {}
+const statusNow = 1_800_000_000_000;
+const statusIdentity = { chainId: 31611, factory: '0x1111111111111111111111111111111111111111', expectedKeeper: '0x2222222222222222222222222222222222222222' };
+const publicStatus = { chainId: 31611, factory: statusIdentity.factory, keeper: null, mode: 'read-only', lastScanAt: statusNow - 1000, lastHeartbeatAt: null, status: 'monitoring', counters: { scans: 1, scanFailures: 0, simulations: 0, skipped: 0, failures: 0, confirmedGuards: 0, confirmedHeartbeats: 0 } };
+test('optional keeper URL only accepts public HTTPS without credentials or secret-bearing parameters', () => {
+  assert.equal(typeof keeperService.publicStatusUrl, 'function');
+  assert.equal(keeperService.publicStatusUrl(undefined), null);
+  assert.equal(keeperService.publicStatusUrl('https://keeper.example.org/status'), 'https://keeper.example.org/status');
+  for (const url of ['http://keeper.example.org/status', 'https://localhost/status', 'https://127.0.0.1/status', 'https://[::1]/status', 'https://service.internal/status', 'https://user:password@keeper.example.org/status', 'https://keeper.example.org/status?token=secret', 'https://keeper.example.org/status#secret', 'https://keeper.example.org:8443/status']) assert.throws(() => keeperService.publicStatusUrl(url));
+});
+test('read-only service status validates independently and never becomes execution protection', () => {
+  assert.equal(typeof keeperService.validatePublicStatus, 'function');
+  const status = keeperService.validatePublicStatus(publicStatus, statusIdentity, statusNow);
+  assert.deepEqual(keeperService.serviceStatusView(status, statusNow), { status: 'monitoring', mode: 'read-only', scanAgeMs: 1000, heartbeatAgeMs: null });
+});
+test('public service rejects mismatched chain/factory/keeper, malformed timestamps/counters and impossible mode states', () => {
+  assert.equal(typeof keeperService.validatePublicStatus, 'function');
+  for (const changed of [{ chainId: 31612 }, { factory: '0x3333333333333333333333333333333333333333' }, { keeper: '0x3333333333333333333333333333333333333333' }, { lastScanAt: statusNow + 60000 }, { lastScanAt: 1800000000 }, { counters: { ...publicStatus.counters, scans: -1 } }, { mode: 'execute', status: 'monitoring' }, { status: 'healthy' }, { key: 'must not expose arbitrary fields' }]) assert.throws(() => keeperService.validatePublicStatus({ ...publicStatus, ...changed }, statusIdentity, statusNow));
+});
+test('execution service requires expected keeper identity and stale scans override an old healthy response', () => {
+  assert.equal(typeof keeperService.serviceStatusView, 'function');
+  const status = keeperService.validatePublicStatus({ ...publicStatus, keeper: statusIdentity.expectedKeeper, mode: 'execute', status: 'healthy', lastHeartbeatAt: statusNow - 1000 }, statusIdentity, statusNow);
+  assert.equal(keeperService.serviceStatusView(status, statusNow).status, 'healthy');
+  assert.equal(keeperService.serviceStatusView(status, statusNow + 61000).status, 'stale');
+  assert.throws(() => keeperService.validatePublicStatus(status, { ...statusIdentity, expectedKeeper: null }, statusNow));
+});
+test('service fetch is credential-free GET and validates the public response before returning it', async () => {
+  assert.equal(typeof keeperService.fetchPublicStatus, 'function');
+  const data = await keeperService.fetchPublicStatus('https://keeper.example.org/status', statusIdentity, new AbortController().signal, async (url, options) => {
+    assert.equal(url, 'https://keeper.example.org/status'); assert.equal(options.method, 'GET'); assert.equal(options.credentials, 'omit'); assert.equal(options.redirect, 'error'); assert.equal(options.cache, 'no-store');
+    return { ok: true, headers: new Headers({ 'content-type': 'application/json' }), text: async () => JSON.stringify(publicStatus) };
+  }, statusNow);
+  assert.equal(data.mode, 'read-only'); assert.equal(data.lastScanAt, statusNow - 1000);
+});
+test('service cancellation aborts transport and prevents late identity-stale results from replacing current evidence', async () => {
+  assert.equal(typeof keeperService.startPublicStatusRead, 'function');
+  let finish; let signal;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const states = [];
+  const cancel = keeperService.startPublicStatusRead('old-chain-factory-keeper', async currentSignal => { signal = currentSignal; return pending; }, state => states.push(state));
+  cancel(); assert.equal(signal.aborted, true); finish(publicStatus);
+  await pending; await Promise.resolve();
+  assert.deepEqual(states, [{ key: 'old-chain-factory-keeper', kind: 'loading' }]);
+  assert.deepEqual(keeperService.selectServiceRead('new-chain-factory-keeper', { key: 'old-chain-factory-keeper', kind: 'ok', data: publicStatus }), { kind: 'loading' });
+});
+test('unavailable public service reports an error without promoting retained chain evidence to service health', async () => {
+  assert.equal(typeof keeperService.startPublicStatusRead, 'function');
+  const states = [];
+  keeperService.startPublicStatusRead('current', async () => { throw new Error('private upstream details'); }, state => states.push(state));
+  await Promise.resolve(); await Promise.resolve();
+  assert.deepEqual(states, [{ key: 'current', kind: 'loading' }, { key: 'current', kind: 'error', message: 'Public keeper service unavailable or invalid. Chain heartbeat evidence is shown separately.' }]);
+});
+test('a timed-out public service becomes unavailable even if its transport ignores cancellation', async () => {
+  assert.equal(typeof keeperService.startPublicStatusRead, 'function');
+  const states = [];
+  const cancel = keeperService.startPublicStatusRead('slow', () => new Promise(() => {}), state => states.push(state), 2);
+  await new Promise(resolve => setTimeout(resolve, 15));
+  cancel();
+  assert.equal(states.at(-1).kind, 'error');
+});
+test('known canonical factory requires its recorded deployment block and preserves matching provenance', () => {
+  const canonical = { chainId: 31611, factory: '0x1111111111111111111111111111111111111111', deploymentBlock: '10', status: 'legacy', keeper: '0x2222222222222222222222222222222222222222', capabilities: { policy: false, coilFee: false, ownerActions: false } };
+  assert.throws(() => readiness.resolveDeployment(canonical, canonical.factory, '11'));
+  assert.throws(() => readiness.resolveDeployment(canonical, '0x3333333333333333333333333333333333333333', '0'));
+  assert.deepEqual(readiness.resolveDeployment(canonical, canonical.factory, '10'), canonical);
+});
+test('a factory belonging only to another chain cannot be used as a selected-chain override', () => {
+  const testnet = { chainId: 31611, factory: '0x1111111111111111111111111111111111111111', deploymentBlock: '10', status: 'legacy' };
+  const mainnet = { chainId: 31612, factory: '0x2222222222222222222222222222222222222222', deploymentBlock: '20', status: 'ready' };
+  const catalog = { 31611: testnet, 31612: mainnet };
+  assert.throws(() => readiness.resolveDeployment(testnet, mainnet.factory, '20', catalog));
+  assert.throws(() => readiness.resolveDeployment(mainnet, testnet.factory, '10', catalog));
+});
+test('the same canonical address on two chains uses selected-chain block provenance', () => {
+  const testnet = { chainId: 31611, factory: '0x1111111111111111111111111111111111111111', deploymentBlock: '10', status: 'legacy' };
+  const mainnet = { chainId: 31612, factory: testnet.factory, deploymentBlock: '20', status: 'ready' };
+  const catalog = { 31611: testnet, 31612: mainnet };
+  assert.deepEqual(readiness.resolveDeployment(mainnet, mainnet.factory, '20', catalog), mainnet);
+  assert.throws(() => readiness.resolveDeployment(mainnet, mainnet.factory, '10', catalog));
+});
+let ownerAccounts = {}; try { ownerAccounts = require('../src/lib/owner-accounts.ts'); } catch {}
+const oldFactory = { chainId: 31611, name: 'Testnet legacy', rpcUrl: 'https://rpc.test.mezo.org', explorerUrl: 'https://explorer.test.mezo.org', status: 'legacy', factory: '0x1111111111111111111111111111111111111111', deploymentBlock: '10', implementation: null, keeper: null, contracts: {}, capabilities: { policy: false, coilFee: false, ownerActions: false } };
+const newFactory = { ...oldFactory, name: 'Testnet current', factory: '0x2222222222222222222222222222222222222222', deploymentBlock: '20', status: 'ready', capabilities: { policy: true, coilFee: true, ownerActions: true } };
+const accountOwner = '0x3333333333333333333333333333333333333333';
+const fundedOldClone = '0x4444444444444444444444444444444444444444';
+const emptyNewClone = '0x5555555555555555555555555555555555555555';
+const oldPosition = { active: true, collateral: W / 10n, debt: 5000n * W, cr: 2n * W, liquidationPrice: 55000n * W, redemptionRank: 12n, floorCR: 17n * W / 10n, guardTargetCR: 22n * W / 10n, redemptionZone: 8, slippageBps: 50, owner: accountOwner };
+test('after active deployment changes, an old funded clone stays visible and selected ahead of a new empty clone', async () => {
+  assert.equal(typeof ownerAccounts.ownerDeploymentCatalog, 'function');
+  const catalog = ownerAccounts.ownerDeploymentCatalog(newFactory, [oldFactory, newFactory, oldFactory]);
+  assert.equal(catalog.length, 2);
+  const found = await ownerAccounts.discoverOwnerAccounts({ readContract: async call => {
+    if (call.functionName === 'accountOf') { assert.deepEqual(call.args, [accountOwner]); return call.address === oldFactory.factory ? fundedOldClone : emptyNewClone; }
+    if (call.functionName === 'position') return call.address === fundedOldClone ? oldPosition : { ...oldPosition, active: false, collateral: 0n, debt: 0n, owner: accountOwner };
+    throw new Error('unexpected RPC');
+  } }, accountOwner, catalog);
+  const selected = ownerAccounts.selectOwnerDeployment(found);
+  assert.equal(selected.account, fundedOldClone);
+  assert.equal(selected.deployment.factory, oldFactory.factory);
+  assert.equal(selected.deployment.deploymentBlock, '10');
+  assert.deepEqual(selected.deployment.capabilities, { policy: false, coilFee: false, ownerActions: false });
+  assert.equal(selected.position.debt, 5000n * W);
+  const explicitNew = ownerAccounts.selectOwnerDeployment(found, found.find(item => item.current).key);
+  assert.equal(explicitNew.account, emptyNewClone);
+  assert.equal(explicitNew.deployment.factory, newFactory.factory);
+  assert.equal(explicitNew.deployment.capabilities.coilFee, true);
+});
+test('retained discovery keeps unreadable legacy accounts visible rather than declaring no old funds', async () => {
+  assert.equal(typeof ownerAccounts.discoverOwnerAccounts, 'function');
+  const catalog = ownerAccounts.ownerDeploymentCatalog(newFactory, [oldFactory]);
+  const found = await ownerAccounts.discoverOwnerAccounts({ readContract: async call => {
+    if (call.functionName === 'accountOf') return call.address === oldFactory.factory ? fundedOldClone : '0x0000000000000000000000000000000000000000';
+    throw new Error('RPC unavailable');
+  } }, accountOwner, catalog);
+  const selected = ownerAccounts.selectOwnerDeployment(found);
+  assert.equal(selected.account, fundedOldClone);
+  assert.match(selected.readError, /position unavailable/i);
+});
+test('owner discovery filters another chain and never binds a returned position to a different owner', async () => {
+  assert.equal(typeof ownerAccounts.ownerDeploymentCatalog, 'function');
+  const catalog = ownerAccounts.ownerDeploymentCatalog(newFactory, [{ ...oldFactory, chainId: 31612 }, oldFactory]);
+  assert.equal(catalog.length, 2);
+  const found = await ownerAccounts.discoverOwnerAccounts({ readContract: async call => call.functionName === 'accountOf' ? fundedOldClone : { ...oldPosition, owner: emptyNewClone } }, accountOwner, catalog);
+  assert(found.every(item => !item.position && item.readError));
+});
+let statsReader = {}; try { statsReader = require('../src/lib/stats-reader.ts'); } catch {}
+test('stats publishes factory and position counts before slow history and reads a bounded recent window', async () => {
+  assert.equal(typeof statsReader.loadPublicStats, 'function');
+  let finishLogs;
+  const slowHistory = new Promise(resolve => { finishLogs = resolve; });
+  const snapshots = []; const ranges = [];
+  const client = { getBlockNumber: async () => 20000n, readContract: async call => {
+    if (call.functionName === 'accountsLength') return 2n;
+    if (call.functionName === 'accounts') return call.args[0] === 0n ? fundedOldClone : emptyNewClone;
+    if (call.functionName === 'position') return { ...oldPosition, active: call.address === fundedOldClone };
+    throw new Error('unexpected read');
+  }, getLogs: async call => { ranges.push([call.fromBlock, call.toBlock]); return slowHistory; } };
+  let completed = false;
+  const loading = statsReader.loadPublicStats(client, { factory: newFactory.factory, deploymentBlock: 10n }, snapshot => snapshots.push(snapshot)).then(page => { completed = true; return page; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(completed, false);
+  assert.equal(snapshots[0].accounts, 2);
+  assert.equal(snapshots.at(-1).open, 1);
+  assert.equal(snapshots.at(-1).scanned, 2);
+  assert.deepEqual(ranges, [[10002n, 20000n], [10002n, 20000n], [10002n, 20000n]]);
+  finishLogs([]);
+  const recent = await loading;
+  assert.equal(recent.fromBlock, 10002n);
+  const olderRanges = [];
+  const older = await statsReader.loadPublicStats({ ...client, getLogs: async call => { olderRanges.push([call.fromBlock, call.toBlock]); return []; } }, { factory: newFactory.factory, deploymentBlock: 10n, before: recent.fromBlock }, () => {});
+  assert.equal(older.toBlock, 10001n);
+  assert.deepEqual(olderRanges, [[10n, 10001n], [10n, 10001n], [10n, 10001n]]);
+});
+test('stats refresh deduplicates overlapping events and does not double count rescue tips', () => {
+  assert.equal(typeof statsReader.mergeStatsEvents, 'function');
+  const rescue = { kind: 'rescue', log: { address: fundedOldClone, transactionHash: '0x1234', logIndex: 2, blockNumber: 19990n, args: { tip: 5n * W } } };
+  const heartbeat = { kind: 'heartbeat', log: { address: newFactory.factory, transactionHash: '0x5678', logIndex: 0, blockNumber: 19991n, args: {} } };
+  const merged = statsReader.mergeStatsEvents([rescue], [{ ...rescue }, heartbeat]);
+  assert.deepEqual(statsReader.summarizeStatsEvents(merged), { accountLogs: 0, heartbeats: 1, rescues: 1, tips: 5n * W });
+});
