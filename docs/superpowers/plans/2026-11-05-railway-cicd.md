@@ -24,7 +24,7 @@
 - The trigger must target only the existing production web service, branch `main`, with `checkSuites: true`.
 - Production releases must wait for all CI jobs and for the deployed service to become healthy.
 - Npm's legacy peer resolution must remain frozen and leave lockfiles unchanged.
-- Proxy trust used for local verification must remain optional and absent from image layers.
+- The production Dockerfile must avoid unsupported BuildKit mounts on Railway; session-specific proxy trust must not enter production layers.
 
 ### Task 1: Web release image
 
