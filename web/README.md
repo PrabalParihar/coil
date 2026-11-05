@@ -3,50 +3,55 @@
 ## Railway CI/CD
 
 GitHub Actions checks contracts, keeper behavior, and the production web image
-on pushes and pull requests. A successful push to `main` (or a manual run on
-`main`) deploys the web service to Railway after all three jobs pass. Pull
-requests never run the production deployment job.
+on pushes and pull requests. Railway's native GitHub integration deploys the
+`web` service from `main` after those checks pass. Enable **Wait for CI** on the
+Railway deployment trigger. There is no token-bearing deployment job in GitHub
+Actions and no Railway secret or target variables to configure in GitHub.
 
 The release image builds the Next.js static export using Node 22 and
 `npm ci --legacy-peer-deps`, then serves it with Nginx on Railway's `PORT`.
 `/guard` and `/stats` resolve to their exported pages, static assets have long
 cache lifetimes, and unknown routes return 404. `next start` is not used.
 
-Configure these in the repository's GitHub **production** environment before
-enabling deployment:
+The existing production target is:
 
-| Setting | Kind | Value |
-| --- | --- | --- |
-| `RAILWAY_TOKEN` | Secret | Railway project token scoped to the intended production environment |
-| `RAILWAY_PROJECT_ID` | Variable | Target Railway project ID |
-| `RAILWAY_ENVIRONMENT_ID` | Variable | Target Railway environment ID |
-| `RAILWAY_SERVICE_ID` | Variable | Web service ID; do not use the keeper service |
-| `RAILWAY_PUBLIC_URL` | Variable | Public HTTPS base URL of that service |
+| Setting | Value |
+| --- | --- |
+| Project | `coil` (`095d6e00-938c-41cd-8941-27dee0996eaf`) |
+| Environment | `production` (`3b985932-0f86-4281-acb9-fb7626e8be25`) |
+| Service | `web` (`0d117789-e565-47dd-a021-7dc9705f1ce0`) |
+| Public URL | `https://coil.up.railway.app` |
+| GitHub source | `PrabalParihar/coil`, branch `main` |
+| Root directory | `/web` |
+| Railway config file | Unset; service settings supply root and health check |
+| Dockerfile | `Dockerfile`, detected under the service root |
+| Wait for CI | Enabled (`checkSuites: true`) |
+| Health check | `/`, timeout 120 seconds |
 
-Use GitHub Settings → Environments → production for these values. Never commit
-the token or paste it into an issue or pull request. Missing settings fail the
-deployment job before an upload. Environment reviewers can be configured there
-if releases need approval.
+Keep build and start command overrides unset so the Dockerfile controls the
+release. Do not add `railway.json` or `railway.toml`; the current Railway API
+rejects that deprecated configuration format. The root, Dockerfile path, and
+health check above are stored in the Railway service settings. These settings apply only to `web`; the `keeper` service and its
+credentials are separate. A failed CI run must leave the previous successful
+web deployment serving traffic.
 
-The workflow uploads `web/` as the deployment archive root. Set the Railway
-service's root directory to `/`, remove old build/start command overrides, and
-let `railway.json` select the Dockerfile and health check. Disable a separate
-Railway GitHub auto-deploy trigger for this service so it cannot release before
-the workflow's CI gate. The workflow is the release trigger.
+A push to `main` is the automatic release trigger. A manual GitHub workflow run
+reruns checks; it does not upload an app by itself. For a manual release or
+rollback, use the Railway service's Deployments page after checking the desired
+commit's CI results. Avoid introducing a second GitHub Actions deploy job or
+another trigger for the same service.
 
 Optional public build variables belong in the Railway service:
 `NEXT_PUBLIC_COIL_FACTORY` and `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`. They are
 compiled into the exported app, so changing them requires a new deployment.
 The default factory remains the currently deployed testnet factory.
 
-The pinned Railway CLI waits for the deployment status, with `/` as the Railway
-health check. The workflow also requires its explicit terminal JSON success
-event, so an interrupted status stream cannot pass on exit code alone.
-The workflow then requests `/`, `/guard`, and `/stats` on the
-public URL and checks their Coil Labs HTML. A build finishing alone does not
-count as a verified release.
+Verify the Railway deployment reaches `SUCCESS` for the intended commit, then
+request `/`, `/guard`, and `/stats` on the public URL and check their Coil Labs
+HTML. Railway's health check must pass before a rollout succeeds. A build
+finishing or a CLI exiting alone does not count as a verified release.
 
-For a local production-image check:
+For a local production-image check from the repository root:
 
 ```bash
 docker build -t coil-web:local web
