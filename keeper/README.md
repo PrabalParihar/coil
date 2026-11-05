@@ -77,9 +77,22 @@ A failed, reverted, or unconfirmed heartbeat never advances heartbeat freshness.
 
 Per-account no-op/failure retries begin at twice the polling interval and increase
 exponentially, capped at five minutes. Every poll still refreshes the account's
-position, oracle, pool liquidity, funded reserve, guard settings, Recovery Mode, and pool pause/fee policy. Any change
-resets its delay immediately, so a changed emergency bypasses an earlier failure.
-Unchanged failure alerts and actionable monitoring alerts are deduplicated.
+position, oracle, pool liquidity, funded reserve, guard settings, Recovery Mode, and pool pause/fee policy.
+All collateral, rank, owner/settings, oracle, pool and reserve changes reset the delay
+immediately. Accrued debt and derived CR/liquidation-price dust do not restart it:
+CR movement of at least one relative basis point (0.01%), debt growth of at least
+one relative basis point, or any observed debt reduction since the previous successful
+poll resets immediately, including after an accrued-interest poll skipped simulation. Compare with
+the original retry anchor, so small changes accumulate rather than disappearing
+behind a moving baseline. The separate last-observed debt updates on every successful
+snapshot and never moves those cumulative-risk anchors. Crossing the guard floor, target, or Mezo's 110% liquidation
+and 150% critical-ratio boundaries remains exact even for a one-wei CR change,
+regardless of mode. Smaller same-regime drift can
+wait for the existing bounded retry, at most five minutes; a tiny debt increase
+cannot be distinguished from interest accrual without another changed input.
+Unchanged failure alerts remain deduplicated across these retries and changed market
+inputs within one risk episode. A changed failure code, newly actionable simulation,
+or confirmed guard still alerts; resolved risk or successful rescue clears the episode.
 State is in memory and restarts clear backoff. Telegram/provider errors are reported
 using fixed safe messages; response bodies, RPC URLs, keys, and tokens are omitted.
 

@@ -1,7 +1,7 @@
 import type { Address } from "viem";
 import { needsGuard, type GuardPosition } from "./alerts.js";
 export type Snapshot = {
-  position: GuardPosition; oraclePrice: bigint; reserve: bigint; poolMusd: bigint; poolBtc: bigint;
+  position: GuardPosition & { collateral?: bigint; debt?: bigint; liquidationPrice?: bigint }; oraclePrice: bigint; reserve: bigint; poolMusd: bigint; poolBtc: bigint;
   pegGuardBps: number; belowPegBps: bigint; settings: readonly unknown[];
 };
 export type KeeperIO = {
@@ -23,9 +23,38 @@ export type KeeperStatus = {
   status: "starting" | "stale" | "monitoring" | "healthy" | "degraded";
   counters: { scans: number; scanFailures: number; simulations: number; skipped: number; failures: number; confirmedGuards: number; confirmedHeartbeats: number };
 };
-type Retry = { fingerprint: string; attempts: number; retryAt: number; alert: string | null };
+type Retry = { fingerprint: string; cr: bigint; debt: bigint | undefined; lastObservedDebt: bigint | undefined; attempts: number; retryAt: number; alert: string | null };
+const BPS = 10_000n;
+const MCR = 110n * 10n ** 16n;
+const CCR = 150n * 10n ** 16n;
 
-/** All snapshots are refreshed before checking retry deadlines. Changed inputs always retry immediately. */
+function movedByBasisPoint(value: bigint, anchor: bigint) {
+  const change = value >= anchor ? value - anchor : anchor - value;
+  return change > 0n && (anchor <= 0n || change * BPS >= anchor);
+}
+
+function positionMoved(position: Snapshot["position"], retry: Retry) {
+  if (movedByBasisPoint(position.cr, retry.cr)) return true;
+  if (position.debt !== undefined && retry.lastObservedDebt !== undefined && position.debt < retry.lastObservedDebt) return true;
+  if (position.debt === retry.debt) return false;
+  // Missing/new debt metadata or material growth compares with the fixed retry anchor.
+  return position.debt === undefined || retry.debt === undefined ||
+    movedByBasisPoint(position.debt, retry.debt);
+}
+
+function stableFingerprint(snapshot: Snapshot) {
+  // Debt and its derived ratios drift with time. Their original retry anchors below
+  // catch cumulative movement without jitter at an arbitrary quantization boundary.
+  const { cr, debt, liquidationPrice, ...position } = snapshot.position;
+  return JSON.stringify({ ...snapshot, position, risk: {
+    floorBreached: position.floorCR > 0n && cr < position.floorCR,
+    targetReached: cr >= position.guardTargetCR,
+    liquidatable: cr < MCR,
+    belowCriticalRatio: cr < CCR,
+  } }, (_, v) => typeof v === "bigint" ? v.toString() : v);
+}
+
+/** Refresh every input before retry deadlines; bound insignificant accrued-interest drift only. */
 export class KeeperEngine {
   private retries = new Map<string, Retry>();
   private lastScanAt: number | null = null;
@@ -67,12 +96,15 @@ export class KeeperEngine {
         const key = account.toLowerCase();
         const reason = needsGuard(snapshot.position, snapshot);
         if (!reason) { this.retries.delete(key); continue; }
-        const fingerprint = JSON.stringify(snapshot, (_, v) => typeof v === "bigint" ? v.toString() : v);
+        const fingerprint = stableFingerprint(snapshot);
         let retry = this.retries.get(key);
-        if (!retry || retry.fingerprint !== fingerprint) {
-          retry = { fingerprint, attempts: 0, retryAt: 0, alert: null };
+        if (!retry || retry.fingerprint !== fingerprint || positionMoved(snapshot.position, retry)) {
+          retry = { fingerprint, cr: snapshot.position.cr, debt: snapshot.position.debt, lastObservedDebt: snapshot.position.debt,
+            attempts: 0, retryAt: 0, alert: retry?.alert ?? null };
           this.retries.set(key, retry);
         }
+        // Track repayment against the last poll without moving the cumulative-risk anchors.
+        retry.lastObservedDebt = snapshot.position.debt;
         if (this.now() < retry.retryAt) { this.counters.skipped++; continue; }
         this.counters.simulations++;
         let acted: boolean;

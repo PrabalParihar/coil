@@ -22,6 +22,162 @@ const io: KeeperIO = {
   receipt: async () => receipt, alert: async (message) => { alerts.push(message); },
 };
 const options = { chainId: 31611, factory: account, keeper: signer, mode: "execute" as const, pollMs: 20_000, expectedKeeper: signer, now: () => now };
+// Repayment must compare with the last successful observation, including skipped polls.
+{
+  const simulationsAfterRepayment: number[] = [];
+  for (const repaidDelta of [9n, 0n]) {
+    let repaymentNow = 8_000_000;
+    const originalDebt = 10_000n * 10n ** 18n;
+    let repaymentSnapshot = { ...snapshot, position: { ...snapshot.position,
+      cr: 130n * 10n ** 16n, floorCR: 140n * 10n ** 16n,
+      guardTargetCR: 150n * 10n ** 16n, debt: originalDebt } };
+    let repaymentSimulations = 0;
+    const repaymentAlerts: string[] = [];
+    const repaymentEngine = new KeeperEngine({ ...options, now: () => repaymentNow, mode: "read-only", keeper: null }, {
+      ...io, snapshot: async () => repaymentSnapshot,
+      simulateGuard: async () => { repaymentSimulations++; return false; },
+      alert: async (message) => { repaymentAlerts.push(message); },
+    });
+    await repaymentEngine.scan();
+    repaymentNow += 20_000;
+    repaymentSnapshot = { ...repaymentSnapshot, position: { ...repaymentSnapshot.position, debt: originalDebt + 10n } };
+    await repaymentEngine.scan();
+    assert.equal(repaymentSimulations, 1, "tiny accrued debt preserves backoff on the skipped poll");
+    repaymentNow += 1;
+    repaymentSnapshot = { ...repaymentSnapshot, position: { ...repaymentSnapshot.position, debt: originalDebt + repaidDelta } };
+    await repaymentEngine.scan();
+    simulationsAfterRepayment.push(repaymentSimulations);
+    const repaymentAnchor = repaymentSnapshot.position.debt;
+    repaymentNow += 1;
+    repaymentSnapshot = { ...repaymentSnapshot, position: { ...repaymentSnapshot.position,
+      debt: repaymentAnchor + (repaymentAnchor + 19_999n) / 20_000n } };
+    await repaymentEngine.scan();
+    assert.equal(repaymentSimulations, 2, "sub-basis-point accrual after repayment remains backed off");
+    repaymentNow += 1;
+    repaymentSnapshot = { ...repaymentSnapshot, position: { ...repaymentSnapshot.position,
+      debt: repaymentAnchor + (repaymentAnchor + 9_999n) / 10_000n } };
+    await repaymentEngine.scan();
+    assert.equal(repaymentSimulations, 3, "updating last observed debt must not move the cumulative debt-growth anchor");
+    assert.equal(repaymentAlerts.length, 1, "observed repayment retry retains unchanged failure alert deduplication");
+  }
+  assert.deepEqual(simulationsAfterRepayment, [2, 2], "D->D+10->D+9 and D->D+10->D both immediately resimulate observed repayment");
+}
+// Changed markets retry immediately without restarting an unchanged failure alert episode.
+{
+  let marketNow = 9_000_000;
+  let marketSnapshot = snapshot;
+  let marketSimulations = 0;
+  let marketOutcome: "no-op" | "throw" | "actionable" = "no-op";
+  const marketAlerts: string[] = [];
+  const marketEngine = new KeeperEngine({ ...options, now: () => marketNow, mode: "read-only", keeper: null }, {
+    ...io, snapshot: async () => marketSnapshot,
+    simulateGuard: async () => { marketSimulations++; if (marketOutcome === "throw") throw new Error("private-provider-error"); return marketOutcome === "actionable"; },
+    alert: async (message) => { marketAlerts.push(message); },
+  });
+  await marketEngine.scan();
+  marketNow += 1;
+  marketSnapshot = { ...marketSnapshot, oraclePrice: 79_999n };
+  await marketEngine.scan();
+  assert.equal(marketSimulations, 2, "changed oracle retries a failed rescue before its deadline");
+  assert.equal(marketAlerts.length, 1, "changed oracle must not duplicate the same failure alert in one risk episode");
+  marketOutcome = "throw";
+  marketSnapshot = { ...marketSnapshot, poolMusd: 799_999n };
+  await marketEngine.scan();
+  assert.equal(marketAlerts.length, 2, "a changed failure code still alerts");
+  marketOutcome = "actionable";
+  marketSnapshot = { ...marketSnapshot, reserve: 1n };
+  await marketEngine.scan();
+  assert.equal(marketAlerts.length, 3, "newly actionable simulation still alerts in monitoring mode");
+  await marketEngine.scan();
+  assert.equal(marketAlerts.length, 3, "unchanged actionable alert is deduplicated");
+  marketSnapshot = { ...marketSnapshot, position: { ...marketSnapshot.position, cr: 160n } };
+  await marketEngine.scan();
+  marketOutcome = "no-op";
+  marketSnapshot = snapshot;
+  await marketEngine.scan();
+  assert.equal(marketAlerts.length, 4, "resolved risk clears the episode so a new failure alerts again");
+}
+// Debt and derived ratios accrue between polls even when the rescue inputs do not change.
+{
+  let interestNow = 10_000_000;
+  const originalPosition = { active: true, collateral: 1n * 10n ** 18n, debt: 10_000n * 10n ** 18n,
+    cr: 130n * 10n ** 16n, liquidationPrice: 11_000n * 10n ** 18n,
+    floorCR: 140n * 10n ** 16n, guardTargetCR: 150n * 10n ** 16n, redemptionRank: 3n, redemptionZone: 0 };
+  let interestSnapshot = { ...snapshot, position: originalPosition };
+  let interestSimulations = 0;
+  const interestAlerts: string[] = [];
+  const interestEngine = new KeeperEngine({ ...options, now: () => interestNow, mode: "read-only", keeper: null }, {
+    ...io, snapshot: async () => interestSnapshot,
+    simulateGuard: async () => { interestSimulations++; return false; },
+    alert: async (message) => { interestAlerts.push(message); },
+  });
+  await interestEngine.scan();
+  interestNow += 20_000;
+  interestSnapshot = { ...interestSnapshot, position: { ...originalPosition, debt: originalPosition.debt + 1n,
+    cr: originalPosition.cr - 1n, liquidationPrice: originalPosition.liquidationPrice + 1n } };
+  await interestEngine.scan();
+  assert.equal(interestSimulations, 1, "one wei interest and derived CR/liquidation drift must retain no-op backoff");
+  assert.equal(interestAlerts.length, 1, "automatic interest drift must not duplicate identical failure alerts");
+  interestNow += 20_000;
+  interestSnapshot = { ...interestSnapshot, position: { ...interestSnapshot.position,
+    debt: originalPosition.debt + 2n, cr: originalPosition.cr - 2n, liquidationPrice: originalPosition.liquidationPrice + 2n } };
+  await interestEngine.scan();
+  assert.equal(interestSimulations, 2, "interest drift still retries at the original deadline");
+  assert.equal(interestAlerts.length, 1, "scheduled retry with unchanged failure remains deduplicated");
+  // Compare cumulative worsening with the retry's original anchor, not the last poll.
+  interestNow += 1;
+  interestSnapshot = { ...interestSnapshot, position: { ...interestSnapshot.position,
+    cr: originalPosition.cr - 65_000_000_000_000n } };
+  await interestEngine.scan();
+  assert.equal(interestSimulations, 2, "sub-basis-point movement retains backoff even at a rounding boundary");
+  interestNow += 1;
+  interestSnapshot = { ...interestSnapshot, position: { ...interestSnapshot.position,
+    cr: originalPosition.cr - 130_000_000_000_000n } };
+  await interestEngine.scan();
+  assert.equal(interestSimulations, 3, "cumulative one-basis-point worsening retries immediately before deadline");
+  interestNow += 1;
+  interestSnapshot = { ...interestSnapshot, position: { ...interestSnapshot.position,
+    debt: originalPosition.debt + 1n } };
+  await interestEngine.scan();
+  assert.equal(interestSimulations, 4, "even one wei owner debt reduction can make a rescue newly usable");
+  interestNow += 1;
+  const debtAnchor = interestSnapshot.position.debt;
+  interestSnapshot = { ...interestSnapshot, position: { ...interestSnapshot.position,
+    debt: debtAnchor + (debtAnchor + 9_999n) / 10_000n } };
+  await interestEngine.scan();
+  assert.equal(interestSimulations, 5, "one-basis-point debt growth independently retries before deadline");
+  interestNow += 1;
+  interestSnapshot = { ...interestSnapshot, position: { ...interestSnapshot.position,
+    collateral: interestSnapshot.position.collateral + 1n } };
+  await interestEngine.scan();
+  assert.equal(interestSimulations, 6, "even tiny collateral changes remain exact actionable inputs");
+
+  for (const threshold of [originalPosition.floorCR, 110n * 10n ** 16n, 150n * 10n ** 16n]) {
+    let thresholdNow = 20_000_000;
+    let thresholdSnapshot = { ...snapshot, position: { ...originalPosition,
+      cr: threshold + 1n, redemptionZone: 8,
+      guardTargetCR: threshold >= originalPosition.guardTargetCR ? threshold + 10n ** 17n : originalPosition.guardTargetCR } };
+    let thresholdSimulations = 0;
+    const thresholdEngine = new KeeperEngine({ ...options, now: () => thresholdNow, mode: "read-only", keeper: null }, {
+      ...io, snapshot: async () => thresholdSnapshot,
+      simulateGuard: async () => { thresholdSimulations++; return false; }, alert: async () => {},
+    });
+    await thresholdEngine.scan();
+    thresholdNow += 1;
+    thresholdSnapshot = { ...thresholdSnapshot, position: { ...thresholdSnapshot.position, cr: threshold - 1n } };
+    await thresholdEngine.scan();
+    assert.equal(thresholdSimulations, 2, "tiny guard-floor or protocol110%/150% boundary crossing bypasses backoff");
+    thresholdSnapshot = { ...thresholdSnapshot, position: { ...thresholdSnapshot.position,
+      cr: thresholdSnapshot.position.guardTargetCR } };
+    await thresholdEngine.scan();
+    assert.equal(thresholdSimulations, 2, "reaching the guard target clears the old risk episode");
+    thresholdNow += 1;
+    thresholdSnapshot = { ...thresholdSnapshot, position: { ...thresholdSnapshot.position,
+      cr: thresholdSnapshot.position.guardTargetCR - 1n } };
+    await thresholdEngine.scan();
+    assert.equal(thresholdSimulations, 3, "one wei crossing below the guard target immediately reevaluates actionable rank risk");
+  }
+}
 const engine = new KeeperEngine(options, io);
 await engine.scan();
 assert.equal(simulateCount, 1, "first no-op is simulated");
@@ -61,6 +217,7 @@ receipt = "success";
 snapshot = { ...snapshot, reserve: 103n };
 await engine.scan();
 assert.equal(engine.status().counters.confirmedGuards, 1);
+assert(alerts.some((message) => message.includes("confirmed guard")), "confirmed rescue transition still notifies");
 assert.equal(engine.status().lastHeartbeatAt, now);
 assert.equal(engine.status().status, "healthy");
 now += 60_001;
