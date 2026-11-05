@@ -40,3 +40,11 @@ export function selectOwnerDeployment(catalog: readonly OwnerDeployment[], expli
   if (!selected && !funded && !unreadableAccount && !fallback) throw new Error("No selected-chain deployment catalog.");
   return selected ?? funded ?? unreadableAccount ?? fallback!;
 }
+
+export type OwnerDiscovery = { ownerKey: string; key: string; choices: OwnerDeployment[] };
+
+/** Refreshing the same owner must not unmount their position controls or reset tabs. */
+export function ownerDiscoveryView(ownerKey: string, requestKey: string, state: OwnerDiscovery | null, catalog: OwnerDeployment[]) {
+  const matchingOwner = state?.ownerKey === ownerKey;
+  return { choices: matchingOwner ? state.choices : catalog, pending: !matchingOwner, refreshing: Boolean(matchingOwner && state.key !== requestKey) };
+}

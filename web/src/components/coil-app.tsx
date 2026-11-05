@@ -59,7 +59,7 @@ import {
 import { deployment as activeDeployment, walletConnectProjectId } from "@/lib/network";
 import { canWrite, isUnsupportedPolicy, loopArguments, ownerActionState, ownerTransactions } from "@/lib/readiness";
 import { DEPLOYMENTS, RETAINED_DEPLOYMENTS } from "@/lib/deployment.generated";
-import { discoverOwnerAccounts, ownerDeploymentCatalog, selectOwnerDeployment, type OwnerDeployment } from "@/lib/owner-accounts";
+import { discoverOwnerAccounts, ownerDeploymentCatalog, ownerDiscoveryView, selectOwnerDeployment, type OwnerDiscovery } from "@/lib/owner-accounts";
 import { readStateAwareQuote, selectPositionPreview, startPositionQuote, type PositionQuoteState } from "@/lib/position-quote";
 import { loadMainnetMarket } from "@/lib/mainnet";
 import {
@@ -130,14 +130,15 @@ export function CoilApp() {
   const ownerKey = `${mezoTestnet.id}:${address?.toLowerCase() ?? "disconnected"}`;
   const [discoveryRound, setDiscoveryRound] = useState(0);
   const discoveryKey = `${ownerKey}:${discoveryRound}`;
-  const [discovered, setDiscovered] = useState<{ key: string; choices: OwnerDeployment[] } | null>(null);
+  const [discovered, setDiscovered] = useState<OwnerDiscovery | null>(null);
   const [manualChoice, setManualChoice] = useState<{ ownerKey: string; key: string } | null>(null);
-  const discoveredChoices = discovered?.key === discoveryKey ? discovered.choices : catalog;
+  const discoveryView = ownerDiscoveryView(ownerKey, discoveryKey, discovered, catalog);
+  const discoveredChoices = discoveryView.choices;
   const selectedChoice = selectOwnerDeployment(discoveredChoices, manualChoice?.ownerKey === ownerKey ? manualChoice.key : undefined);
   const deployment = selectedChoice.deployment;
   const factoryAddress = deployment.factory ?? undefined;
   const writesEnabled = canWrite(deployment, process.env.NEXT_PUBLIC_COIL_ENABLE_MAINNET_WRITES === "true");
-  const discoveryPending = Boolean(address && discovered?.key !== discoveryKey);
+  const discoveryPending = Boolean(address && discoveryView.pending);
   useEffect(() => {
     if (!address || !publicClient) return;
     let current = true;
@@ -145,12 +146,12 @@ export function CoilApp() {
     const refresh = async () => {
       const request = ++generation;
       const choices = await discoverOwnerAccounts(publicClient, address, catalog);
-      if (current && request === generation) setDiscovered({ key: discoveryKey, choices });
+      if (current && request === generation) setDiscovered({ ownerKey, key: discoveryKey, choices });
     };
     void refresh();
     const timer = setInterval(() => void refresh(), 30_000);
     return () => { current = false; clearInterval(timer); };
-  }, [address, publicClient, catalog, discoveryKey]);
+  }, [address, publicClient, catalog, discoveryKey, ownerKey]);
 
   const { data: balance } = useBalance({
     address,
@@ -1050,7 +1051,7 @@ export function CoilApp() {
                 </select>
                 <p className="break-all font-mono text-xs">Selected factory {factoryAddress ?? "pending"} · deployment block {deployment.deploymentBlock ?? "pending"} · {hasPolicy ? "policy-enabled generation" : "legacy capability / policy probe"}{account ? ` · clone ${account}` : ""}</p>
                 <p className="text-xs text-muted-foreground">Funded older positions remain selectable when a new factory is configured. Existing clones keep their own implementation; the selected factory controls capability reads and owner calls.</p>
-                {discoveryPending ? <p className="text-sm">Checking current and retained accounts…</p> : null}
+                {discoveryPending ? <p className="text-sm">Checking current and retained accounts…</p> : discoveryView.refreshing ? <p className="text-xs text-muted-foreground">Refreshing account discovery…</p> : null}
                 {discoveredChoices.some(choice => choice.readError) ? <p className="text-sm text-warn" role="alert">Some account/position reads are unavailable. Older accounts are retained in the selector; unavailable reads do not mean funds are empty.</p> : null}
                 <button type="button" disabled={busy} className="link text-xs" onClick={() => setDiscoveryRound(value => value + 1)}>Retry account discovery</button>
               </div> : null}

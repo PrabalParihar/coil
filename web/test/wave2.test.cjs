@@ -352,3 +352,16 @@ test('stats refresh deduplicates overlapping events and does not double count re
   const merged = statsReader.mergeStatsEvents([rescue], [{ ...rescue }, heartbeat]);
   assert.deepEqual(statsReader.summarizeStatsEvents(merged), { accountLogs: 0, heartbeats: 1, rescues: 1, tips: 5n * W });
 });
+test('same-owner discovery refresh preserves the funded view while changed-owner refresh discards old consent', () => {
+  assert.equal(typeof ownerAccounts.ownerDiscoveryView, 'function');
+  const catalog = ownerAccounts.ownerDeploymentCatalog(newFactory, [oldFactory]);
+  const known = [{ ...catalog[1], account: fundedOldClone, position: oldPosition }, catalog[0]];
+  const state = { ownerKey: '31611:owner-a', key: '31611:owner-a:0', choices: known };
+  const refreshing = ownerAccounts.ownerDiscoveryView('31611:owner-a', '31611:owner-a:1', state, catalog);
+  assert.equal(refreshing.pending, false);
+  assert.equal(refreshing.refreshing, true);
+  assert.equal(refreshing.choices, known);
+  const changedOwner = ownerAccounts.ownerDiscoveryView('31611:owner-b', '31611:owner-b:0', state, catalog);
+  assert.equal(changedOwner.pending, true);
+  assert.equal(changedOwner.choices, catalog);
+});

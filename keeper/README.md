@@ -34,8 +34,21 @@ pairs and a signer conflicting with the selected record fail configuration. Main
 execution still requires that selected record to be `ready` and the explicit enable flag;
 retention alone cannot upgrade release readiness.
 
+Retention preserves account identity; it does not make every old ABI compatible with the
+current keeper adapter. Public getter checks confirm that the current adapter supports
+the reserve generations `0xff3335…5BC8` and `0x2218…9De5` as well as the new policy build.
+The earlier flash generation `0x6A38…31F7` lacks `park`, `pegGuardBps` and
+`rescueSlippageBps`; Wave 1 `0xE29f…8a3e` also lacks `pool` and `tipMezo`. Do not deploy
+this current binary to those older generations and claim execution coverage. Preserve
+and pin a prior compatible container image digest/source revision together with its
+factory/block, or validate a dedicated compatible adapter before changing that service.
+Record its actual successful account reads, guard simulation/execution and generation-
+specific health before claiming protection. No compatible prior image or active coverage
+for those two historical generations is established by this change. Unsupported reads
+in the current adapter degrade scanning; a retained catalog entry is not a health proof.
+
 Before replacing an active factory, pin the existing keeper service to its exact public
-`COIL_CHAIN_ID`, `COIL_FACTORY`, and `COIL_FACTORY_DEPLOY_BLOCK`. Preserve its signer,
+`COIL_CHAIN_ID`, `COIL_FACTORY`, and `COIL_FACTORY_DEPLOY_BLOCK`. Preserve its compatible container image digest/source revision, signer,
 funding, environment, watch volume, and public status URL. Keep that service running for
 as long as accounts on that generation retain state requiring monitoring or rescue.
 Updating the active manifest must not redirect that pinned service. Create a separate
