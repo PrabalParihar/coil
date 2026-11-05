@@ -105,8 +105,8 @@
 **Files:** cross-subsystem fixes, CI and integration/browser fixtures as required. Owner: controller.
 
 - [x] Verify every workstream report, interface and spec coverage; require all meaningful new behavior to have RED→GREEN evidence. Run full Foundry, sizes, keeper checks, manifest/release tests, web production build and HTTP/container checks.
-- [ ] Exercise local-fork browser flows for account creation, fee-bearing loop, owner-funded repay/close and capability/health/error states. Keep local transactions labelled; collect actual funded-chain proof only through an authorized configured identity.
-- [ ] Generate a full immutable diff review package from main base to completed branch and dispatch a fresh broad reviewer. Fix important findings with reproducing tests and rerun affected/full suites; record decisions and external blockers.
+- [x] Exercise local-fork browser flows for account creation, fee-bearing loop, owner-funded repay/close and capability/health/error states. Keep local transactions labelled; collect actual funded-chain proof only through an authorized configured identity.
+- [x] Generate a full immutable diff review package from main base to completed branch and dispatch a fresh broad reviewer. Fix important findings with reproducing tests and rerun affected/full suites; record decisions and external blockers.
 - [ ] Recheck remote main, resolve any changes, push branch and merge using authorized GitHub/Git SDK. Use PR/CI gating where available; do not bypass branch protection or extract authentication tokens. If API auth remains unavailable, complete local reviewed work and attempt the configured authorized Git transport before requesting account repair.
 - [ ] Verify resulting remote main SHA and available CI results; update completion matrix distinguishing implemented, tested, deployed, verified and externally pending. Mainnet go-live remains separately gated by the approved design.
 

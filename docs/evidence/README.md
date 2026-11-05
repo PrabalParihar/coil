@@ -6,6 +6,7 @@ This directory contains reviewable material and a deliberately empty funded-rele
 - [historical-deployments.md](historical-deployments.md) preserves superseded notes; [DEPLOYMENTS.md](../../DEPLOYMENTS.md) is the current authority.
 - [screenshots](screenshots/) contains labelled illustrative legacy UI, not receipts. Static redesign captures include placeholder hashes.
 - [artifact-validation.json](artifact-validation.json) records local deck/video checks, not chain evidence.
+- [Local-fork browser evidence](local-fork/README.md) records 14 phases and 17 synthetic local transactions, including Recovery Mode repayment and retained-account exit. Its hashes and wallets do not establish a public deployment or real recruited users.
 
 ## Three distinct CLI modes
 

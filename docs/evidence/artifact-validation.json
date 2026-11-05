@@ -1,6 +1,6 @@
 {
   "scope": "Local materials only; no live chain, user, source verification or deployment proof.",
-  "validatedAtUTC": "2026-11-05T21:05:27.707487+00:00",
+  "validatedAtUTC": "2026-11-05T21:09:32.511531+00:00",
   "command": "python docs/pitch/validate.py",
   "status": "pass",
   "pdfPages": 8,
@@ -75,7 +75,7 @@
       "videoRgbRmsDifference": 3.08
     }
   ],
-  "localMarkdownLinksChecked": 69,
+  "localMarkdownLinksChecked": 70,
   "brokenLocalMarkdownLinks": [],
   "ledgerSchemaValid": true,
   "fundedReleaseEvidenceReady": false,
