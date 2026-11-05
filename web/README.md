@@ -8,6 +8,12 @@ on pushes and pull requests. Railway's native GitHub integration deploys the
 Railway deployment trigger. There is no token-bearing deployment job in GitHub
 Actions and no Railway secret or target variables to configure in GitHub.
 
+First authorize Railway’s GitHub integration for `PrabalParihar/coil` using an
+account with repository access. A source label alone does not create an
+automatic deployment trigger. If Railway reports that no one in the project
+has access, grant that repository access before enabling Wait for CI. Until
+the trigger exists, use authenticated CLI uploads only after CI passes.
+
 The release image builds the Next.js static export using Node 22 and
 `npm ci --legacy-peer-deps`, then serves it with Nginx on Railway's `PORT`.
 `/guard` and `/stats` resolve to their exported pages, static assets have long
@@ -58,9 +64,10 @@ docker build -t coil-web:local web
 docker run --rm -e PORT=3000 -p 3000:3000 coil-web:local
 ```
 
-From a trusted proxy environment, an optional BuildKit `proxy_ca` secret can
-supply the CA bundle during build; it is never copied into the image. Railway
-and ordinary GitHub runners do not need that local build secret.
+The production Dockerfile uses ordinary Docker build steps because Railway
+does not support BuildKit secret mounts. GitHub CI builds and tests this exact
+Dockerfile. Preserve TLS verification when using any local proxy; do not add
+session certificates to the production image.
 
 For rollback, redeploy the previous successful deployment from the Railway
 service's Deployments page. This pipeline deploys only the web app; it does not
