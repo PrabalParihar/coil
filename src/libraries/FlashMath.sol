@@ -26,6 +26,14 @@ contract FlashSizer {
         uint256 mcr;
         uint256 openHeadroom;
         bool exists;
+        uint16 coilFeeBps;
+        uint8 refiPct;
+    }
+
+    /// @notice Conservative ceil gross-up; charging rounds down separately.
+    function grossUp(uint256 net, uint16 feeBps) public pure returns (uint256) {
+        require(feeBps <= 50, "fee");
+        return (net * BPS + (BPS - feeBps) - 1) / (BPS - feeBps);
     }
 
     function amountIn(uint256 reserveIn, uint256 reserveOut, uint256 amountOut, uint256 feeBps)
@@ -82,14 +90,21 @@ contract FlashSizer {
             owed = amountIn(c.reserveMusd, c.reserveBtc, flash, c.fee);
             if (owed == 0) return (false, 0, 0);
         }
-        minted = owed < c.minAmt ? c.minAmt : owed;
+        minted = grossUp(owed, c.coilFeeBps);
+        if (minted < c.minAmt) minted = c.minAmt;
         uint256 coll = c.collNow + c.deposit + flash;
         if (coll == 0) return (false, 0, 0);
-        if (c.exists && minted == 0) {
-            if (c.debtNow == 0) return (true, 0, 0);
-            return (coll * c.price / c.debtNow >= c.targetCR, 0, 0);
+        uint256 startingDebt = c.exists ? c.debtNow : 0;
+        // Existing flash increases add collateral and refinance before borrowing.
+        // Protocol refinance fees add debt without minting spendable MUSD or a Coil fee.
+        if (c.exists && (c.deposit > 0 || flash > 0) && startingDebt > c.gasComp) {
+            startingDebt += ((startingDebt - c.gasComp) * c.refiPct / 100) * c.rate / WAD;
         }
-        uint256 debt = _debt(c.exists ? c.debtNow : 0, minted, c.rate, c.gasComp);
+        if (c.exists && minted == 0) {
+            if (startingDebt == 0) return (true, 0, 0);
+            return (coll * c.price / startingDebt >= c.targetCR, 0, 0);
+        }
+        uint256 debt = _debt(startingDebt, minted, c.rate, c.gasComp);
         if (debt == 0) return (false, 0, 0);
         uint256 capDenom = c.exists ? c.mcr : c.mcr + c.openHeadroom;
         if (debt > coll * c.price / capDenom) return (false, 0, 0);

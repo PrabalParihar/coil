@@ -1,0 +1,97 @@
+{
+  "scope": "Local materials only; no live chain, user, source verification or deployment proof.",
+  "validatedAtUTC": "2026-11-05T21:09:32.511531+00:00",
+  "command": "python docs/pitch/validate.py",
+  "status": "pass",
+  "pdfPages": 8,
+  "pptxSlides": 8,
+  "authoredScenes": 8,
+  "authoredDurationSeconds": 112,
+  "ffprobe": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "h264",
+        "width": 1600,
+        "height": 900,
+        "avg_frame_rate": "24/1"
+      }
+    ],
+    "format": {
+      "duration": "112.000000",
+      "size": "1402059"
+    }
+  },
+  "audio": "none; intentionally text-guided with burned-in narrative",
+  "pdfPagesRendered": 8,
+  "videoMidpointSamples": [
+    {
+      "page": 1,
+      "sampleSecond": 7.0,
+      "pdfRgbRmsDifference": 0.0,
+      "videoRgbRmsDifference": 3.1757
+    },
+    {
+      "page": 2,
+      "sampleSecond": 21.0,
+      "pdfRgbRmsDifference": 0.0,
+      "videoRgbRmsDifference": 3.0615
+    },
+    {
+      "page": 3,
+      "sampleSecond": 35.0,
+      "pdfRgbRmsDifference": 0.0,
+      "videoRgbRmsDifference": 3.338
+    },
+    {
+      "page": 4,
+      "sampleSecond": 49.0,
+      "pdfRgbRmsDifference": 0.0,
+      "videoRgbRmsDifference": 3.1179
+    },
+    {
+      "page": 5,
+      "sampleSecond": 63.0,
+      "pdfRgbRmsDifference": 0.0,
+      "videoRgbRmsDifference": 3.3901
+    },
+    {
+      "page": 6,
+      "sampleSecond": 77.0,
+      "pdfRgbRmsDifference": 0.0,
+      "videoRgbRmsDifference": 3.0967
+    },
+    {
+      "page": 7,
+      "sampleSecond": 91.0,
+      "pdfRgbRmsDifference": 0.0,
+      "videoRgbRmsDifference": 3.2048
+    },
+    {
+      "page": 8,
+      "sampleSecond": 105.0,
+      "pdfRgbRmsDifference": 0.0,
+      "videoRgbRmsDifference": 3.08
+    }
+  ],
+  "localMarkdownLinksChecked": 70,
+  "brokenLocalMarkdownLinks": [],
+  "ledgerSchemaValid": true,
+  "fundedReleaseEvidenceReady": false,
+  "pending": [
+    "completion-release deployment and successful funded receipts",
+    "full indexed source verification",
+    "3-5 recruited consenting testers",
+    "fresh public app/keeper release readback",
+    "separate mainnet go-live gates"
+  ],
+  "sha256": {
+    "docs/pitch/slides.json": "52b2f988beb0bdc595d4bd7db58a8aa0582d60c02efdff85d3e73c0543a2cea9",
+    "docs/pitch/generate.py": "c139597ac42917fddf3b4c510b234b77e947799964adb58982d01b7bd76010d0",
+    "docs/pitch/coil-wave2-deck.pdf": "cea64a6352469b30640d65da17f4fae2e99e7237d614216da84fbe0539b86ec7",
+    "docs/pitch/coil-wave2-deck.pptx": "2e67d22e37ca2162cbbf03cdfde4ff0a3c713c861c39971be813c36d3b75b3b3",
+    "docs/pitch/coil-wave2-pitch.mp4": "8b33c62352653a5c3adc2b41f28baa1e685b37a1f823482ec7f7ce6c99754ab3",
+    "docs/pitch/coil-wave2-pitch.srt": "7eda210f8a9553434c7966ed986820074dd6a30e00700c2af51d0da1bfc95fbf"
+  }
+}

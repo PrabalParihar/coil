@@ -24,19 +24,23 @@ jobs:
         with:
           version: v1.8.5
 
+      - name: offline verification command checks
+        run: bash scripts/verification.test.sh
+
       # Exits non-zero when any contract runtime exceeds EIP-170 (24,576 bytes).
       - name: contract sizes
         run: forge build --sizes
 
       - name: tests
-        run: forge test
+        # Rebuild every linked library together; do not reuse mixed incremental artifacts.
+        run: forge test --force
 
       # Broadcasts only to a local anvil fork. The anvil key is the public
       # default account and is not a deployer key. Do not point this at Mezo.
       - name: deploy dry-run
         run: |
           set -euo pipefail
-          anvil --fork-url https://rpc.test.mezo.org --hardfork shanghai --port 18545 > /tmp/anvil.log 2>&1 &
+          anvil --fork-url https://rpc.test.mezo.org --chain-id 31611 --hardfork shanghai --port 18545 > /tmp/anvil.log 2>&1 &
           ANVIL_PID=$!
           trap 'kill "$ANVIL_PID" >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 60); do
@@ -47,6 +51,7 @@ jobs:
           done
           cast block-number --rpc-url http://127.0.0.1:18545
           PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+            COIL_CHAIN_ID=31611 \
             forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:18545 --broadcast
 
   keeper:
@@ -66,6 +71,11 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run check
+      - name: deployment metadata and release proof checks
+        working-directory: .
+        run: |
+          node scripts/deployments.cjs --check
+          node --test scripts/*.test.cjs
 
   web:
     name: web image and HTTP checks
@@ -85,7 +95,7 @@ jobs:
             if curl --fail --silent http://127.0.0.1:41823/ >/dev/null; then break; fi
             sleep 1
           done
-          for route in / /guard /stats; do
+          for route in / /guard /stats /keeper; do
             curl --fail --silent --show-error "http://127.0.0.1:41823$route" -o /tmp/coil-page.html
             python3 -c 'from pathlib import Path; s = Path("/tmp/coil-page.html").read_text(); assert "Coil Labs" in s and "</html>" in s'
           done

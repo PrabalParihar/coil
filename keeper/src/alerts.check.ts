@@ -66,3 +66,10 @@ await notify(null, "nope", async () => {
 });
 
 console.log("alerts ok");
+
+const safeLines: string[] = [];
+await notify(tg, "rescue", async () => ({ ok: false, status: 401, text: async () => "provider echoed 123:secret / sensitive" }), (line) => safeLines.push(line));
+if (safeLines.some((line) => line.includes("secret") || line.includes("sensitive"))) throw new Error("Telegram response echoed a secret into logs");
+await notify(tg, "rescue", async () => { throw new Error("URL contains 123:secret"); }, (line) => safeLines.push(line));
+if (safeLines.some((line) => line.includes("secret"))) throw new Error("Telegram transport leaked a secret");
+console.log("Telegram provider/network error redaction checks passed");

@@ -1,3 +1,4 @@
+import { deployment, selectedChain } from "@/lib/network";
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 import { Providers } from "./providers";
@@ -27,7 +28,7 @@ export const metadata: Metadata = {
     "One-transaction BTC leverage on MUSD. Coil Labs borrows with a Mezo Pools flash swap and posts the BTC back at the ratio you pick. A keeper can only make the position safer, and earns MEZO when it does.",
   openGraph: {
     title: "Coil Labs — BTC leverage on Mezo",
-    description: "Flash-swap leverage on MUSD. A keeper can only make the position safer, paid in MEZO. Live on Mezo testnet.",
+    description: `Flash-swap leverage on MUSD. Risk-reducing keeper actions, paid in MEZO. ${selectedChain.name}: ${deployment.status} deployment.`,
     url: "https://coil.up.railway.app",
     siteName: "Coil Labs",
     type: "website",
@@ -35,7 +36,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Coil Labs — BTC leverage on Mezo",
-    description: "Flash-swap leverage on MUSD. A keeper can only make the position safer, paid in MEZO. Live on Mezo testnet.",
+    description: `Flash-swap leverage on MUSD. Risk-reducing keeper actions, paid in MEZO. ${selectedChain.name}: ${deployment.status} deployment.`,
   },
 };
 

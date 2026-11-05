@@ -2,6 +2,7 @@
 pragma solidity 0.8.24;
 
 import {IBorrowerOperations, ITroveManager, IPool, IPoolFactory, IERC20} from "../interfaces/Mezo.sol";
+import {PriceMin} from "./PriceMin.sol";
 import {FlashSizer} from "./FlashMath.sol";
 import {CoilLegacy} from "./CoilLegacy.sol";
 import {CoilPark} from "../CoilPark.sol";
@@ -22,6 +23,7 @@ library CoilExit {
 
     error MinDebt();
     error Slippage();
+    error RecoveryMode();
 
     /// @notice Pull up to `need` parked MUSD onto this clone. Does not repay.
     function pullReserve(address park_, uint256 need) public returns (uint256 pulled) {
@@ -45,18 +47,12 @@ library CoilExit {
     /// @dev True when selling `btcIn` for `musdOut` stays inside the oracle cap. No precompile calls.
     function oracleAllows(uint256 btcIn, uint256 musdOut, uint256 price, uint256 slippageBps) public pure returns (bool) {
         if (btcIn == 0 || musdOut == 0 || price == 0) return false;
-        uint256 fairBtc = musdOut * WAD / price;
-        if (fairBtc == 0) return false;
-        return btcIn <= fairBtc * (BPS + slippageBps) / BPS;
+        uint256 floor = PriceMin.stableOutMin(btcIn, 18, price, 18, slippageBps);
+        return floor != 0 && musdOut >= floor;
     }
 
     /// @notice Owner unwind. Spends parked MUSD first.
-    /// @dev A keeper cannot call this. When the oracle cap would reject the flash, the
-    ///      owner still flashes if the BTC owed is strictly under the collateral. That
-    ///      bound is the way out: the close pays the live pool price and cannot spend
-    ///      more BTC than the trove holds. The Wave 1 router sale runs only when a flash
-    ///      does not fit. Stacking both on the happy path would blow Mezo's 20-precompile cap,
-    ///      and the BTC precompile allows only one Wave 1 sale per transaction.
+    /// @dev All pool fills obey PriceMin. Direct MUSD repayment remains independent of pool pricing.
     /// @return musdToFlash MUSD the caller must flash-borrow. Zero when this call finished the unwind.
     /// @return emitUnwind Caller should sweep and emit `Unwound`. False when `unwindSale` already did.
     function stageUnwind(
@@ -71,6 +67,8 @@ library CoilExit {
         uint256 debt = ITroveManager(e.troveManager).getTroveDebt(address(this));
         uint256 net = debt - GAS_COMPENSATION;
         bool full = fractionWad == WAD;
+        bool recovery = ITroveManager(e.troveManager).checkRecoveryMode(price);
+        if (full && recovery) revert RecoveryMode();
         uint256 toRepay = full ? net : net * fractionWad / WAD;
         if (!full && net - toRepay < IBorrowerOperations(e.borrowerOperations).minNetDebt()) revert MinDebt();
 
@@ -90,6 +88,7 @@ library CoilExit {
             return (0, true);
         }
 
+        if (recovery) revert RecoveryMode();
         if (_factoryPaused(e)) {
             if (full) {
                 CoilLegacy.unwindAll(e, price, rescueBps);
@@ -110,7 +109,7 @@ library CoilExit {
 
         uint256 short = toRepay - have;
         (uint256 btcOwed, uint256 coll) = _quoteBtcIn(e, pool, sizer_, short);
-        // Owner exit. The oracle cap is not applied. `btcOwed < coll` is the max BTC in.
+        if (!oracleAllows(btcOwed, short, price, rescueBps)) revert Slippage();
         if (btcOwed != 0 && btcOwed < coll) return (short, true);
 
         if (full) {
@@ -136,15 +135,18 @@ library CoilExit {
         address sizer_,
         uint256 targetCR,
         uint256 price,
-        uint256 rescueBps
+        uint256 rescueBps,
+        bool quiet
     ) public returns (uint256 musdToFlash) {
         uint256 spent = CoilLegacy.applyReserve(e, park_, targetCR, price);
         if (!_active(e) || _cr(e, price) >= targetCR) return 0;
+        if (ITroveManager(e.troveManager).checkRecoveryMode(price)) return 0;
         if (_factoryPaused(e)) {
             if (spent != 0) {
                 emit PartialRescue(spent, _cr(e, price));
                 return 0;
             }
+            if (quiet) return 0;
             CoilLegacy.deleverIter(e, targetCR, price, rescueBps);
             return 0;
         }
@@ -155,8 +157,8 @@ library CoilExit {
             return 0;
         }
         if (btcOwed == 0 || btcOwed >= coll || !oracleAllows(btcOwed, musdOut, price, rescueBps)) {
-            if (spent == 0) revert Slippage();
-            emit PartialRescue(spent, _cr(e, price));
+            if (spent == 0 && !quiet) revert Slippage();
+            if (spent != 0) emit PartialRescue(spent, _cr(e, price));
             return 0;
         }
         return musdOut;

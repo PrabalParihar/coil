@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
+import {VmSafe} from "forge-std/Vm.sol";
 import {Test, console2, Vm} from "forge-std/Test.sol";
 import {CoilAccount} from "../src/CoilAccount.sol";
 import {CoilFactory} from "../src/CoilFactory.sol";
@@ -133,6 +134,397 @@ contract CoilForkTest is Test {
             MezoAddresses.TESTNET_MUSD_BTC_POOL
         );
         factory = new CoilFactory(address(implementation), address(this));
+        factory.setPositionLimits(100 ether, 10_000_000e18);
+        factory.unpauseOpens();
+    }
+
+    function test_wave2_policyStartsPausedAndRejectsInvalidAuthority() public {
+        CoilFactory fresh = new CoilFactory(address(implementation), address(this));
+        (bool ok, bytes memory data) = address(fresh).staticcall(abi.encodeWithSignature("coilFeeBps()"));
+        assertTrue(ok, "fee getter absent");
+        assertEq(abi.decode(data, (uint16)), 25);
+        (ok, data) = address(fresh).staticcall(abi.encodeWithSignature("opensPaused()"));
+        assertTrue(ok); assertTrue(abi.decode(data, (bool)));
+        (ok,) = address(fresh).call(abi.encodeWithSignature("unpauseOpens()")); assertFalse(ok);
+        (ok,) = address(fresh).call(abi.encodeWithSignature("setCoilFee(uint16)", uint16(0))); assertFalse(ok);
+        (ok,) = address(fresh).call(abi.encodeWithSignature("setCoilFee(uint16)", uint16(51))); assertFalse(ok);
+        vm.prank(makeAddr("stranger"));
+        (ok,) = address(fresh).call(abi.encodeWithSignature("setCoilFee(uint16)", uint16(50))); assertFalse(ok);
+        (ok,) = address(fresh).call(abi.encodeWithSignature("setCoilFee(uint16)", uint16(50))); assertTrue(ok);
+    }
+
+    function test_wave2_feeDriftAndExactFlashFee() public {
+        (address user, CoilAccount account) = _openAccount();
+        (bool ok,) = address(factory).call(abi.encodeWithSignature("setCoilFee(uint16)", uint16(50)));
+        assertTrue(ok, "fee setter absent");
+        vm.prank(user);
+        (ok,) = address(account).call{value: 0.2 ether}(abi.encodeWithSignature("flashLoop(uint256,uint256,uint16)", 1.5e18, 50, uint16(25)));
+        assertFalse(ok, "stale fee acceptance");
+        uint256 before = IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(address(this));
+        vm.prank(user);
+        (ok,) = address(account).call{value: 0.2 ether}(abi.encodeWithSignature("flashLoop(uint256,uint256,uint16)", 1.5e18, 50, uint16(50)));
+        assertTrue(ok, "fee accepted open");
+        uint256 gross = ITroveManager(MezoAddresses.TESTNET_TROVE_MANAGER).getTrovePrincipal(address(account)) - 200e18;
+        // Principal includes the 0.1% protocol borrowing fee. Recover received notional to one wei.
+        gross = (gross * 1000 + 1000) / 1001;
+        assertApproxEqAbs(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(address(this)) - before, gross * 50 / 10000, 1);
+        assertGe(account.position().cr, 1.5e18);
+    }
+
+    function test_wave2_realRecoveryRepayAndLaterDirectClose() public {
+        (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.5e18, 50);
+        uint256 debt = account.position().debt;
+        uint256 coll = account.position().collateral;
+        deal(MezoAddresses.TESTNET_MUSD, user, debt);
+        vm.prank(user); IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), debt);
+        _mockPrice(spot / 1000);
+        assertTrue(ITroveManager(MezoAddresses.TESTNET_TROVE_MANAGER).checkRecoveryMode(spot / 1000), "real system RM");
+        vm.prank(address(account));
+        vm.expectRevert(bytes("BorrowerOps: Operation not permitted during Recovery Mode"));
+        IBorrowerOperations(MezoAddresses.TESTNET_BORROWER_OPERATIONS).closeTrove();
+        vm.prank(user);
+        (bool ok, bytes memory data) = address(account).call(abi.encodeWithSignature("repayWithMUSD(uint256)", 100e18));
+        assertTrue(ok, "RM repayment missing"); assertEq(abi.decode(data, (uint256)), 100e18);
+        assertEq(account.position().collateral, coll); assertEq(account.position().debt, debt - 100e18);
+        vm.startPrank(user);
+        account.moveReserve(50e18, false);
+        account.setGuard(1.5e18, 2e18, 0);
+        vm.stopPrank();
+        assertTrue(account.guard(), "real RM guard must use pure reserve repayment");
+        assertEq(account.position().collateral, coll, "RM rescue cannot withdraw collateral");
+        assertEq(account.position().debt, debt - 150e18);
+        assertEq(account.park().assetsOf(address(account)), 0);
+        assertFalse(account.guard(), "empty reserve RM guard must be quiet");
+        vm.prank(user);
+        (ok,) = address(account).call(abi.encodeWithSignature("closeWithMUSD(uint256)", debt)); assertFalse(ok, "RM close forbidden");
+        _mockPrice(_oracleAbovePool(400));
+        vm.prank(user);
+        (ok,) = address(account).call(abi.encodeWithSignature("closeWithMUSD(uint256)", debt)); assertTrue(ok, "direct exit missing");
+        assertFalse(account.position().active);
+    }
+
+    function test_wave2_A9_guardUnsafeEmptyReserveNoTip() public {
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, uint256(4e18)/3, 50);
+        vm.prank(user); account.setGuard(1.5e18, 2.2e18, 0, 5e18);
+        _mintMezo(address(account), 10e18);
+        uint256 coll = account.position().collateral; uint256 debt = account.position().debt;
+        _mockPrice(_oracleAbovePool(400));
+        address caller = makeAddr("sandwicher");
+        vm.prank(caller); assertFalse(account.guard());
+        assertEq(account.position().collateral, coll); assertEq(account.position().debt, debt);
+        assertEq(IERC20(MezoAddresses.MEZO).balanceOf(caller), 0);
+    }
+
+    function test_wave2_A9_ownerFlashCloseOutsideBound() public {
+        (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.5e18, 50);
+        _mockPrice(_oracleAbovePool(400));
+        vm.prank(user); vm.expectRevert(CoilAccount.Slippage.selector); account.flashUnwind(1e18);
+    }
+
+    function test_wave2_loweredCapsPauseStillAllowOwnerRiskReduction() public {
+        (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.5e18, 50);
+        (bool ok,) = address(factory).call(abi.encodeWithSignature("setPositionLimits(uint256,uint256)", 1, 1));
+        assertTrue(ok, "caps absent");
+        vm.prank(user); (ok,) = address(account).call{value: 0.01 ether}(abi.encodeWithSignature("flashLoop(uint256,uint256)", 1.5e18, 50)); assertFalse(ok);
+        (ok,) = address(factory).call(abi.encodeWithSignature("pauseOpens()")); assertTrue(ok);
+        uint256 coll = account.position().collateral;
+        vm.prank(user); (ok,) = address(account).call{value: 0.01 ether}(abi.encodeWithSignature("addCollateral()")); assertTrue(ok, "safe topup absent");
+        assertEq(account.position().collateral, coll + 0.01 ether);
+        deal(MezoAddresses.TESTNET_MUSD, user, 100e18);
+        vm.prank(user); IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), 100e18);
+        vm.prank(user); (ok,) = address(account).call(abi.encodeWithSignature("repayWithMUSD(uint256)", 100e18)); assertTrue(ok);
+    }
+
+    function test_wave2_claimOnlyRecoveredNativeAndRejectRepeated() public {
+        (address user, CoilAccount account) = _openAccount();
+        ClaimFixture fixture = new ClaimFixture();
+        vm.etch(MezoAddresses.TESTNET_BORROWER_OPERATIONS, address(fixture).code);
+        vm.deal(MezoAddresses.TESTNET_BORROWER_OPERATIONS, 0.1 ether);
+        vm.deal(address(account), 0.02 ether);
+        uint256 before = user.balance;
+        vm.prank(user); (bool ok, bytes memory data) = address(account).call(abi.encodeWithSignature("claimCollateral()"));
+        assertTrue(ok, "claim missing"); assertEq(abi.decode(data, (uint256)), 0.1 ether);
+        assertEq(user.balance - before, 0.1 ether); assertEq(address(account).balance, 0.02 ether);
+        vm.prank(user); (ok,) = address(account).call(abi.encodeWithSignature("claimCollateral()")); assertFalse(ok);
+        vm.prank(makeAddr("thief")); (ok,) = address(account).call(abi.encodeWithSignature("claimCollateral()")); assertFalse(ok);
+    }
+
+    function test_wave2_A9_flashSizerDeleverOutsideBound() public {
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, uint256(4e18)/3, 50);
+        _mockPrice(_oracleAbovePool(400));
+        vm.prank(user); vm.expectRevert(CoilAccount.Slippage.selector); account.flashDeleverTo(2.2e18);
+    }
+
+    function test_wave2_A9_flashLoopCallbackCannotWidenOracleBound() public {
+        (address user, CoilAccount account) = _openAccount();
+        AdversePool fixture = new AdversePool(reserveMusd, reserveBtc);
+        vm.etch(MezoAddresses.TESTNET_MUSD_BTC_POOL, address(fixture).code);
+        _mockPrice(spot * 996 / 1000);
+        // Extra owner collateral makes a CR-only check insufficient to detect the bad fill.
+        vm.deal(address(account), 0.1 ether);
+        vm.prank(user); vm.expectRevert(CoilAccount.Slippage.selector);
+        account.flashLoop{value: 0.2 ether}(1.5e18, 50);
+        assertFalse(account.position().active);
+        assertEq(address(account).balance, 0.1 ether);
+    }
+
+    function test_wave2_flashIncreaseAccountsForFeeAndRefinance() public {
+        (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.7e18, 50);
+        uint256 debt = account.position().debt;
+        vm.prank(user); account.flashLoop{value: 0.1 ether}(1.5e18, 50);
+        assertGt(account.position().debt, debt);
+        assertGe(account.position().cr, 1.5e18);
+    }
+
+    function test_wave2_guardianCanPauseOnlyAndHeartbeatAuthenticates() public {
+        address guardian = makeAddr("guardian");
+        factory.setGuardian(guardian);
+        vm.prank(guardian); factory.pauseOpens();
+        vm.prank(guardian); vm.expectRevert(CoilFactory.Ownable.selector); factory.unpauseOpens();
+        vm.prank(guardian); vm.expectRevert(CoilFactory.Ownable.selector); factory.setCoilFee(50);
+        vm.prank(guardian); vm.expectRevert(CoilFactory.Ownable.selector); factory.setFeeRecipient(guardian);
+        vm.prank(guardian); vm.expectRevert(CoilFactory.Ownable.selector); factory.setPositionLimits(1, 1);
+        vm.prank(guardian); vm.expectRevert(CoilFactory.Ownable.selector); factory.heartbeat();
+        factory.setKeeper(guardian);
+        vm.prank(guardian); factory.heartbeat();
+        factory.unpauseOpens(); assertFalse(factory.opensPaused());
+    }
+
+    function test_wave2_quoteFeesMatchGrossAndRecipientOnBothOpenPaths() public {
+        address recipient = makeAddr("fees"); factory.setFeeRecipient(recipient);
+        (address user, CoilAccount account) = _openAccount();
+        (CoilAccount.LoopQuote memory q,,, uint256 quotedFee) = account.quoteFlashLoopWithFee(0.2 ether, 1.5e18, 50);
+        assertEq(quotedFee, q.musdMinted * 25 / 10000);
+        vm.prank(user); account.flashLoop{value: 0.2 ether}(1.5e18, 50, 25);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(recipient), quotedFee);
+        assertEq(account.position().debt, q.debt);
+        (user, account) = _openAccount();
+        vm.recordLogs();
+        vm.prank(user); account.loop{value: 0.2 ether}(2e18, 50, 25);
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        uint256 paid;
+        for (uint256 i; i < entries.length; ++i) {
+            if (entries[i].emitter != address(account) || entries[i].topics[0] != keccak256("CoilFeePaid(address,uint256,uint256)")) continue;
+            (uint256 gross, uint256 fee) = abi.decode(entries[i].data, (uint256,uint256));
+            assertEq(fee, gross * 25 / 10000); paid += fee;
+        }
+        assertGt(paid, 0);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(recipient), quotedFee + paid);
+        (q, quotedFee) = account.quoteLoopWithFee(0.2 ether, 2e18, 50);
+        // Two borrowing rounds each round down independently.
+        assertLe(quotedFee, q.musdMinted * 25 / 10000);
+        assertApproxEqAbs(quotedFee, q.musdMinted * 25 / 10000, 1);
+    }
+
+    function test_wave2_ownerRepayCapsAtMinimumAndPreservesBalances() public {
+        (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.5e18, 50);
+        uint256 debt = account.position().debt;
+        deal(MezoAddresses.TESTNET_MUSD, user, debt);
+        deal(MezoAddresses.TESTNET_MUSD, address(account), 17e18);
+        uint256 feesBefore = IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient());
+        vm.prank(user); IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), debt);
+        vm.prank(user); uint256 paid = account.repayWithMUSD(debt);
+        assertEq(account.position().debt, 2000e18);
+        assertEq(paid, debt - 2000e18);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(user), 2000e18);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(address(account)), 17e18);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient()), feesBefore);
+        vm.prank(user); assertEq(account.repayWithMUSD(1e18), 0);
+        vm.prank(makeAddr("thief")); vm.expectRevert(CoilAccount.NotOwner.selector); account.repayWithMUSD(1e18);
+        vm.prank(makeAddr("thief")); vm.expectRevert(CoilAccount.NotOwner.selector); account.closeWithMUSD(1e18);
+        vm.prank(makeAddr("thief")); vm.expectRevert(CoilAccount.NotOwner.selector); account.addCollateral();
+    }
+
+    function test_wave2_claimReentrancyBlocked() public {
+        ReenteringOwner receiver = new ReenteringOwner();
+        vm.prank(address(receiver));
+        CoilAccount account = CoilAccount(payable(factory.createAccount()));
+        receiver.setAccount(account);
+        ClaimFixture fixture = new ClaimFixture();
+        vm.etch(MezoAddresses.TESTNET_BORROWER_OPERATIONS, address(fixture).code);
+        vm.deal(MezoAddresses.TESTNET_BORROWER_OPERATIONS, 0.1 ether);
+        vm.prank(address(receiver)); account.claimCollateral();
+        assertTrue(receiver.attempted()); assertFalse(receiver.reentered());
+        assertEq(address(receiver).balance, 0.1 ether);
+    }
+
+    function test_wave2_changedPathPrecompileBudgetMeasured() public {
+        _etchFeed(spot, block.timestamp);
+        (address user, CoilAccount account) = _openAccount();
+        vm.startStateDiffRecording(); vm.prank(user); account.flashLoop{value: 0.2 ether}(1.5e18, 50, 25);
+        _assertPrecompileTrace("flash open");
+        vm.startStateDiffRecording(); vm.prank(user); account.flashLoop{value: 0.1 ether}(1.4e18, 50, 25);
+        _assertPrecompileTrace("flash increase");
+        vm.startStateDiffRecording(); vm.prank(user); account.addCollateral{value: 0.01 ether}();
+        _assertPrecompileTrace("topup");
+        deal(MezoAddresses.TESTNET_MUSD, user, account.position().debt);
+        vm.prank(user); IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), type(uint256).max);
+        vm.startStateDiffRecording(); vm.prank(user); account.repayWithMUSD(100e18);
+        _assertPrecompileTrace("owner repay");
+        vm.startStateDiffRecording(); vm.prank(user); account.closeWithMUSD(type(uint256).max);
+        _assertPrecompileTrace("owner close");
+        (user, account) = _openAccount();
+        vm.startStateDiffRecording(); vm.prank(user); account.loop{value: 0.2 ether}(2e18, 50, 25);
+        _assertPrecompileTrace("router open");
+        deal(MezoAddresses.TESTNET_MUSD, user, 20e18);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), 20e18);
+        account.moveReserve(20e18, false);
+        account.setGuard(2.2e18, 2.5e18, 0, 1e18);
+        vm.stopPrank();
+        _mintMezo(address(account), 2e18);
+        uint256 fees = IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient());
+        vm.startStateDiffRecording(); assertTrue(account.guard());
+        _assertPrecompileTrace("reserve plus flash guard and tip");
+        vm.startStateDiffRecording(); vm.prank(user); account.flashUnwind(1e18);
+        _assertPrecompileTrace("flash close");
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient()), fees);
+    }
+
+    function _assertPrecompileTrace(string memory path) internal {
+        Vm.AccountAccess[] memory calls = vm.stopAndReturnStateDiff();
+        uint256 count; uint256 feeds;
+        for (uint256 i; i < calls.length; ++i) {
+            if (calls[i].kind != VmSafe.AccountAccessKind.Call && calls[i].kind != VmSafe.AccountAccessKind.StaticCall) continue;
+            if (calls[i].account == MezoAddresses.TESTNET_PRICE_FEED) { count += 2; feeds++; }
+            if (calls[i].account == MezoAddresses.BTC || calls[i].account == MezoAddresses.MEZO) {
+                bytes4 sel = bytes4(calls[i].data);
+                // deposit/withdraw only exist on the fork WBTC substitute, never on the native precompile.
+                if (sel != bytes4(keccak256("deposit()")) && sel != bytes4(keccak256("withdraw(uint256)"))) count++;
+            }
+        }
+        emit log_named_uint(path, count);
+        if (keccak256(bytes(path)) != keccak256("surplus claim")) assertGt(feeds, 0, "trace must observe feed calls");
+        assertLe(count, 20, path);
+    }
+
+    function test_wave2_callbackRejectsMissingActualBTC() public {
+        (address user, CoilAccount account) = _openAccount();
+        NoDeliveryPool fixture = new NoDeliveryPool(reserveMusd, reserveBtc);
+        vm.etch(MezoAddresses.TESTNET_MUSD_BTC_POOL, address(fixture).code);
+        vm.deal(address(account), 0.6 ether);
+        uint256 fees = IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient());
+        vm.prank(user); vm.expectRevert(CoilAccount.Slippage.selector);
+        account.flashLoop{value: 0.2 ether}(1.5e18, 50);
+        assertFalse(account.position().active);
+        assertEq(address(account).balance, 0.6 ether);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient()), fees);
+    }
+
+    function test_wave2_callbackRejectsMissingActualMUSD() public {
+        (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.5e18, 50);
+        vm.prank(user); account.setGuard(1.8e18, 2.2e18, 0, 5e18);
+        deal(MezoAddresses.TESTNET_MUSD, address(account), 100_000e18);
+        (uint256 rm, uint256 rb,) = IPoolView(MezoAddresses.TESTNET_MUSD_BTC_POOL).getReserves();
+        NoDeliveryPool fixture = new NoDeliveryPool(rm, rb);
+        vm.etch(MezoAddresses.TESTNET_MUSD_BTC_POOL, address(fixture).code);
+        uint256 coll = account.position().collateral;
+        vm.expectRevert(CoilAccount.Slippage.selector); account.guard();
+        assertEq(account.position().collateral, coll);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(address(account)), 100_000e18);
+    }
+
+    function test_wave2_guardCallbackSandwichRollsBackReserveAndTip() public {
+        (address user, CoilAccount account) = _flashOpen(0.02 ether, uint256(4e18)/3, 50);
+        vm.prank(user); account.setGuard(1.5e18, 2.2e18, 0, 5e18);
+        deal(MezoAddresses.TESTNET_MUSD, user, 10e18);
+        vm.startPrank(user);
+        IERC20(MezoAddresses.TESTNET_MUSD).approve(address(account), 10e18);
+        account.moveReserve(10e18, false);
+        vm.stopPrank();
+        _mintMezo(address(account), 5e18);
+        uint256 coll = account.position().collateral;
+        uint256 debt = account.position().debt;
+        (uint256 rm, uint256 rb,) = IPoolView(MezoAddresses.TESTNET_MUSD_BTC_POOL).getReserves();
+        SaleAdversePool fixture = new SaleAdversePool(rm, rb);
+        vm.etch(MezoAddresses.TESTNET_MUSD_BTC_POOL, address(fixture).code);
+        _mockPrice(_oracleAbovePool(180));
+        address caller = makeAddr("callback-sandwicher");
+        vm.prank(caller); vm.expectRevert(CoilAccount.Slippage.selector); account.guard();
+        assertEq(account.position().collateral, coll); assertEq(account.position().debt, debt);
+        assertEq(account.park().assetsOf(address(account)), 10e18);
+        assertEq(IERC20(MezoAddresses.MEZO).balanceOf(caller), 0);
+        assertEq(IERC20(MezoAddresses.MEZO).balanceOf(address(account)), 5e18);
+    }
+
+    function test_wave2_realSurplusPoolClaimAndBudget() public {
+        (address user, CoilAccount account) = _openAccount();
+        (bool ok, bytes memory data) = MezoAddresses.TESTNET_BORROWER_OPERATIONS.staticcall(abi.encodeWithSignature("collSurplusPool()"));
+        assertTrue(ok);
+        address surplus = abi.decode(data, (address));
+        // Protocol-equivalent post-redemption surplus bookkeeping on the fork.
+        vm.prank(MezoAddresses.TESTNET_TROVE_MANAGER);
+        (ok,) = surplus.call(abi.encodeWithSignature("accountSurplus(address,uint256)", address(account), 0.1 ether));
+        assertTrue(ok);
+        (ok, data) = MezoAddresses.TESTNET_BORROWER_OPERATIONS.staticcall(abi.encodeWithSignature("activePool()"));
+        assertTrue(ok);
+        address activePool = abi.decode(data, (address));
+        vm.deal(activePool, activePool.balance + 0.1 ether);
+        vm.prank(activePool); (ok,) = surplus.call{value: 0.1 ether}("");
+        assertTrue(ok, "fund tracked surplus through ActivePool receive path");
+        vm.deal(address(account), 0.02 ether);
+        uint256 before = user.balance;
+        vm.startStateDiffRecording(); vm.prank(user); assertEq(account.claimCollateral(), 0.1 ether);
+        _assertPrecompileTrace("surplus claim");
+        assertEq(user.balance - before, 0.1 ether);
+        assertEq(address(account).balance, 0.02 ether);
+        vm.prank(user); vm.expectRevert(); account.claimCollateral();
+    }
+
+    function test_wave2_activeFlashQuoteMatchesIncreaseIncludingRefinance() public {
+        (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.7e18, 50);
+        CoilAccount.Position memory before = account.position();
+        uint256 fees = IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient());
+        (CoilAccount.LoopQuote memory q,,, uint256 quotedFee) = account.quoteFlashLoopWithFee(0.1 ether, 1.5e18, 50);
+        assertGt(q.collateral, before.collateral + 0.1 ether, "quote must include existing collateral");
+        assertGt(q.debt, before.debt, "quote must include existing debt");
+        vm.prank(user); account.flashLoop{value: 0.1 ether}(1.5e18, 50, 25);
+        assertEq(account.position().collateral, q.collateral);
+        assertEq(account.position().debt, q.debt);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient()) - fees, quotedFee);
+        assertEq(quotedFee, q.musdMinted * 25 / 10000);
+        // Active-position zero-deposit leverage is also a supported quote.
+        (q,,, quotedFee) = account.quoteFlashLoopWithFee(0, 1.4e18, 50);
+        fees = IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient());
+        vm.prank(user); account.flashLoop(1.4e18, 50, 25);
+        assertEq(account.position().debt, q.debt);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient()) - fees, quotedFee);
+        // Legacy quote keeps its documented fresh-position semantics.
+        (CoilAccount.LoopQuote memory old,,) = account.quoteFlashLoop(0.1 ether, 1.5e18, 50);
+        (CoilAccount.LoopQuote memory fresh,,) = implementation.quoteFlashLoop(0.1 ether, 1.5e18, 50);
+        assertEq(old.debt, fresh.debt);
+    }
+
+    function test_wave2_activeRouterQuoteIncludesStartingPosition() public {
+        (address user, CoilAccount account) = _open(0.15 ether, 2.2e18, 50);
+        CoilAccount.Position memory before = account.position();
+        (CoilAccount.LoopQuote memory q, uint256 quotedFee) = account.quoteLoopWithFee(0.1 ether, 2e18, 50);
+        assertGt(q.collateral, before.collateral + 0.1 ether);
+        assertGt(q.debt, before.debt);
+        uint256 fees = IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient());
+        vm.prank(user); account.loop{value: 0.1 ether}(2e18, 50, 25);
+        // Router previews retain the conservative oracle-floor fill convention.
+        assertGe(account.position().cr, q.cr);
+        assertApproxEqRel(account.position().collateral, q.collateral, 0.02e18);
+        assertApproxEqRel(account.position().debt, q.debt, 0.02e18);
+        assertApproxEqRel(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient()) - fees, quotedFee, 0.03e18);
+    }
+
+    function test_wave2_actualCapsIncludeGasAndProtocolDebtAndRollbackFees() public {
+        (address user, CoilAccount account) = _openAccount();
+        (CoilAccount.LoopQuote memory q,,,) = account.quoteFlashLoopWithFee(0.2 ether, 1.5e18, 50);
+        uint256 fees = IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient());
+        factory.setPositionLimits(q.collateral, q.debt - 1);
+        vm.prank(user); vm.expectRevert(CoilAccount.PositionLimit.selector); account.flashLoop{value: 0.2 ether}(1.5e18, 50, 25);
+        factory.setPositionLimits(q.collateral - 1, q.debt);
+        vm.prank(user); vm.expectRevert(CoilAccount.PositionLimit.selector); account.flashLoop{value: 0.2 ether}(1.5e18, 50, 25);
+        factory.setPositionLimits(100 ether, 1);
+        vm.prank(user); vm.expectRevert(CoilAccount.PositionLimit.selector); account.loop{value: 0.2 ether}(2e18, 50, 25);
+        assertEq(IERC20(MezoAddresses.TESTNET_MUSD).balanceOf(factory.feeRecipient()), fees);
+        assertFalse(account.position().active);
+        factory.setPositionLimits(q.collateral, q.debt);
+        vm.prank(user); account.flashLoop{value: 0.2 ether}(1.5e18, 50, 25);
+        assertEq(account.position().debt, q.debt);
     }
 
     function test_forkReadsLiveProtocol() public {
@@ -317,9 +709,10 @@ contract CoilForkTest is Test {
 
         vm.prank(user);
         account.setRescueSlippage(50);
+        uint256 unchangedDebt = account.position().debt;
         vm.prank(stranger);
-        vm.expectRevert(CoilAccount.Slippage.selector);
-        account.guard();
+        assertFalse(account.guard());
+        assertEq(account.position().debt, unchangedDebt);
 
         vm.prank(user);
         account.setRescueSlippage(200);
@@ -596,9 +989,12 @@ contract CoilForkTest is Test {
         (address user, CoilAccount account) = _flashOpen(0.2 ether, 1.5e18, 50);
         assertEq(account.rescueSlippageBps(), 200);
         _mockPrice(_oracleAbovePool(230));
-        uint256 before = user.balance;
         vm.prank(user);
+        vm.expectRevert(CoilAccount.Slippage.selector);
         account.flashUnwind(1e18);
+        vm.prank(user); account.setRescueSlippage(300);
+        uint256 before = user.balance;
+        vm.prank(user); account.flashUnwind(1e18);
         assertFalse(account.position().active);
         assertGt(user.balance, before);
 
@@ -608,11 +1004,10 @@ contract CoilForkTest is Test {
         vm.prank(user2);
         vm.expectRevert(CoilAccount.BadSlippage.selector);
         second.setRescueSlippage(400);
-        uint256 before2 = user2.balance;
         vm.prank(user2);
+        vm.expectRevert(CoilAccount.Slippage.selector);
         second.unwind(1e18);
-        assertFalse(second.position().active);
-        assertGt(user2.balance, before2);
+        assertTrue(second.position().active);
         _mockPrice(spot);
     }
 
@@ -647,6 +1042,7 @@ contract CoilForkTest is Test {
         small.moveReserve(dust, false);
         vm.stopPrank();
         _mockPrice(_oracleAbovePool(230));
+        vm.prank(user2); small.setRescueSlippage(300);
         vm.prank(user2);
         small.unwind(1e18);
         assertFalse(small.position().active);
@@ -707,8 +1103,7 @@ contract CoilForkTest is Test {
         assertTrue(found, "partial rescue");
 
         vm.prank(makeAddr("no-reserve"));
-        vm.expectRevert(CoilAccount.Slippage.selector);
-        bare.guard();
+        assertFalse(bare.guard());
         _mockPrice(spot);
     }
 
@@ -1020,5 +1415,71 @@ contract CoilForkTest is Test {
     function _installMezo() internal {
         MockWbtc token = new MockWbtc();
         vm.etch(MezoAddresses.MEZO, address(token).code);
+    }
+}
+
+contract ClaimFixture {
+    function claimCollateral() external {
+        uint256 amount = address(this).balance;
+        require(amount > 0, "no surplus");
+        (bool ok,) = msg.sender.call{value: amount}(""); require(ok);
+    }
+}
+
+contract AdversePool {
+    uint256 immutable rm;
+    uint256 immutable rb;
+    // Use a separate slot from the deployed pool's existing storage.
+    constructor(uint256 m, uint256 b) { rm = m; rb = b; }
+    function token0() external pure returns(address) { return MezoAddresses.TESTNET_MUSD; }
+    function stable() external pure returns(bool) { return false; }
+    function getReserves() external view returns(uint256, uint256, uint256) {
+        uint256 moved; assembly { moved := sload(10000) }
+        return (moved == 0 ? rm : rm * 1003 / 1000, rb, 0);
+    }
+    function swap(uint256 a0, uint256 a1, address to, bytes calldata data) external {
+        IERC20(MezoAddresses.BTC).transfer(to, a1);
+        assembly { sstore(10000, 1) }
+        CoilAccount(payable(to)).hook(msg.sender, a0, a1, data);
+    }
+}
+
+contract ReenteringOwner {
+    CoilAccount account;
+    bool public attempted;
+    bool public reentered;
+    function setAccount(CoilAccount next) external { account = next; }
+    receive() external payable {
+        attempted = true;
+        (reentered,) = address(account).call(abi.encodeWithSignature("claimCollateral()"));
+    }
+}
+
+contract NoDeliveryPool {
+    uint256 immutable rm;
+    uint256 immutable rb;
+    constructor(uint256 m, uint256 b) { rm = m; rb = b; }
+    function token0() external pure returns(address) { return MezoAddresses.TESTNET_MUSD; }
+    function stable() external pure returns(bool) { return false; }
+    function getReserves() external view returns(uint256, uint256, uint256) { return (rm, rb, 0); }
+    function swap(uint256 a0, uint256 a1, address to, bytes calldata data) external {
+        CoilAccount(payable(to)).hook(msg.sender, a0, a1, data);
+    }
+}
+
+contract SaleAdversePool {
+    uint256 immutable rm;
+    uint256 immutable rb;
+    constructor(uint256 m, uint256 b) { rm = m; rb = b; }
+    function token0() external pure returns(address) { return MezoAddresses.TESTNET_MUSD; }
+    function stable() external pure returns(bool) { return false; }
+    function getReserves() external view returns(uint256, uint256, uint256) {
+        uint256 moved; assembly { moved := sload(10000) }
+        return (rm, moved == 0 ? rb : rb * 1003 / 1000, 0);
+    }
+    function swap(uint256 a0, uint256 a1, address to, bytes calldata data) external {
+        IERC20(MezoAddresses.TESTNET_MUSD).transfer(to, a0);
+        assembly { sstore(10000, 1) }
+        CoilAccount(payable(to)).hook(msg.sender, a0, a1, data);
     }
 }

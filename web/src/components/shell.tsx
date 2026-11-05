@@ -1,4 +1,5 @@
 "use client";
+import { explorerUrl, selectedChain } from "@/lib/network";
 
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, ArrowUpRight, Check, X } from "lucide-react";
@@ -9,8 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 
-export const EXPLORER = "https://explorer.test.mezo.org/tx/";
-export const EXPLORER_ADDRESS = "https://explorer.test.mezo.org/address/";
+export const EXPLORER = `${explorerUrl}/tx/`;
+export const EXPLORER_ADDRESS = `${explorerUrl}/address/`;
 
 export type TxLink = { label: string; hash: `0x${string}` };
 
@@ -581,7 +582,7 @@ function StepNode({ state, n }: { state: FlowState; n: number }) {
 
 function phaseCopy(state: FlowState) {
   if (state === "sign") return "Confirm in your wallet";
-  if (state === "confirm") return "Mining on Mezo testnet";
+  if (state === "confirm") return `Mining on ${selectedChain.name}`;
   if (state === "done") return "Confirmed";
   if (state === "failed") return "Did not go through";
   return "Queued";

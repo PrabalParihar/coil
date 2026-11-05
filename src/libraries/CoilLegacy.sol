@@ -37,6 +37,8 @@ library CoilLegacy {
         address router;
         address poolFactory;
         address owner;
+        uint16 coilFeeBps;
+        address feeRecipient;
     }
 
     struct Quote {
@@ -46,7 +48,10 @@ library CoilLegacy {
         uint256 liquidationPrice;
         uint256 musdMinted;
         uint256 iterations;
+        uint256 coilFeeMusd;
     }
+
+    event CoilFeePaid(address indexed recipient, uint256 grossMinted, uint256 amount);
 
     event Looped(address indexed owner, uint256 targetCR, uint256 collateral, uint256 debt, uint256 cr);
     event Unwound(address indexed owner, uint256 fractionWad, uint256 cr);
@@ -103,26 +108,52 @@ library CoilLegacy {
     }
 
     function quoteLoop(Env memory e, uint256 collateralIn, uint256 targetCR, uint256 slippageBps_)
-        public
-        view
-        returns (Quote memory q)
+        public view returns (Quote memory)
     {
-        if (collateralIn == 0) revert ZeroAmount();
+        return _quoteLoop(e, collateralIn, targetCR, slippageBps_, false);
+    }
+
+    function quoteLoopPosition(Env memory e, uint256 collateralIn, uint256 targetCR, uint256 slippageBps_)
+        public view returns (Quote memory)
+    {
+        return _quoteLoop(e, collateralIn, targetCR, slippageBps_, _active(e));
+    }
+
+    function _quoteLoop(Env memory e, uint256 collateralIn, uint256 targetCR, uint256 slippageBps_, bool exists)
+        private view returns (Quote memory q)
+    {
+        if (!exists && collateralIn == 0) revert ZeroAmount();
         uint256 price = _price(e);
         uint256 rate = IBorrowerOperations(e.borrowerOperations).borrowingRate();
         uint8 refiPct = IBorrowerOperations(e.borrowerOperations).refinancingFeePercentage();
         uint256 coll = collateralIn;
         uint256 debt;
+        uint256 firstCap;
+        if (exists) {
+            coll += ITroveManager(e.troveManager).getTroveColl(address(this));
+            debt = ITroveManager(e.troveManager).getTroveDebt(address(this));
+            if (collateralIn == 0) {
+                if (coll * price / debt <= targetCR) revert AlreadyAtTarget();
+                firstCap = ITroveManager(e.troveManager).getTroveMaxBorrowingCapacity(address(this));
+            } else {
+                // runLoop adds collateral and refinances before its first borrowing round.
+                debt = _projectedDebt(debt, 0, rate, true, refiPct);
+                firstCap = coll * price / MCR;
+            }
+        }
 
         for (uint256 i; i < MAX_SWAPS_PER_TX; ++i) {
             if (debt != 0 && coll * price / debt <= targetCR) break;
             bool last = i + 1 == MAX_SWAPS_PER_TX;
             uint8 feePct = last ? 0 : refiPct;
             uint256 cap = debt == 0 ? coll * price / (MCR + OPEN_HEADROOM) : coll * price / MCR;
+            if (exists && i == 0) cap = firstCap;
             uint256 maxAmt = _amountFromCap(debt, cap, rate);
             uint256 amount = _borrowAmount(e, coll, debt, price, targetCR, maxAmt, slippageBps_, rate, feePct);
             if (amount == 0) break;
-            uint256 btcOut = _btcMinOut(amount, price, slippageBps_);
+            uint256 coilFee = amount * e.coilFeeBps / BPS;
+            uint256 btcOut = _btcMinOut(amount - coilFee, price, slippageBps_);
+            q.coilFeeMusd += coilFee;
             debt = _projectedDebt(debt, amount, rate, !last, feePct);
             coll += btcOut;
             q.musdMinted += amount;
@@ -456,6 +487,7 @@ library CoilLegacy {
         c.gasComp = GAS_COMPENSATION;
         c.mcr = MCR;
         c.openHeadroom = OPEN_HEADROOM;
+        c.coilFeeBps = e.coilFeeBps;
         (, uint256 owed,, bool fits) = FlashSizer(sizer_).solve(c);
         impact = fits ? FlashSizer(sizer_).impactBps(poolMusd, poolBtc, owed, fee) : type(uint256).max;
         (sensibleCR, sensibleImpact, sensibleLeverage, withinCap) =
@@ -503,7 +535,8 @@ library CoilLegacy {
             return (0, true);
         }
 
-        uint256 minBtc = _btcMinOut(amount, price, slip);
+        uint256 coilFee = amount * e.coilFeeBps / BPS;
+        uint256 minBtc = _btcMinOut(amount - coilFee, price, slip);
         if (minBtc == 0) revert Slippage();
         uint256 fee = amount * rate / WAD;
 
@@ -517,7 +550,9 @@ library CoilLegacy {
             IBorrowerOperations(e.borrowerOperations).withdrawMUSD(amount, upper, lower);
         }
 
-        uint256 btcGot = _swapMusdToBtc(e, amount, minBtc);
+        if (coilFee != 0 && !IERC20(e.musd).transfer(e.feeRecipient, coilFee)) revert TransferFailed();
+        emit CoilFeePaid(e.feeRecipient, amount, coilFee);
+        uint256 btcGot = _swapMusdToBtc(e, amount - coilFee, minBtc);
         uint256 principal = ITroveManager(e.troveManager).getTrovePrincipal(address(this));
         (address upperAdd, address lowerAdd) =
             hintPair(e, ITroveManager(e.troveManager).getTroveColl(address(this)) + btcGot, principal);
@@ -548,14 +583,14 @@ library CoilLegacy {
         if (maxAmount == 0) return 0;
         uint256 minAmount = debt == 0 ? minOpenAmount(e, rate) : 1e16;
         if (minAmount > maxAmount) return 0;
-        if (_projectedCR(coll, debt, minAmount, price, slip, rate, refiPct) < targetCR) return 0;
-        if (_projectedCR(coll, debt, maxAmount, price, slip, rate, refiPct) >= targetCR) return maxAmount;
+        if (_projectedCR(coll, debt, minAmount, price, slip, rate, refiPct, e.coilFeeBps) < targetCR) return 0;
+        if (_projectedCR(coll, debt, maxAmount, price, slip, rate, refiPct, e.coilFeeBps) >= targetCR) return maxAmount;
 
         uint256 lo = minAmount;
         uint256 hi = maxAmount;
         for (uint256 i; i < 18; ++i) {
             uint256 mid = (lo + hi + 1) / 2;
-            if (_projectedCR(coll, debt, mid, price, slip, rate, refiPct) >= targetCR) lo = mid;
+            if (_projectedCR(coll, debt, mid, price, slip, rate, refiPct, e.coilFeeBps) >= targetCR) lo = mid;
             else hi = mid - 1;
         }
         return lo;
@@ -568,9 +603,10 @@ library CoilLegacy {
         uint256 price,
         uint256 slip,
         uint256 rate,
-        uint8 refiPct
+        uint8 refiPct,
+        uint16 coilFeeBps
     ) private pure returns (uint256) {
-        uint256 btcOut = _btcMinOut(amount, price, slip);
+        uint256 btcOut = _btcMinOut(amount - amount * coilFeeBps / BPS, price, slip);
         uint256 newDebt = _projectedDebt(debt, amount, rate, true, refiPct);
         if (newDebt == 0) return type(uint256).max;
         return (coll + btcOut) * price / newDebt;
@@ -720,7 +756,7 @@ library CoilLegacy {
         );
         (bool swapOk, bytes memory swapData) = e.router.call(payload);
         if (!swapOk) {
-            assembly {
+            assembly ("memory-safe") {
                 revert(add(swapData, 32), mload(swapData))
             }
         }

@@ -5,6 +5,7 @@ export const LOG_CHUNK = 9_999n;
 
 export type ChunkLog = {
   args?: unknown;
+  logIndex?: number | null;
   blockNumber: bigint | null;
   transactionHash: `0x${string}` | null;
   address: Address;

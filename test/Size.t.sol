@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {CoilAccount} from "../src/CoilAccount.sol";
 import {CoilFactory} from "../src/CoilFactory.sol";
 import {CoilLegacy} from "../src/libraries/CoilLegacy.sol";
+import {CoilOwner} from "../src/libraries/CoilOwner.sol";
 import {CoilExit} from "../src/libraries/CoilExit.sol";
 import {MezoAddresses} from "../src/MezoAddresses.sol";
 
@@ -34,6 +35,9 @@ contract SizeTest is Test {
         address legacy = _linkedLib(address(impl), type(CoilLegacy).runtimeCode);
         address exitLib = _linkedLib(address(impl), type(CoilExit).runtimeCode);
 
+        address ownerLib = _linkedLib(address(impl), type(CoilOwner).runtimeCode);
+        assertGt(ownerLib.code.length, 0);
+        assertLt(ownerLib.code.length, EIP_170, "CoilOwner");
         assertGt(address(impl).code.length, 0);
         assertGt(address(factory).code.length, 0);
         assertGt(address(impl.sizer()).code.length, 0);
@@ -41,12 +45,12 @@ contract SizeTest is Test {
         assertGt(legacy.code.length, 0);
         assertGt(exitLib.code.length, 0);
 
-        assertLe(address(impl).code.length, EIP_170, "CoilAccount");
-        assertLe(address(factory).code.length, EIP_170, "CoilFactory");
-        assertLe(address(impl.sizer()).code.length, EIP_170, "FlashSizer");
-        assertLe(address(impl.park()).code.length, EIP_170, "CoilPark");
-        assertLe(legacy.code.length, EIP_170, "CoilLegacy");
-        assertLe(exitLib.code.length, EIP_170, "CoilExit");
+        assertLt(address(impl).code.length, EIP_170, "CoilAccount");
+        assertLt(address(factory).code.length, EIP_170, "CoilFactory");
+        assertLt(address(impl.sizer()).code.length, EIP_170, "FlashSizer");
+        assertLt(address(impl.park()).code.length, EIP_170, "CoilPark");
+        assertLt(legacy.code.length, EIP_170, "CoilLegacy");
+        assertLt(exitLib.code.length, EIP_170, "CoilExit");
     }
 
     /// @dev Same recognition as script/Deploy.s.sol. The deployed library embeds its
@@ -74,6 +78,23 @@ contract SizeTest is Test {
         bytes memory deployed = candidate.code;
         if (deployed.length == 0 || deployed.length != expected.length) return false;
         for (uint256 j; j < deployed.length;) {
+            // viaIR may encode the library's own address as a 32-byte immutable.
+            // Compare the whole word before skipping equal leading zero bytes.
+            if (
+                j > 0 && j + 33 < deployed.length && expected[j - 1] == 0x30 && deployed[j] == 0x7f
+                    && expected[j] == 0x7f && expected[j + 33] == 0x14
+            ) {
+                bytes32 actualWord;
+                bytes32 expectedWord;
+                assembly ("memory-safe") {
+                    actualWord := mload(add(deployed, add(j, 33)))
+                    expectedWord := mload(add(expected, add(j, 33)))
+                }
+                if (expectedWord == bytes32(0) && uint256(actualWord) == uint256(uint160(candidate))) {
+                    j += 33;
+                    continue;
+                }
+            }
             if (deployed[j] == expected[j]) {
                 unchecked {
                     ++j;

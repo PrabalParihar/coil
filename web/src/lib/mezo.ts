@@ -1,18 +1,9 @@
-import { defineChain } from "viem";
+import { deployment, selectedChain } from "./network";
+export { selectedChain, mezoTestnet } from "./network";
 
-export const mezoTestnet = defineChain({
-  id: 31611,
-  name: "Mezo Testnet",
-  nativeCurrency: { name: "Bitcoin", symbol: "BTC", decimals: 18 },
-  rpcUrls: { default: { http: ["https://rpc.test.mezo.org"] } },
-  blockExplorers: {
-    default: { name: "Mezo Explorer", url: "https://explorer.test.mezo.org" },
-  },
-});
+export const RPC = selectedChain.rpcUrls.default.http[0];
 
-export const RPC = mezoTestnet.rpcUrls.default.http[0];
-
-export const addr = {
+const testnetAddr = {
   btc: "0x7b7C000000000000000000000000000000000000",
   musd: "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
   borrowerOperations: "0xCdF7028ceAB81fA0C6971208e83fa7872994beE5",
@@ -25,17 +16,21 @@ export const addr = {
   sortedTroves: "0x722E4D24FD6Ff8b0AC679450F3D91294607268fA",
 } as const;
 
-/** Live Wave 2 Mezo testnet factory (reserve and peg gate). Override with NEXT_PUBLIC_COIL_FACTORY. */
-const DEPLOYED_FACTORY = "0x2218D33d2f9279A4266b49dB572F5b1343d09De5" as const;
+/** Canonical public pair; unknown/pending deployments never enable writes. */
+export const factoryAddress = (deployment.factory ?? undefined) as `0x${string}` | undefined;
+export const FACTORY_DEPLOY_BLOCK = BigInt(deployment.deploymentBlock ?? "0");
 
-/** Block of that factory deploy. /guard and /stats start their log scan here. */
-export const FACTORY_DEPLOY_BLOCK = 16_407_578n;
-
-const factoryEnv = process.env.NEXT_PUBLIC_COIL_FACTORY ?? "";
-
-export const factoryAddress = /^0x[a-fA-F0-9]{40}$/.test(factoryEnv)
-  ? (factoryEnv as `0x${string}`)
-  : DEPLOYED_FACTORY;
+export const addr = selectedChain.id === 31611 ? testnetAddr : {
+  btc: testnetAddr.btc, mezo: testnetAddr.mezo,
+  musd: "0xdD468A1DDc392dcdbEf6db6e34E89AA338F9F186",
+  borrowerOperations: "0x44b1bac67dDA612a41a58AAf779143B181dEe031",
+  troveManager: "0x94AfB503dBca74aC3E4929BACEeDfCe19B93c193",
+  sortedTroves: "0x8C5DB4C62BF29c1C4564390d10c20a47E0b2749f",
+  priceFeed: "0xc5aC5A8892230E0A3e1c473881A2de7353fFcA88",
+  router: "0x16A76d3cd3C1e3CE843C6680d6B37E9116b5C706",
+  poolFactory: "0x83FE469C636C4081b87bA5b3Ae9991c6Ed104248",
+  pool: "0x52e604c44417233b6CcEDDDc0d640A405Caacefb",
+} as const;
 
 export const ZERO = "0x0000000000000000000000000000000000000000" as const;
 
@@ -172,6 +167,11 @@ export const factoryFeeAbi = [
 ] as const;
 
 export const coilFactoryAbi = [
+  { type: "function", name: "policy", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "tuple", components: [
+    { name: "feeBps", type: "uint16" }, { name: "feeRecipient", type: "address" },
+    { name: "opensPaused", type: "bool" }, { name: "maxCollateral", type: "uint256" }, { name: "maxDebt", type: "uint256" },
+  ] }] },
+
   {
     type: "function",
     name: "createAccount",
@@ -270,7 +270,27 @@ export const positionComponents = [
   { name: "owner", type: "address" },
 ] as const;
 
+const loopQuoteComponents = [
+  { name: "collateral", type: "uint256" }, { name: "debt", type: "uint256" },
+  { name: "cr", type: "uint256" }, { name: "liquidationPrice", type: "uint256" },
+  { name: "musdMinted", type: "uint256" }, { name: "iterations", type: "uint256" },
+] as const;
+const quoteInputs = [{ name: "collateralIn", type: "uint256" }, { name: "targetCR", type: "uint256" }, { name: "slippageBps", type: "uint256" }] as const;
+
 export const coilAccountAbi = [
+  { type: "error", name: "OpensPaused", inputs: [] },
+  { type: "error", name: "PositionLimit", inputs: [] },
+  { type: "error", name: "FeeExceeded", inputs: [] },
+  { type: "function", name: "quoteLoopWithFee", stateMutability: "view", inputs: quoteInputs, outputs: [{ name: "q", type: "tuple", components: loopQuoteComponents }, { name: "coilFeeMusd", type: "uint256" }] },
+  { type: "function", name: "quoteFlashLoopWithFee", stateMutability: "view", inputs: quoteInputs, outputs: [{ name: "q", type: "tuple", components: loopQuoteComponents }, { name: "flashBtc", type: "uint256" }, { name: "poolFeeMusd", type: "uint256" }, { name: "coilFeeMusd", type: "uint256" }] },
+
+  { type: "function", name: "loop", stateMutability: "payable", inputs: [{ name: "targetCR", type: "uint256" }, { name: "maxSlippageBps", type: "uint256" }, { name: "maxCoilFeeBps", type: "uint16" }], outputs: [] },
+  { type: "function", name: "flashLoop", stateMutability: "payable", inputs: [{ name: "targetCR", type: "uint256" }, { name: "maxSlippageBps", type: "uint256" }, { name: "maxCoilFeeBps", type: "uint16" }], outputs: [] },
+  { type: "function", name: "claimCollateral", stateMutability: "nonpayable", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+  { type: "function", name: "repayWithMUSD", stateMutability: "nonpayable", inputs: [{ name: "amount", type: "uint256" }], outputs: [{ name: "", type: "uint256" }] },
+  { type: "function", name: "closeWithMUSD", stateMutability: "nonpayable", inputs: [{ name: "maxOwnerMUSD", type: "uint256" }], outputs: [] },
+  { type: "function", name: "addCollateral", stateMutability: "payable", inputs: [], outputs: [] },
+
   {
     type: "function",
     name: "loop",

@@ -1,115 +1,94 @@
 # Coil Labs security notes
 
-Testnet only. Mezo matsnet, chain id 31611. These contracts are not audited. Do not point them at mainnet funds.
+**Unaudited release candidate.** This document describes the Wave 2 completion security contract. Public legacy matsnet deployments are separate immutable builds; see [DEPLOYMENTS.md](DEPLOYMENTS.md). Source, tests, deployment and fully verified on-chain code are separate evidence gates. No mainnet go-live is authorized by this document.
 
-## Oracle
+## Oracle and pool fills
 
-Coil reads BTC/USD from the MUSD `PriceFeed` proxy at `0x86bCF0841622a5dAC14A313a15f96A95421b9366`. `fetchPrice()` is a `view`. It returns USD per 1 BTC with 18 decimals (`TARGET_DIGITS = 18` in musd `PriceFeed.sol`). It does not return an 8-decimal Chainlink answer.
+Coil uses MUSD `PriceFeed.fetchPrice()` as an 18-decimal USD-per-BTC price, not an 8-decimal raw answer. Matsnet feed proxy: `0x86bCF0841622a5dAC14A313a15f96A95421b9366`. Its upstream is the Mezo Skip Connect aggregator. Coil calls the MUSD feed and does not substitute a hard-coded or last-good price. The documented feed rejects a price older than 60 seconds; Coil lets feed errors propagate and rejects a zero price. These checks do not establish that a fresh feed is economically correct.
 
-Checked on matsnet at block 16482230: `fetchPrice()` returned `77311892590000000000000`, about $77,311.89. The upstream `decimals()` value is also 18, so the feed's own scale step is a no-op today. Coil still treats the number as 18-decimal USD per 1 BTC.
+[PriceMin](src/libraries/PriceMin.sol) defines the pool-output floors. For 18-decimal BTC/MUSD, the conceptual bounds are:
 
-The upstream is the Skip Connect aggregator at `0x7b7c000000000000000000000000000000000015`. The MUSD `PriceFeed` stores that address as a Chainlink-style aggregator and reads `latestRoundData()`. It is not the Pyth proxy. Coil does not call Skip Connect itself. It calls `PriceFeed.fetchPrice()` only. There is no hard-coded BTC price in the swap path.
+- BTC sold for MUSD: `btcIn * price / 1e18 * (10000 - boundBps) / 10000`.
+- MUSD spent for BTC: `musdIn * 1e18 / price * (10000 - boundBps) / 10000`.
 
-Sources:
+Use the library's integer arithmetic and decimal handling, rather than rearranging these conceptual formulas. Pool price/fee and protocol borrowing fee are separate from this oracle bound.
 
-- musd `PriceFeed.sol` at `da7888a10949c8a5d3f884454cec8978cfa87e48`, lines 12, 13-14, and 46-58: https://github.com/mezo-org/musd/blob/da7888a10949c8a5d3f884454cec8978cfa87e48/solidity/contracts/PriceFeed.sol#L12
-- Mezo oracle docs: https://mezo.org/docs/developers/architecture/oracles/
-- How to read the feed: https://mezo.org/docs/developers/architecture/oracles/read-oracle/
+The completion rule applies the same snapshotted valid oracle price and owner-selected bound before starting a flash and in the callback to the actual fill. It covers open/increase, flash delever, guard and owner flash close. A pool quote must not widen the oracle allowance. Callback violations revert all effects, including fees and tips. The former exception allowing an owner flash close outside the bound is removed. Direct MUSD-funded close performs no pool sale, but still obeys Mezo's closing rules.
 
-## Staleness
+Open slippage defaults to 50 bps and is owner-selected within the contract limit of 300 bps. Rescue slippage defaults to 200 bps and is owner-set, capped at 300 bps. A keeper cannot change either. The separate peg/deviation gate is an additional open check, not a replacement for PriceMin.
 
-`MAX_PRICE_DELAY` is 60 seconds. If `block.timestamp - updatedAt` is greater than 60, `fetchPrice` reverts with `PriceFeed: Oracle is stale.` It does not return a stored last-good price. The interface still mentions a last-good event. This implementation does not use one.
+## Fee authority and accepted quote
 
-Coil does not catch that revert, and it does not keep its own last price. A loop, a quote, a rescue, or a close that needs the feed fails with that same string. A second call in a later block still fails if the feed is still stale. Nothing falls back to a zero `amountOutMin`.
+The **factory owner** controls the shared Coil fee and recipient. The fee defaults to **25 bps**, accepts **1–50 bps inclusive**, and rejects zero and rates above 50. The recipient must be nonzero. Guardian, keeper and account owners cannot change that factory policy through their roles.
 
-`fetchPrice` does not reject a zero answer. Coil does. A zero price reverts `OraclePriceZero` before any swap is sized. A floor that rounds to zero reverts `Slippage` inside the router swap. The router is never called with a minimum of zero.
+The Coil fee is `floor(gross newly minted MUSD * feeBps / 10000)` on successful open/increase borrowing only. Flash execution grosses up minted MUSD conservatively so the pool is repaid after the fee, and includes gross borrowing/protocol costs in debt and CR checks. A pure refinance without new MUSD, accrued interest, guard, rescue, reserve repayment, owner repayment, delever, unwind, close and claim charge **zero Coil fee**. Protocol/pool fees and gas remain separate costs.
 
-## Slippage bound
+Execution snapshots policy and enforces the owner's submitted maximum Coil fee. A policy increase above the accepted rate before inclusion must revert. Compatibility two-argument open selectors on the new factory use the documented **50 bps maximum**; clients seeking a tighter acceptance must call the additive fee-ceiling overload. A revert rolls back fee transfers/events as well as position changes.
 
-Router swaps (`loop`, and the paused-pool sale used by unwind and de-lever) set `amountOutMin` from the feed, not from `getAmountsOut`.
+## Pause and finite opening limits
 
-- Selling BTC for MUSD: `amountIn * price / 1e18 * (10_000 - slippageBps) / 10_000`
-- Buying BTC with MUSD: `amountIn * 1e18 / price * (10_000 - slippageBps) / 10_000`
+A new factory starts with opens paused and unset limits. Owner must set finite nonzero per-account total BTC-collateral and total MUSD-debt limits before unpausing. Debt includes protocol fees and gas compensation. Actual resulting protocol balances must satisfy the limits after an open/increase. Zero is not unlimited capacity.
 
-Both tokens are 18 decimals on this path. The same helpers scale a 6 or 8 decimal token if one is ever passed in. The live pair does not use those decimals.
+Guardian may pause risk-increasing opens; only owner unpauses and configures limits/fees. Administrative Coil pause differs from external PoolFactory pause. Lowering caps or pausing must not disable repayment, guard, claim, reserve withdrawal or close. The explicit direct owner collateral-top-up action is also exempt because it reduces risk; an open/increase route does not become a cap bypass merely by attaching BTC.
 
-The open default is 50 bps (0.50% under the oracle). The clone stores that at initialization, and the desk starts there. The owner can pass 1 to 300 bps on `loop` and `flashLoop`. 50 bps is the default because the testnet pool fee is 4 bps and the book is deep (well over 1,000 BTC). Half a percent covers the fee and a small lag. A 100 bps default would leave a wider window for a sandwich. The owner can still widen a single open up to 300 bps when they choose to.
+These powers do not let an administrator withdraw user BTC/MUSD or upgrade an existing clone. Policy authority still creates availability and fee-selection trust, bounded by on-chain rate limits and each transaction's accepted maximum.
 
-Rescue sales (`guard`, `flashDeleverTo`, and the router sale when the pool factory is paused) use `rescueSlippageBps`. The default is 200 bps and the hard cap is 300 bps. Only the owner can set it. A keeper cannot. 200 bps stays the rescue default because this pool has sat about 140 bps under the oracle. A 50 bps rescue floor would skip those sales. The owner can tighten it.
+## Keeper and tip boundary
 
-Flash swaps do not take `amountOutMin`. The pool call names an exact amount out. Before that call, Coil checks the repayment against the same feed and the same bps cap. If the pool is outside the band, the transaction reverts `Slippage` (or skips the BTC sale after a reserve repayment, and emits `PartialRescue`). It does not swap at a zero floor.
+Permissionless `guard()` may use the owner's already funded MUSD reserve, then perform a permitted bounded sale toward the configured guard target. It cannot open leverage, sweep, perform an owner close, withdraw tips/reserves for itself or change owner settings. BTC and MUSD proceeds belong to the owner/account, never the guard caller.
 
-## What a keeper can do
+Tip payment requires a genuine increase in oracle-measured CR from an allowed risk-reducing operation. It is capped by configured `tipMezo` and available MEZO and pays at most once per account per block. An unchanged position, unsafe empty-reserve sale or no-op pays no tip. Reserve repayment can remain when a predictable unsafe sale is skipped; arbitrary callback/protocol failures are not masked as safe success.
 
-`guard()` is permissionless on the Wave 2 account. It de-levers toward the owner's guard target when the collateral ratio is under the floor or the trove sits inside the redemption zone. It reverts if the ratio falls (`NotSafer`). It pays `min(tipMezo, MEZO balance)` only when the ratio rose, and at most once per clone per block.
+Keeper service simulation failure prevents submission. Repeated unchanged no-op/Slippage states use bounded backoff and alert deduplication; risk-relevant changes must reset the delay promptly. Public health distinguishes read-only monitoring from execution, stale scans from fresh scans, and configured expected-keeper heartbeats from legacy permissionless event history. Neither a process start nor an old heartbeat proves continuous protection. Guards can fail on oracle staleness, pool liquidity, debt floor, protocol restrictions, funding, gas or service availability.
 
-A keeper or stranger cannot:
+## Owner actions and Recovery Mode
 
-- `loop` or `flashLoop`
-- `unwind` or `flashUnwind`
-- `sweep` or `withdrawTips`
-- `deleverTo` / `flashDeleverTo` above `guardTargetCR`
-- set `slippageBps`, `rescueSlippageBps`, or the peg bounds
-- receive the clone's BTC or MUSD (`sweep` sends leftovers to the owner)
+`claimCollateral` is owner-only and nonreentrant; it forwards only collateral actually recovered by the protocol claim, preserving unrelated balances. No surplus or repeat claims must not create a payment from other account funds.
 
-The keeper calls `guard()` (and the factory `heartbeat()` after a successful pass). It cannot choose the pool or the buyer. The owner can always unwind and close.
+`repayWithMUSD(amount)` pulls only the owner-approved MUSD that can be safely repaid above minimum remaining debt; unused requested input stays in the owner's wallet. Approve the clone, **not CoilPark**. `closeWithMUSD(maxOwnerMUSD)` combines permitted available funds and owner-approved MUSD up to that ceiling, closes only when the protocol allows it, and returns close proceeds and remaining reserve to the owner. `addCollateral()` is the separate payable owner top-up action.
 
-## Known limitations
+**Recovery Mode is not a guaranteed full exit.** Mezo blocks full close under its active protocol rules. New leverage is blocked; safe pure debt repayment and permitted reserve repayment can improve CR without withdrawing/selling collateral. Minimum-debt and system-ratio conditions still apply. Full close is submitted by the owner after Mezo permits it; there is no deferred/automatic queued close and no new keeper spending approval.
 
-Owner `unwind` and `flashUnwind` can pay the live pool price when the BTC owed is strictly under the collateral. That is the owner's way out of a pool that sits outside the rescue cap, so a close is not stuck behind 3%. A keeper cannot call unwind. If the flash does not fit, the Wave 1 router sale runs, and that sale uses the oracle floor above. It does not use a zero minimum.
+## Reserve and integration trust
 
-A reserve rescue that has already repaid parked MUSD will skip a BTC sale that fails the oracle check. The repayment stays. An empty reserve still reverts `Slippage`.
+CoilPark holds reserves outside each clone, with balances keyed by the calling clone. `sweep` does not withdraw the park. Its implementation-deployer governor can select a shared ERC-4626 adapter whose `asset()` is MUSD. That check does not prove the vault honest, liquid or safe. A malicious/misconfigured vault or vault switch can strand reserve accounting/funds. No live savings-vault or gauge address is asserted; integration remains conditional on verified chain-specific addresses and interface tests.
 
-`flashLoop` also reverts `PegOff` when the pool and the oracle differ by more than `maxPegDeviationBps` (default 200, hard cap 500), and `RecoveryMode` when the protocol is in recovery. Those checks do not make the oracle honest. They fail closed when the feed reverts or returns zero.
+Only the immutable pool may call the authenticated flash callback, and only during an initiated expected flash kind. State-changing account entry points retain reentrancy protection. Linked libraries execute with delegatecall and must be verified as part of the exact implementation build. Clones are non-upgradeable; new code requires a new implementation/factory.
 
-Coil does not call `claimCollateral`. The function is on `IBorrowerOperations` so a later surplus claim can use selector `0x6f0b0c1c`. Nothing in this change sends that transaction.
+## Verification obligations
 
-The contracts are not upgradeable per clone. This branch is not deployed. The live factory does not include the oracle floor until a new factory is broadcast. No broadcast is part of this change.
+Run the current meaningful suite and retain the controller's exact commands/results. Coverage must exercise claim ownership/balance preservation, actual protocol-equivalent RM restrictions, fee rounding/gross-up/accepted-ceiling races, pause/cap risk-reduction access, callback oracle checks, no-op/tip effects and adversarial guard movement. A selector-only test or a mocked RM flag that still permits forbidden close is insufficient. This document deliberately does not carry a test count that can drift.
 
-## Tests that pin this
+Current regression source in [test/Coil.t.sol](test/Coil.t.sol) includes the following cases. This is a coverage map, not a new passing-test or public-transaction claim; the controller records the final run separately.
 
-| Invariant | Test |
+| Boundary | Regression source |
 | --- | --- |
-| 18-decimal BTC to MUSD, and the reverse, using the block 16482230 sample | `test_btc18ToMusd18UsesEighteenDecimalPrice` |
-| 8-decimal asset scaled into 18-decimal MUSD | `test_eightDecimalAssetScalesIntoEighteenDecimalMusd` |
-| 6-decimal stable scaled both ways | `test_sixDecimalStableScalesBothWays` |
-| Zero price reverts `OraclePriceZero` | `test_zeroPriceReverts`, `test_zeroOracleDoesNotOpen` |
-| 60 seconds is fresh, 61 seconds reverts `PriceFeed: Oracle is stale.` and is not caught | `test_sixtySecondsIsFreshAndSixtyOneReverts`, `test_staleOracleRevertsOnLoop` |
-| A pool pushed outside the bound reverts, and a pool inside it opens | `test_sandwichOutsideOracleBoundReverts` |
-| `claimCollateral` selector is `0x6f0b0c1c` | `test_claimCollateralSelector` |
-| Stranger `guard()` pays MEZO only when the ratio rises, and pays no BTC or MUSD | `test_strangerGuardPaysMezoOnlyWhenSafer` |
-| An underfunded jar pays the balance and still rescues | `test_underfundedTipPaysBalance` |
-| Keeper cannot loop, unwind, sweep, or withdraw tips, and cannot aim above the guard | `test_keeperCannotLoopUnwindOrTakeTips` |
-| Fuzz: flash loop stays at or above the target | `testFuzz_flashLoopStaysAboveTarget` |
-| Invariant: handler calls never lower the ratio at a constant oracle, never send BTC or MUSD to the caller, and conserve MEZO | `invariant_keeperOnlyReducesRisk` |
-| A spoofed pool callback reverts | `test_hookRejectsSpoof` |
-| Tight slippage reverts instead of opening under the quote | `test_tightSlippageReverts` |
-| Pool about 1.4% under the oracle: `guard()` reverts at 50 bps and succeeds at the 200 bps rescue default | `test_guardSucceedsWhenPoolIsBelowOracle` |
-| Owner close at 230 bps and 400 bps off the oracle | `test_closeWhenPoolIs230And400BpsOffOracle` |
+| Paused start, fee bounds and role restrictions | `test_wave2_policyStartsPausedAndRejectsInvalidAuthority`, `test_wave2_guardianCanPauseOnlyAndHeartbeatAuthenticates` |
+| Accepted-fee drift, gross-up, recipient and quote accounting | `test_wave2_feeDriftAndExactFlashFee`, `test_wave2_quoteFeesMatchGrossAndRecipientOnBothOpenPaths`, `test_wave2_flashIncreaseAccountsForFeeAndRefinance` |
+| Fork protocol RM repayment, blocked close and later permitted funded close | `test_wave2_realRecoveryRepayAndLaterDirectClose` (injected oracle price drives the forked protocol's RM calculation) |
+| Minimum-debt repayment and unrelated balance preservation | `test_wave2_ownerRepayCapsAtMinimumAndPreservesBalances` |
+| Claim authorization, native recovered amount and reentrancy | `test_wave2_claimOnlyRecoveredNativeAndRejectRepeated`, `test_wave2_claimReentrancyBlocked` |
+| Out-of-bound owner flash close/delever and adverse open callback | `test_wave2_A9_ownerFlashCloseOutsideBound`, `test_wave2_A9_flashSizerDeleverOutsideBound`, `test_wave2_A9_flashLoopCallbackCannotWidenOracleBound` |
+| Unsafe empty-reserve guard returns false with unchanged balances/debt and no tip | `test_wave2_A9_guardUnsafeEmptyReserveNoTip` |
+| Lowered caps/pause preserve direct top-up and repayment | `test_wave2_loweredCapsPauseStillAllowOwnerRiskReduction` |
+| Instrumented changed owner-path native-call budget | `test_wave2_changedPathPrecompileBudgetMeasured` |
 
-`position()` keeps the Wave 1 tuple so existing decoders still work.
+These tests supplement the existing keeper invariant, oracle-decimal/staleness, spoofed-callback and reserve-first tests. Fork/precompile substitutes and instrumented native-call estimates remain local evidence and must not be labelled as live matsnet execution.
 
-## Flash swap
+Every runtime must remain below EIP-170's **24,576 bytes**. Mezo allows **20 native-precompile calls per transaction**; changed execution paths must be measured/instrumented, including reserve and tip branches. Historical budget constants alone do not prove new paths. Historical `docs/SLITHER.txt` is a dated tool output, not an independent audit or a current clean security result.
 
-`hook` accepts calls only from the immutable MUSD/BTC pool, and only when this account started the swap (`flashKind`). The in-flash flag is storage, not transient storage: Mezo is Shanghai and has no `TSTORE`. A revert rolls the flag back.
+The release also requires actual funded matsnet receipts and full indexed verification of every library, FlashSizer, Park, implementation and factory. The baseline production review found partial verification; queued or partial source verification must not be called complete. Mainnet additionally needs reviewed finite caps against current depth, chain-correct app/keeper configuration, rollback drill and explicit go-live approval.
 
-The pool must be passed nonempty `data` or `Pool.swap` skips the callback. Coil passes `hex"01"`.
+## Release-tool evidence boundary
 
-## Precompile budget
+The implemented manifest generator/checker is `node scripts/deployments.cjs --generate|--check`. The release CLI defaults to offline validation (`--check`), supports partial online receipt capture with `--collect`, and performs the full ready-release RPC/source/compiler/keeper/web comparison with `--online`. Offline success is explicitly `onlineVerified: false`; partial collection is not full release verification. Null deployment inputs, legacy status and missing real-user proofs fail readiness honestly. See the [exact ledger fields and modes](docs/evidence/README.md).
 
-Mezo allows 20 native precompile calls per transaction. The oracle floor does not add a `fetchPrice`. The price is read once at the start of the call. Upper bounds in `CoilAccount.precompileBudget()`:
+Account events expose `CoilFeePaid(recipient,grossMinted,amount)`, `CollateralClaimed(owner,amount)`, `MUSDRepaid(owner,amount)` and `ClosedWithMUSD(owner,ownerMUSD)`. A successful receipt/selector check does not replace review of actual state and event amounts. The collector cannot establish a genuine rescue solely from successful `guard()` execution.
 
-| Path | Calls |
-| --- | --- |
-| Flash loop, new trove | 7 |
-| Flash unwind / close | 8 |
-| Flash de-lever | 10 |
-| `guard()` including the MEZO tip | 12 |
-
-`loop()` still stops after two swaps (about 2x) and remains the fallback when the pool is paused.
+Optional web `NEXT_PUBLIC_KEEPER_STATUS_URL` reads the keeper's public `/status` endpoint. The client validates chain/factory/expected signer, epoch-millisecond timestamps and the allowed public schema, expires stale status and keeps service mode separate from chain evidence. `/health` returns availability based on fresh successful scans, not process startup; monitoring mode remains labelled. No key, environment dump or credential-bearing endpoint belongs in these responses or this public build variable.
 
 ## Reporting
 
-Open a GitHub issue: https://github.com/PrabalParihar/coil/issues
+Report issues at https://github.com/PrabalParihar/coil/issues. Include public chain ID, factory/account, transaction hash, expected behavior and observed behavior. Do not include keys, seed phrases, tokens or private RPC credentials. Use local/fork or testnet reproduction; do not use mainnet funds to demonstrate a problem.
 
-Include the matsnet transaction hash (chain 31611), the account address, and what you expected. Do not include a private key, a seed phrase, or an API token. Do not use mainnet funds to demonstrate a problem. This repository is testnet only.
+Reference oracle behavior: [MUSD PriceFeed source](https://github.com/mezo-org/musd/blob/da7888a10949c8a5d3f884454cec8978cfa87e48/solidity/contracts/PriceFeed.sol), [Mezo oracle documentation](https://mezo.org/docs/developers/architecture/oracles/).

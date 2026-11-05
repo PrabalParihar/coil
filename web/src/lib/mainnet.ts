@@ -1,15 +1,9 @@
-import { createPublicClient, defineChain, http } from "viem";
+import { createPublicClient, http } from "viem";
 import { borrowerAbi, factoryFeeAbi, poolAbi, priceFeedAbi } from "./mezo";
 import type { Market } from "./quote";
 
-/** Read-only. Coil is not deployed here. */
-export const mezoMainnet = defineChain({
-  id: 31612,
-  name: "Mezo",
-  nativeCurrency: { name: "Bitcoin", symbol: "BTC", decimals: 18 },
-  rpcUrls: { default: { http: ["https://rpc-http.mezo.boar.network"] } },
-  blockExplorers: { default: { name: "Mezo Explorer", url: "https://explorer.mezo.org" } },
-});
+import { mezoMainnet } from "./network";
+export { mezoMainnet } from "./network";
 
 export const mainnetAddr = {
   musd: "0xdD468A1DDc392dcdbEf6db6e34E89AA338F9F186",

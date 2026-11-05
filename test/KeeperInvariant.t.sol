@@ -187,6 +187,8 @@ contract KeeperInvariantTest is Test {
             MezoAddresses.TESTNET_MUSD_BTC_POOL
         );
         CoilFactory factory = new CoilFactory(address(implementation), address(this));
+        factory.setPositionLimits(100 ether, 10_000_000e18);
+        factory.unpauseOpens();
         address user = makeAddr("invariant-owner");
         vm.deal(user, 2 ether);
         vm.prank(user);

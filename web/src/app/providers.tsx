@@ -10,13 +10,15 @@ import { getXverseWallet } from "@mezo-org/orangekit/dist/src/wallet/xverse/rain
 import { createContext, useContext, useEffect, useState } from "react";
 import { WagmiProvider, createConfig, http, type Config } from "wagmi";
 import { injected } from "wagmi/connectors";
-import { mezoTestnet } from "@/lib/mezo";
+import { selectedChain as mezoTestnet } from "@/lib/mezo";
+import { mezoMainnet, mezoTestnet as testnetChain, walletConnectProjectId } from "@/lib/network";
 
 const fallbackConfig = createConfig({
   chains: [mezoTestnet],
   connectors: [injected()],
   transports: {
-    [mezoTestnet.id]: http(mezoTestnet.rpcUrls.default.http[0]),
+    31611: http(testnetChain.rpcUrls.default.http[0]),
+    31612: http(mezoMainnet.rpcUrls.default.http[0]),
   },
   ssr: true,
 });
@@ -49,7 +51,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const passport = config !== fallbackConfig;
 
   useEffect(() => {
-    const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "coil-labs-mezo-testnet";
+    const projectId = walletConnectProjectId ?? "";
     const next = getDefaultConfig({
       appName: "Coil Labs",
       projectId,
@@ -61,7 +63,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         },
         {
           groupName: "Ethereum",
-          wallets: [injectedWallet, walletConnectWallet],
+          wallets: walletConnectProjectId ? [injectedWallet, walletConnectWallet] : [injectedWallet],
         },
       ],
       multiInjectedProviderDiscovery: true,

@@ -1,54 +1,32 @@
 # Changelog
 
-Compared with Wave 1. Wave 1 is the factory at `0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e`. The live Wave 2 factory is `0x2218D33d2f9279A4266b49dB572F5b1343d09De5` (block 16407578). This branch is newer than that factory and is not deployed.
+## Wave 2 completion release candidate (unreleased)
 
-## Oracle minimums
+Source implementation, local verification, public deployment proof and submission publication are distinct states. No new on-chain address, recruited tester or audit is established by this changelog. Existing clones are not upgraded.
 
-- Router `amountOutMin` comes from `PriceFeed.fetchPrice()` (18-decimal USD per BTC) minus the slippage bound. It is not the pool quote, so a moved pool cannot lower the floor.
-- Open default is 50 bps. Rescue sales stay at 200 bps, cap 300, owner-set.
-- A stale feed (older than 60 seconds) reverts `PriceFeed: Oracle is stale.` Coil does not catch it and does not keep a last price. A zero price reverts `OraclePriceZero`. A zero floor reverts `Slippage`.
-- `IBorrowerOperations.claimCollateral()` is declared (selector `0x6f0b0c1c`). Nothing calls it yet.
+- Add owner surplus claim, funded MUSD repayment, protocol-permitted funded close and direct collateral top-up.
+- Use the approved Recovery Mode flow: block new leverage; allow safe pure debt repayment; keep full close subject to Mezo's actual restrictions, with no automatic queued transaction.
+- Introduce a factory-owner Coil fee: default 25 bps, accepted range 1–50 bps. Charge only newly minted MUSD on open/increase; rescue, repayment, claim and exit carry zero Coil fee. Include fee gross-up in debt/CR and transaction-enforce the accepted fee ceiling.
+- Apply one PriceMin oracle snapshot/bound to planned fills and flash callbacks, including owner flash close. Remove the former owner-close exception for out-of-bound pool prices. Direct funded close avoids a pool sale when protocol closing is allowed.
+- Preserve reserve-first rescue improvement; unsafe empty-reserve guard is a false/no-tip result. Callback violations revert atomically.
+- Start new factories paused with unset limits; require finite nonzero collateral/debt limits before unpausing. Guardian pauses; owner configures/unpauses. Repayment, exit, claim, guard and direct collateral top-up remain available.
+- Add keeper scan freshness/status, configured-keeper heartbeats, simulation before sending and bounded unchanged-failure backoff.
+- Centralize chain-specific public deployment metadata and validate factory/block overrides together. Mainnet transaction mode needs a configured deployment and explicit enablement.
+- Implement manifest generation/staleness checks, partial RPC receipt collection and the separate full online source/compiler/keeper/web release gate. Offline checks do not certify live readiness. Deployment preflight requires explicit chain/RPC agreement and always leaves opens paused; verification now includes all seven components with distinct `OWNER_LIB` and `OWNER` inputs.
+- Refresh team, fee, chain and evidence copy; add deck source, PDF/PPTX, a 112-second text-guided illustrative pitch, storyboard and an empty proof ledger. AKINDO Updates remain a draft.
 
-## Close fixes (this branch)
+## Production baseline recorded by the 5 November 2026 PRD gap review
 
-Found on the live factory while the pool sat about 234-236 bps below the oracle.
+Legacy matsnet production factory `0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`, block 16408315, chain 31611. Its implementation source predates the completion work. Verification was partial: five contracts reported verified, Legacy was unverified and implementation full verification was false. This observation is dated; it is not a current release certificate.
 
-- `unwind` / `flashUnwind` draw parked MUSD before selling BTC. A full close sends any MUSD still in `CoilPark` back to the owner. The 50.24 MUSD left behind in the end-to-end run was this bug.
-- If the oracle cap would reject the flash, the owner still closes when the BTC owed is strictly under the collateral. The rescue cap stays 300 bps and still binds `guard` and `flashDeleverTo`. A close is not stuck when the gap is 2.3% or 4%. The Wave 1 router sale remains the path when a flash does not fit in the collateral. Doing both on the happy path would threaten Mezo's 20-precompile limit, and the BTC precompile only allows one Wave 1 sale per transaction.
-- If a rescue repays parked MUSD and the BTC sale would fail the oracle check, the sale is skipped. The repayment stays. `PartialRescue(musdSpent, crAfter)` is emitted. `guard` already accepts any rise in the ratio. An empty reserve still reverts `Slippage`.
-- The desk shows the live pool-versus-oracle gap, explains `PegOff`, and offers `setPegBounds` with an open cap of 200, 300, 400, or 500 bps.
-- App and keeper defaults point at factory `0x2218D33d2f9279A4266b49dB572F5b1343d09De5`, implementation `0x31D5964A2bc4CA86c0807Ea5e95882fF72693076`, legacy `0xb75d1F6Fe5D9Ab999CbcdDE99589976e66B25eC4`, sizer `0x6359EF81A7F535b04E0Abfb28FA4565951a5F2fd`, park `0x87b2E191232DD09510dE1885198375F6450dd5D8`. `script/verify.sh` verifies `CoilPark`.
+## Historical Wave 2
 
-Storage layout is unchanged. The constructor arguments are unchanged. Clones are not upgradeable, so these fixes need a new factory broadcast from `script/Deploy.s.sol`. The decision logic lives in `CoilExit` (`stageUnwind`, `stageDelever`), a second delegatecall library, so both `CoilAccount` and `CoilLegacy` stay under EIP-170. `CoilExit` delegatecalls `CoilLegacy` for the router sale. That nested call is not a precompile.
+Flash loop, unwind and delever, permissionless MEZO-tipped guard, MUSD reserve, peg checks, Railway keeper and public chain history. A 27 October matsnet run on an earlier factory exercised flash open, rescue and close. Those receipts do not prove the completion release's fees, claim or Recovery Mode actions. See [DEPLOYMENTS.md](DEPLOYMENTS.md).
 
 ## Wave 1
 
-- One owner, one clone, a loop that stops after two Mezo Pools swaps.
-- `deleverTo` and `unwind` sell BTC for MUSD over several transactions when the pool is thin.
-- `guard()` is the owner or the factory keeper. It pays no MEZO.
-- No flash swap, no public rescue log, no reserve.
+Owner clone, two-swap router loop, multi-transaction delever/unwind, restricted guard and no MEZO tip. Original media remains historical or illustrative; it is not the new release proof.
 
-## Wave 2, live factory
+## Pending release inputs
 
-- `flashLoop`, `flashUnwind`, and `flashDeleverTo`. One transaction, about 4× when the pool can take it.
-- Permissionless `guard()` that can only raise the collateral ratio, paid in MEZO when it does.
-- Railway keeper, `/guard`, OrangeKit Bitcoin wallets, redemption preview.
-- Exercised on testnet. See `DEPLOYMENTS.md`. Contracts are not verified on Blockscout.
-
-## This branch
-
-- Rescue slippage is separate from the open. Default 2%, hard cap 3%. The keeper cannot change it.
-- `CoilPark` holds MUSD for the owner. `guard` repays that MUSD before it sells BTC. `sweep` cannot take it. An ERC-4626 adapter is ready. No sMUSD address is configured, because none was verified.
-- `flashLoop` reverts when the pool is more than `maxPegDeviationBps` off the oracle (default 200, hard cap 500), and in Recovery Mode.
-- `guard` can also act when MUSD is under $1 and the trove is near the redemption queue. The owner turns that on with `setPegBounds`. Zero disables it.
-- `FlashSizer.sensibleTarget` caps leverage so the flash sale stays under 100 bps of impact. The desk shows that for the testnet pool and, read-only, for the mainnet pool.
-- `/stats` counts accounts, open troves, rescues, MEZO tips, and heartbeats. Logs are fetched in 9,999-block chunks.
-- Telegram alerts cover the floor, the redemption zone, the peg trigger, and the rescue result. The bot token is not logged. It is not in this repo.
-- `foundry.toml` sets `bytecode_hash = "none"` so `CoilAccount` fits under EIP-170.
-
-## Not in this branch
-
-- A mainnet deploy. The mainnet card is a quote.
-- A verified sMUSD address.
-- A veMEZO or gauge call. The design is in `docs/GAUGE.md`.
-- A switch onto the `@mezo-org/passport` package. Version 0.17.2 does not compile against the OrangeKit it depends on. The same Bitcoin connectors are wired directly.
+Exact new deployment/verification receipts; funded matsnet create/open/increase/guard/claim/repay/close proofs; 3–5 recruited tester wallets and receipts; public app/keeper readback; mainnet caps/go-live approval; confirmed savings/gauge addresses. Not independently audited.
