@@ -4,7 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { isAddress, loadManifest } = require('./deployments.cjs');
 
-const ACTIONS = ['create','open','increase','setGuard','guard','claim','repay','close'];
+const ACTIONS = ['create','open','increase','setGuard','guard','claim','repay','repayRM','close'];
 const HASH = /^0x[0-9a-fA-F]{64}$/;
 const DECIMAL = /^[1-9][0-9]*$/;
 const same = (a,b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
@@ -67,9 +67,135 @@ const signatures = {
   open:['loop(uint256,uint256)','loop(uint256,uint256,uint16)','flashLoop(uint256,uint256)','flashLoop(uint256,uint256,uint16)'],
   increase:['loop(uint256,uint256)','loop(uint256,uint256,uint16)','flashLoop(uint256,uint256)','flashLoop(uint256,uint256,uint16)'],
   setGuard:['setGuard(uint256,uint256,uint32)','setGuard(uint256,uint256,uint32,uint256)'],
-  guard:['guard()'],claim:['claimCollateral()'],repay:['repayWithMUSD(uint256)'],
+  guard:['guard()'],claim:['claimCollateral()'],repay:['repayWithMUSD(uint256)'],repayRM:['repayWithMUSD(uint256)'],
   close:['closeWithMUSD(uint256)','unwind(uint256)','flashUnwind(uint256)'],
 };
+
+// Canonical constructor configuration is shared with the Solidity deployment script.
+function marketFor(chainId) {
+  const prefix={31611:'TESTNET_',31612:'MAINNET_'}[chainId];
+  need(prefix,'Unsupported protocol market');
+  const source=fs.readFileSync(path.join(__dirname,'../src/MezoAddresses.sol'),'utf8');
+  const constants=Object.fromEntries([...source.matchAll(/address internal constant (\w+) = (0x[\da-fA-F]{40});/g)].map(m=>[m[1],m[2]]));
+  const names={borrowerOperations:'BORROWER_OPERATIONS',troveManager:'TROVE_MANAGER',sortedTroves:'SORTED_TROVES',hintHelpers:'HINT_HELPERS',priceFeed:'PRICE_FEED',musd:'MUSD',btc:'BTC',mezo:'MEZO',router:'ROUTER',poolFactory:'POOL_FACTORY',pool:'MUSD_BTC_POOL'};
+  return Object.fromEntries(Object.entries(names).map(([field,name])=>{
+    const value=constants[(name==='BTC'||name==='MEZO'?'':prefix)+name];need(isAddress(value),`Missing canonical market ${field}`);return [field,value];
+  }));
+}
+const EVENTS={
+  created:'event AccountCreated(address indexed owner,address indexed account)',
+  fee:'event CoilFeePaid(address indexed recipient,uint256 grossMinted,uint256 amount)',
+  loop:'event Looped(address indexed owner,uint256 targetCR,uint256 collateral,uint256 debt,uint256 cr)',
+  guarded:'event Guarded(address indexed caller,uint256 crBefore,uint256 crAfter,uint256 tip)',
+  guardSet:'event GuardSet(uint256 floorCR,uint256 guardTargetCR,uint32 redemptionZone,uint256 tipMezo)',
+  repaid:'event MUSDRepaid(address indexed owner,uint256 amount)',
+  claimed:'event CollateralClaimed(address indexed owner,uint256 amount)',
+  closed:'event ClosedWithMUSD(address indexed owner,uint256 ownerMUSD)',
+  unwound:'event Unwound(address indexed owner,uint256 fractionWad,uint256 cr)',
+  transfer:'event Transfer(address indexed from,address indexed to,uint256 value)',
+  trove:'event TroveUpdated(address indexed _borrower,uint256 _principal,uint256 _interest,uint256 _coll,uint256 _stake,uint16 _interestRate,uint256 _lastInterestUpdateTime,uint8 _operation)',
+};
+const ZERO='0x'+'0'.repeat(40),WAD=10n**18n;
+
+async function verifyEffects(client,d,r,receipt,tx,decoded) {
+  const {parseAbi,decodeEventLog,toEventSelector}=sdk(),market=marketFor(d.chainId);
+  const n=receipt.blockNumber,pre=n-1n;
+  const read=(address,signature,functionName,args=[],blockNumber=n)=>client.readContract({address,abi:parseAbi([`function ${signature}`]),functionName,args,blockNumber});
+  // Block-end snapshots cannot attribute a transition inside a multi-transaction block.
+  // Reject ambiguity instead of treating adjacent-block state as transaction-local state.
+  const [block,parent]=await Promise.all([client.getBlock({blockNumber:n}),client.getBlock({blockNumber:pre})]);
+  need(same(block.hash,receipt.blockHash) && same(tx.blockHash,block.hash) && tx.blockNumber===n && same(block.parentHash,parent.hash),'Historical receipt block/hash mismatch');
+  need(block.transactions.length===1 && same(typeof block.transactions[0]==='string'?block.transactions[0]:block.transactions[0].hash,r.transactionHash),'Effect proof requires an isolated transaction block');
+  need(tx.transactionIndex===0 && receipt.transactionIndex===0,'Isolated transaction index/order mismatch');
+  const abi=parseAbi(['function accountOf(address) view returns (address)','function owner() view returns (address)','function factory() view returns (address)']);
+  const [account,owner,factory]=await Promise.all([
+    client.readContract({address:d.factory,abi,functionName:'accountOf',args:[r.tester],blockNumber:n}),
+    client.readContract({address:r.account,abi,functionName:'owner',blockNumber:n}),
+    client.readContract({address:r.account,abi,functionName:'factory',blockNumber:n}),
+  ]);
+  need(same(account,r.account) && same(owner,r.tester) && same(factory,d.factory),'RPC account owner/factory mapping mismatch');
+  const checkLog=log=>need(log.removed!==true && same(log.transactionHash,r.transactionHash) && same(log.blockHash,block.hash) && log.blockNumber===n,'Effect log transaction/block attribution mismatch');
+  need(Array.isArray(receipt.logs),'Effect receipt logs required');
+  receipt.logs.forEach(checkLog);
+  const blockLogs=await client.getLogs({address:[d.factory,r.account,market.borrowerOperations,market.troveManager,market.musd],fromBlock:n,toBlock:n});
+  blockLogs.forEach(checkLog);
+  const events=(kind,address)=>{
+    const event=parseAbi([EVENTS[kind]])[0],topic=toEventSelector(event);
+    return receipt.logs.filter(l=>same(l.address,address)&&same(l.topics[0],topic)).map(log=>decodeEventLog({abi:[event],data:log.data,topics:log.topics,strict:true}).args);
+  };
+  const one=(kind,address=r.account)=>{const rows=events(kind,address);need(rows.length===1,`Exactly one ${kind} effect event required`);return rows[0];};
+  const owned=event=>need(same(event.owner,r.tester),'Effect event owner mismatch');
+  const transfers=events('transfer',market.musd);
+  const transferred=(from,to)=>transfers.filter(e=>same(e.from,from)&&same(e.to,to)).reduce((sum,e)=>sum+e.value,0n);
+  const minted=transferred(ZERO,r.account),burned=transferred(r.account,ZERO),fees=events('fee',r.account);
+  if(!['open','increase'].includes(r.action))need(fees.length===0,'Exit/owner action unexpectedly charged a Coil fee');
+  if(r.action==='create') {
+    const event=one('created',d.factory);owned(event);need(same(event.account,r.account),'Created account effect mismatch');
+    const previous=await read(d.factory,'accountOf(address) view returns (address)','accountOf',[r.tester],pre);
+    need(same(previous,ZERO),'Create effect requires a previously absent account');
+  } else if(r.action==='setGuard') {
+    const event=one('guardSet');
+    const expected=[...decoded.args];if(expected.length===3)expected.push(await read(r.account,'tipMezo() view returns (uint256)','tipMezo',[],pre));
+    const fields=['floorCR','guardTargetCR','redemptionZone','tipMezo'];
+    need(event.floorCR>0n && event.guardTargetCR>=event.floorCR,'Guard effect requires a positive valid configuration');
+    for(let i=0;i<fields.length;i++) {
+      const field=fields[i],actual=await read(r.account,`${field}() view returns (${field==='redemptionZone'?'uint32':'uint256'})`,field);
+      need(BigInt(event[field])===BigInt(expected[i]) && BigInt(actual)===BigInt(expected[i]),`Guard configuration effect mismatch: ${field}`);
+    }
+  } else if(r.action==='claim') {
+    const event=one('claimed');owned(event);need(event.amount>0n,'Claim effect must return positive collateral');
+    need(tx.value===0n,'Claim proof contains unexpected native value');
+    const [accountBefore,accountAfter,ownerBefore,ownerAfter]=await Promise.all([[r.account,pre],[r.account,n],[r.tester,pre],[r.tester,n]].map(([address,blockNumber])=>client.getBalance({address,blockNumber})));
+    need(accountBefore===accountAfter && ownerAfter+receipt.gasUsed*receipt.effectiveGasPrice===ownerBefore+event.amount,'Claim effect does not match native balance delivery');
+  } else {
+    const position=async blockNumber=>{
+      const [status,collateral,debt]=await Promise.all(['getTroveStatus','getTroveColl','getTroveDebt'].map(fn=>read(market.troveManager,`${fn}(address) view returns (uint256)`,fn,[r.account],blockNumber)));
+      return {status:Number(status),collateral,debt};
+    };
+    const [before,after]=await Promise.all([position(pre),position(n)]);
+    const updates=events('trove',market.borrowerOperations).filter(e=>same(e._borrower,r.account));
+    need(updates.length>0,'Protocol position effect event missing');
+    const last=updates.at(-1);
+    need(last._coll===after.collateral && last._principal+last._interest===after.debt,'Protocol effect and historical position state differ');
+    if(r.action==='open'||r.action==='increase') {
+      need(after.status===1 && after.collateral>0n && after.debt>before.debt,'Open/increase effect must grow an active debt position');
+      if(r.action==='open')need(before.status!==1 && updates.some(e=>Number(e._operation)===0),'Open effect requires a fresh position');
+      else need(before.status===1 && updates.every(e=>Number(e._operation)!==0) && updates.some(e=>Number(e._operation)===2),'Increase effect requires an already active position');
+      const event=one('loop');owned(event);
+      need(event.targetCR===decoded.args[0] && event.collateral===after.collateral && event.debt===after.debt && event.cr>=event.targetCR,'Loop effect/state/target mismatch');
+      need(fees.length>0 && fees.every(e=>e.grossMinted>0n && e.amount>0n && isAddress(e.recipient)),'Fee-bearing mint effect missing');
+      need(minted>0n && minted===fees.reduce((sum,e)=>sum+e.grossMinted,0n),'Protocol MUSD mint does not match fee gross amount');
+      const ceiling=decoded.args.length===3?Number(decoded.args[2]):50;
+      const policy=await read(d.factory,'policy() view returns ((uint16 feeBps,address feeRecipient,bool opensPaused,uint256 maxCollateral,uint256 maxDebt))','policy',[],pre);
+      const bps=Number(policy.feeBps);
+      need(policy.opensPaused===false && Number.isInteger(bps) && bps>=1 && bps<=50 && bps<=ceiling && fees.every(e=>same(e.recipient,policy.feeRecipient) && e.amount===e.grossMinted*BigInt(bps)/10000n),'Fee effect differs from historical policy or accepted fee ceiling');
+      for(const recipient of new Set(fees.map(e=>e.recipient.toLowerCase()))) {
+        const amount=fees.filter(e=>same(e.recipient,recipient)).reduce((sum,e)=>sum+e.amount,0n);
+        need(transferred(r.account,recipient)>=amount,'Coil fee transfer effect missing');
+      }
+    } else if(r.action==='close') {
+      need(before.status===1 && after.status===2 && after.debt===0n && after.collateral===0n && Number(last._operation)===1,'Full close effect requires a closed-by-owner position');
+      need(burned>0n,'Full close protocol repayment effect missing');
+      if(decoded.functionName==='closeWithMUSD') {const event=one('closed');owned(event);need(event.ownerMUSD<=decoded.args[0],'Close exceeds owner MUSD maximum');}
+      else {const event=one('unwound');owned(event);need(event.fractionWad===WAD && event.cr===2n**256n-1n,'Unwind effect did not fully close');}
+    } else {
+      need(before.status===1 && after.status===1 && after.debt<before.debt && Number(last._operation)===2 && burned>0n,'Repay/guard effect must reduce active protocol debt');
+      if(r.action==='guard') {
+        const event=one('guarded');need(same(event.caller,tx.from) && event.crAfter>event.crBefore && after.collateral<=before.collateral && after.collateral*before.debt>before.collateral*after.debt,'Guard effect must improve collateral ratio');
+      } else {
+        const event=one('repaid');owned(event);
+        need(event.amount>0n && event.amount<=decoded.args[0] && event.amount===burned && before.debt-after.debt<=burned && before.collateral===after.collateral,'Repayment effect/amount/state mismatch');
+        if(r.action==='repayRM') {
+          const [priceBefore,priceAfter]=await Promise.all([pre,n].map(blockNumber=>read(market.priceFeed,'fetchPrice() view returns (uint256)','fetchPrice',[],blockNumber)));
+          need(priceBefore>0n && priceBefore===priceAfter,'Recovery Mode proof requires an unchanged positive historical oracle price');
+          need(await read(market.troveManager,'checkRecoveryMode(uint256) view returns (bool)','checkRecoveryMode',[priceBefore],pre)===true,'Recovery Mode was not active before repayment');
+        }
+      }
+    }
+  }
+  const canonical=await client.getBlock({blockNumber:n});
+  need(same(canonical.hash,block.hash),'Historical effect proof changed during verification');
+}
 
 async function verifyReceipt(client, deployment, record) {
   const receipt=await client.getTransactionReceipt({hash:record.transactionHash});
@@ -84,17 +210,9 @@ async function verifyReceipt(client, deployment, record) {
   const {toFunctionSelector,parseAbi,decodeFunctionData}=sdk();
   const signature=signatures[record.action]?.find(s=>toFunctionSelector(s)===tx.input?.slice(0,10));
   need(signature,'Transaction action selector does not match the declared proof');
-  if(record.action==='close' && signature!=='closeWithMUSD(uint256)') {
-    const decoded=decodeFunctionData({abi:parseAbi([`function ${signature}`]),data:tx.input});
-    need(decoded.args[0]===10n**18n,'A full close requires fractionWad = 1e18');
-  }
-  const abi=parseAbi(['function accountOf(address) view returns (address)','function owner() view returns (address)','function factory() view returns (address)']);
-  const [account,owner,factory]=await Promise.all([
-    client.readContract({address:deployment.factory,abi,functionName:'accountOf',args:[record.tester]}),
-    client.readContract({address:record.account,abi,functionName:'owner'}),
-    client.readContract({address:record.account,abi,functionName:'factory'}),
-  ]);
-  need(same(account,record.account) && same(owner,record.tester) && same(factory,deployment.factory),'RPC account owner/factory mapping mismatch');
+  const decoded=decodeFunctionData({abi:parseAbi([`function ${signature}`]),data:tx.input});
+  if(record.action==='close' && signature!=='closeWithMUSD(uint256)') need(decoded.args[0]===WAD,'A full close requires fractionWad = 1e18');
+  await verifyEffects(client,deployment,record,receipt,tx,decoded);
   return receipt;
 }
 
@@ -113,18 +231,38 @@ async function verifyDeployment(client,deployment,{fetchImpl=fetch}={}) {
   need(policy && policy.opensPaused===false,'Opening policy is paused; live release activation is pending');
   need(Number.isInteger(Number(policy.feeBps)) && Number(policy.feeBps)>=1 && Number(policy.feeBps)<=50 && isAddress(policy.feeRecipient),'Live fee policy is invalid');
   need(BigInt(policy.maxCollateral)>0n && BigInt(policy.maxDebt)>0n,'Live position limits are missing');
+  const inventory=deployment.contracts;
+  need(inventory && Object.keys(inventory).length===Object.keys(SOURCE_FILES).length && Object.keys(SOURCE_FILES).every(role=>isAddress(inventory[role])),'Complete release component inventory required');
+  need(same(inventory.CoilFactory,deployment.factory) && same(inventory.CoilAccount,implementation),'Factory/account component inventory mismatch');
+  need(new Set(Object.values(inventory).map(a=>a.toLowerCase())).size===Object.keys(SOURCE_FILES).length,'Release component addresses must be distinct');
+  need(isAddress(deployment.parkGovernor),'Intended park governor required for release verification');
+  const market=marketFor(deployment.chainId),bindings={...market,park:inventory.CoilPark,sizer:inventory.FlashSizer};
+  for(const [field,expected] of Object.entries(bindings)) {
+    const actual=await client.readContract({address:implementation,abi:parseAbi([`function ${field}() view returns (address)`]),functionName:field});
+    need(same(actual,expected),`Implementation market/component immutable mismatch: ${field}`);
+  }
+  for(const [field,expected] of Object.entries({asset:market.musd,governor:deployment.parkGovernor})) {
+    const actual=await client.readContract({address:inventory.CoilPark,abi:parseAbi([`function ${field}() view returns (address)`]),functionName:field});
+    need(same(actual,expected),`Park ${field} mismatch`);
+  }
+  const [token0,token1,btcIsToken0]=await Promise.all([
+    ...['token0','token1'].map(field=>client.readContract({address:market.pool,abi:parseAbi([`function ${field}() view returns (address)`]),functionName:field})),
+    client.readContract({address:implementation,abi:parseAbi(['function btcIsToken0() view returns (bool)']),functionName:'btcIsToken0'}),
+  ]);
+  need((same(token0,market.btc)&&same(token1,market.musd)||same(token0,market.musd)&&same(token1,market.btc)) && btcIsToken0===same(token0,market.btc),'Pool market/token-order immutable mismatch');
   const api=new URL(deployment.explorerUrl);api.hostname=`api.${api.hostname}`;
-  const libraries=[],sourceHashes={};
-  for(const [name,address] of Object.entries(deployment.contracts)) {
+  const graph={CoilAccount:['CoilLegacy','CoilExit','CoilOwner'],CoilExit:['CoilLegacy'],CoilOwner:['CoilLegacy','CoilExit']},sourceHashes={};
+  for(const [name,address] of Object.entries(inventory)) {
     const code=await client.getCode({address});need(code && code!=='0x',`Missing live contract ${name}`);
     const response=await fetchImpl(`${api.origin}/api/v2/smart-contracts/${address}`,{signal:AbortSignal.timeout(25000)});
     need(response.ok,`Explorer verification unavailable for ${name}`);
     const meta=await response.json();
     need(meta.is_verified===true && meta.is_fully_verified===true,`Full source verification pending for ${name}`);
     sourceHashes[name]=verifySource(name,meta);
-    if(name==='CoilAccount') libraries.push(...(meta.external_libraries||[]));
+    const expected=graph[name]||[],links=meta.external_libraries||[];
+    need(Array.isArray(links) && links.length===expected.length,`Verified library link graph mismatch: ${name}`);
+    for(const role of expected) need(links.filter(x=>x.name?.split(':').at(-1)===role && same(x.address_hash,inventory[role])).length===1,`Verified library link mismatch: ${name} -> ${role}`);
   }
-  for(const role of ['CoilLegacy','CoilExit','CoilOwner']) need(libraries.some(x=>x.name===role && same(x.address_hash,deployment.contracts[role])),`Verified implementation library mismatch: ${role}`);
   return {implementation,keeper,sourceHashes};
 }
 
@@ -176,7 +314,7 @@ async function main(args) {
       }
     }
     if(online) { await verifyKeeper(client,deployment); await verifyWeb(deployment,option('--web-url','https://coil.up.railway.app')); }
-    summary.onlineVerified=true;summary.readiness=online?'live-release-verified':'collected-from-rpc';
+    summary.onlineVerified=true;summary.effectsVerified=true;summary.historicalProof='isolated-block-archive';summary.readiness=online?'live-release-verified':'collected-from-rpc';
   }
   console.log(JSON.stringify(summary,null,2));
 }
