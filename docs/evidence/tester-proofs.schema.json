@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/PrabalParihar/coil/docs/evidence/tester-proofs.schema.json",
+  "title": "Coil public funded tester evidence (shape only)",
+  "description": "Pending null deployment fields and empty arrays are valid structure, never a ready release. Readiness requires live RPC validation and recruited real testers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "chainId",
+    "factory",
+    "deploymentBlock",
+    "testers",
+    "receipts"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "chainId": {
+      "type": "integer",
+      "enum": [
+        31611,
+        31612
+      ]
+    },
+    "factory": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{40}$",
+          "not": {
+            "const": "0x0000000000000000000000000000000000000000"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "deploymentBlock": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "testers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "address",
+          "recruited",
+          "consentRecorded"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$",
+            "not": {
+              "const": "0x0000000000000000000000000000000000000000"
+            }
+          },
+          "recruited": {
+            "const": true
+          },
+          "consentRecorded": {
+            "const": true
+          }
+        }
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "transactionHash",
+          "tester",
+          "account",
+          "chainId",
+          "factory",
+          "blockNumber",
+          "status",
+          "receiptPath"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "create",
+              "open",
+              "increase",
+              "setGuard",
+              "guard",
+              "claim",
+              "repay",
+              "repayRM",
+              "close"
+            ]
+          },
+          "transactionHash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          },
+          "tester": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$",
+            "not": {
+              "const": "0x0000000000000000000000000000000000000000"
+            }
+          },
+          "account": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$",
+            "not": {
+              "const": "0x0000000000000000000000000000000000000000"
+            }
+          },
+          "chainId": {
+            "type": "integer",
+            "enum": [
+              31611,
+              31612
+            ]
+          },
+          "factory": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$",
+            "not": {
+              "const": "0x0000000000000000000000000000000000000000"
+            }
+          },
+          "blockNumber": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "status": {
+            "const": "success"
+          },
+          "receiptPath": {
+            "type": "string",
+            "pattern": "^receipts/0x[0-9a-fA-F]{64}\\.json$",
+            "description": "Relative to the evidence-ledger directory; CLI additionally requires the filename to equal transactionHash + .json."
+          }
+        }
+      }
+    }
+  }
+}

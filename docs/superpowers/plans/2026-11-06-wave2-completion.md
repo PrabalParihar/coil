@@ -1,6 +1,6 @@
 # Wave 2 Completion Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Implement and merge the approved Wave 2 engineering, operational, and submission requirements with honest release/evidence gates.
 
@@ -42,11 +42,11 @@
 - Keep old quote ABI; add `quoteLoopWithFee(uint256,uint256,uint256) returns(LoopQuote,uint256 coilFeeMusd)` and `quoteFlashLoopWithFee(uint256,uint256,uint256) returns(LoopQuote,uint256 flashBtc,uint256 poolFeeMusd,uint256 coilFeeMusd)`. `LoopQuote` keeps its six existing fields; minted amount is gross and fees are explicit.
 - Heartbeat on new factory checks configured keeper; `guard()` remains permissionless. Coordinate any interface change with the controller before changing names.
 
-- [ ] Write failing fee/policy/claim/RM and strict-bound/no-op tests, including all four named PRD A9 cases, fee drift/rounding, lowering limits on existing positions, and simulated adverse callback behavior.
-- [ ] Run focused tests and capture RED reason before changing production code. Prefer low-level interface calls for absent APIs so missing functionality is an assertion failure rather than a typo.
-- [ ] Implement coherent fee-aware solver/router/callback policy and owner actions, preserving direct MUSD exit and old ABI compatibility. Extend test fixture bootstrap to explicitly configure/unpause the new factory.
-- [ ] Run `forge test` and `forge build --sizes`; expected all tests pass, all runtimes below 24,576, no skipped failures. Include the exact new tests and RED→GREEN evidence in the report.
-- [ ] Return scoped diff and report; controller commits after review/integration.
+- [x] Write failing fee/policy/claim/RM and strict-bound/no-op tests, including all four named PRD A9 cases, fee drift/rounding, lowering limits on existing positions, and simulated adverse callback behavior.
+- [x] Run focused tests and capture RED reason before changing production code. Prefer low-level interface calls for absent APIs so missing functionality is an assertion failure rather than a typo.
+- [x] Implement coherent fee-aware solver/router/callback policy and owner actions, preserving direct MUSD exit and old ABI compatibility. Extend test fixture bootstrap to explicitly configure/unpause the new factory.
+- [x] Run `forge test` and `forge build --sizes`; expected all tests pass, all runtimes below 24,576, no skipped failures. Include the exact new tests and RED→GREEN evidence in the report.
+- [x] Return scoped diff and report; controller commits after review/integration.
 
 ### Task 2: Canonical deployments, scripts, and release evidence tooling
 
@@ -58,11 +58,11 @@
 - `scripts/deployments.cjs` exports validation/generation helpers; CLI `node scripts/deployments.cjs --check` verifies committed copies, no network.
 - `NEXT_PUBLIC_COIL_FACTORY` override requires `NEXT_PUBLIC_COIL_FACTORY_DEPLOY_BLOCK`. Mainnet requires a real manifest entry plus explicit write enablement. Keeper gets a matching chain/factory/block selection.
 
-- [ ] Write Node tests that reject partial pairs, invalid chain/address/block, false ready status, mismatched receipts and insufficient tester proofs; observe RED.
-- [ ] Implement manifest/generator and offline evidence validation. Root script uses Node built-ins; live verification may use configured cast/Railway SDK without extracting credentials.
-- [ ] Configure deployment script for explicit selected chain, finite limits, guardian/keeper/public configuration, default paused policy and operator-controlled activation. Include new linked libraries in verification. Update only safe testnet/local CI defaults, not mainnet auto-unpause.
-- [ ] Run `node --test scripts/*.test.cjs`, generation check, Foundry script compile/local-fork dry-run after Task 1, and workflow validation. Expected valid artifacts pass and absent/forged release evidence fails clearly.
-- [ ] Commit scoped changes after combined validation.
+- [x] Write Node tests that reject partial pairs, invalid chain/address/block, false ready status, mismatched receipts and insufficient tester proofs; observe RED.
+- [x] Implement manifest/generator and offline evidence validation. Root script uses Node built-ins; live verification may use configured cast/Railway SDK without extracting credentials.
+- [x] Configure deployment script for explicit selected chain, finite limits, guardian/keeper/public configuration, default paused policy and operator-controlled activation. Include new linked libraries in verification. Update only safe testnet/local CI defaults, not mainnet auto-unpause.
+- [x] Run `node --test scripts/*.test.cjs`, generation check, Foundry script compile/local-fork dry-run after Task 1, and workflow validation. Expected valid artifacts pass and absent/forged release evidence fails clearly.
+- [x] Commit scoped changes after combined validation.
 
 ### Task 3: Keeper backoff, chain selection, and health
 
@@ -70,11 +70,11 @@
 
 **Interfaces:** consume generated `DEPLOYMENTS`/`Deployment`. Parse configured chain/factory/block consistently; do not import app-only code. HTTP GET `/health` and `/status` on assigned `PORT` expose only public operational fields: `chainId,factory,keeper,mode,lastScanAt,lastHeartbeatAt,status,counters`.
 
-- [ ] Write failing checks for unchanged-failure backoff, reset on newly actionable risk/reserve/settings, deduplicated alerts, stalled scans, read-only vs execute status, heartbeat receipt failure, and wrong chain/factory pairs.
-- [ ] Run checks to observe RED; refactor reusable engine/status helpers out of executable entry point.
-- [ ] Implement bounded per-account backoff, successful confirmation tracking, chain-aware ABI/client setup, configured expected heartbeat signer, health/status server and safe errors. Preserve simulation-before-send and no secrets in status.
-- [ ] Run `npm run typecheck && npm run check`; expected all existing and new checks pass, including real HTTP behavior with ephemeral local ports when permitted.
-- [ ] Return report and scoped diff; do not stage/commit or mutate contract/web/root files.
+- [x] Write failing checks for unchanged-failure backoff, reset on newly actionable risk/reserve/settings, deduplicated alerts, stalled scans, read-only vs execute status, heartbeat receipt failure, and wrong chain/factory pairs.
+- [x] Run checks to observe RED; refactor reusable engine/status helpers out of executable entry point.
+- [x] Implement bounded per-account backoff, successful confirmation tracking, chain-aware ABI/client setup, configured expected heartbeat signer, health/status server and safe errors. Preserve simulation-before-send and no secrets in status.
+- [x] Run `npm run typecheck && npm run check`; expected all existing and new checks pass, including real HTTP behavior with ephemeral local ports when permitted.
+- [x] Return report and scoped diff; do not stage/commit or mutate contract/web/root files.
 
 ### Task 4: Web fee/owner actions, chain readiness, and public status
 
@@ -82,11 +82,11 @@
 
 **Interfaces:** consume Task 1 ABI exactly and Task 2 generated deployments. `Market.coilFeeBps?:bigint` defaults to zero for legacy previews; `LoopPreview` exposes Coil fee separately. Probe new factory `policy()` to distinguish capabilities for custom/local deployments. Owner transactions on new contracts use accepted-fee overloads.
 
-- [ ] Add failing tests for fee-aware preview/gross-up, legacy behavior, accepted-fee call selection, partial override rejection, unsupported mainnet writes, RM actions and health freshness; observe RED.
-- [ ] Implement exact ABI/quote changes, owner claim and MUSD approve/repay/close controls, clear RM and pause/cap states, chain-specific clients/links and <=2x mainnet default. Mainnet writes stay disabled without real configuration/enablement.
-- [ ] Add `/keeper`; make `/guard` load recent history first with errors/retry/pagination and trusted-heartbeat freshness. Keep `/stats` honest and update factory/block provenance.
-- [ ] Remove fabricated WalletConnect project ID; keep usable injected/Bitcoin connectors and clear optional connection availability. Preserve conditional Passport fallback.
-- [ ] Run web checks, TypeScript and production build; expected /, /guard, /stats, /keeper render, unknown route remains 404. Return report/scoped diff; controller performs final browser/container integration.
+- [x] Add failing tests for fee-aware preview/gross-up, legacy behavior, accepted-fee call selection, partial override rejection, unsupported mainnet writes, RM actions and health freshness; observe RED.
+- [x] Implement exact ABI/quote changes, owner claim and MUSD approve/repay/close controls, clear RM and pause/cap states, chain-specific clients/links and <=2x mainnet default. Mainnet writes stay disabled without real configuration/enablement.
+- [x] Add `/keeper`; make `/guard` load recent history first with errors/retry/pagination and trusted-heartbeat freshness. Keep `/stats` honest and update factory/block provenance.
+- [x] Remove fabricated WalletConnect project ID; keep usable injected/Bitcoin connectors and clear optional connection availability. Preserve conditional Passport fallback.
+- [x] Run web checks, TypeScript and production build; expected /, /guard, /stats, /keeper render, unknown route remains 404. Return report/scoped diff; controller performs final browser/container integration.
 
 ### Task 5: Submission assets, documentation, and proof ledger
 
@@ -94,18 +94,22 @@
 
 **Interfaces:** describe approved behavior and actual evidence only. Current source/live versions differ; new contract addresses and real-user claims remain pending until verified. Team is Prabal Pratap Singh, Nikhil Verma, Neha Singh.
 
-- [ ] Create/update materials using actual existing footage labelled with its chain/version, or clearly labelled local/fork demonstration; never invent pending fee/claim/RM transactions.
-- [ ] Produce reviewable deck source plus PDF/PPTX and a <=120-second video/script; use available ffmpeg/reportlab/pptx. Update fee model, team, mainnet gate and clear matsnet/mainnet labels. Draft Updates, do not post externally.
-- [ ] Add structured empty proof ledger/schema that release tooling can validate; explain real tester recruitment and funded receipts as required external inputs.
-- [ ] Update security/deployment docs against actual Task 1 behavior after interface/code changes settle; do not claim an audit or live deployment merely because code exists.
-- [ ] Verify video duration with ffprobe, render/sample deck pages, check links/team/chain/fee claims and return artifact/report paths. No new behavioral tests for editorial-only copy.
+- [x] Create/update materials using actual existing footage labelled with its chain/version, or clearly labelled local/fork demonstration; never invent pending fee/claim/RM transactions.
+- [x] Produce reviewable deck source plus PDF/PPTX and a <=120-second video/script; use available ffmpeg/reportlab/pptx. Update fee model, team, mainnet gate and clear matsnet/mainnet labels. Draft Updates, do not post externally.
+- [x] Add structured empty proof ledger/schema that release tooling can validate; explain real tester recruitment and funded receipts as required external inputs.
+- [x] Update security/deployment docs against actual Task 1 behavior after interface/code changes settle; do not claim an audit or live deployment merely because code exists.
+- [x] Verify video duration with ffprobe, render/sample deck pages, check links/team/chain/fee claims and return artifact/report paths. No new behavioral tests for editorial-only copy.
 
 ### Task 6: Integration, fresh review, and authorized merge
 
 **Files:** cross-subsystem fixes, CI and integration/browser fixtures as required. Owner: controller.
 
-- [ ] Verify every workstream report, interface and spec coverage; require all meaningful new behavior to have RED→GREEN evidence. Run full Foundry, sizes, keeper checks, manifest/release tests, web production build and HTTP/container checks.
+- [x] Verify every workstream report, interface and spec coverage; require all meaningful new behavior to have RED→GREEN evidence. Run full Foundry, sizes, keeper checks, manifest/release tests, web production build and HTTP/container checks.
 - [ ] Exercise local-fork browser flows for account creation, fee-bearing loop, owner-funded repay/close and capability/health/error states. Keep local transactions labelled; collect actual funded-chain proof only through an authorized configured identity.
 - [ ] Generate a full immutable diff review package from main base to completed branch and dispatch a fresh broad reviewer. Fix important findings with reproducing tests and rerun affected/full suites; record decisions and external blockers.
 - [ ] Recheck remote main, resolve any changes, push branch and merge using authorized GitHub/Git SDK. Use PR/CI gating where available; do not bypass branch protection or extract authentication tokens. If API auth remains unavailable, complete local reviewed work and attempt the configured authorized Git transport before requesting account repair.
 - [ ] Verify resulting remote main SHA and available CI results; update completion matrix distinguishing implemented, tested, deployed, verified and externally pending. Mainnet go-live remains separately gated by the approved design.
+
+## Review-driven implementation clarifications
+
+The whole-branch review confirmed three boundary gaps. The implementation extends the manifest with chain-keyed `retainedDeployments` arrays and generated `RETAINED_DEPLOYMENTS` so active-factory replacement preserves owner account access and separately pinned keeper services. Ready entries record the actual `parkGovernor`; release verification binds immutable market/components and the full library link graph. Action evidence adds a distinct required `repayRM` scenario and verifies real event/state effects rather than transaction success alone. Unavailable historical or funded evidence fails closed. These are corrections within the approved legacy-continuity and honest-evidence requirements.

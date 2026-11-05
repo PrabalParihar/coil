@@ -1,0 +1,74 @@
+[
+  {
+    "title": "BTC exposure. A clearer way to reduce risk.",
+    "kicker": "COIL LABS  /  MEZO BUILDATHON WAVE 2",
+    "body": "An owner-controlled account borrows MUSD against BTC and routes through Mezo Pools. Permissionless guards can reduce risk within the owner's settings.",
+    "layout": "hero",
+    "cards": [["BTC", "Post collateral"], ["MUSD", "Borrow and buy BTC"], ["GUARD", "Repay toward safety"]],
+    "guide": "Start with the product: BTC holders choose exposure; the account holds the trove. This is an illustrative walkthrough, not a new transaction recording.",
+    "seconds": 14
+  },
+  {
+    "title": "01  Review, then open.",
+    "kicker": "ILLUSTRATIVE PRODUCT FLOW  /  OPEN",
+    "body": "Choose BTC size and collateral ratio. Review gross MUSD minted, the separate Coil fee, depth, caps and pause state before signing.",
+    "layout": "open",
+    "cards": [["200% CR", "About 2x initial mainnet UI target"], ["25 bps", "Default Coil fee on new mint"], ["50 bps", "Hard Coil fee ceiling"]],
+    "guide": "The transaction enforces the accepted fee ceiling. A flash open succeeds atomically only when pool liquidity, oracle bounds and opening policy allow it.",
+    "seconds": 14
+  },
+  {
+    "title": "02  Fund a guard. Keep ownership.",
+    "kicker": "ILLUSTRATIVE PRODUCT FLOW  /  PROTECTION",
+    "body": "Set a guard floor and target, park MUSD and fund MEZO tips. Anyone may trigger permitted risk reduction; the caller cannot take BTC or MUSD.",
+    "layout": "guard",
+    "cards": [["RESERVE FIRST", "Repay parked MUSD"], ["BOUNDED SALE", "Same oracle bound in callback"], ["TIP IF SAFER", "No improvement means no tip"]],
+    "guide": "A guard is a best-effort risk tool, not guaranteed liquidation protection. With an empty reserve and unsafe sale, it returns false without a tip.",
+    "seconds": 14
+  },
+  {
+    "title": "03  Repay, claim, or close.",
+    "kicker": "ILLUSTRATIVE PRODUCT FLOW  /  OWNER ACTIONS",
+    "body": "Approve MUSD to the account for safe repayment. Claim only recovered surplus. Close with funded MUSD only when Mezo permits the protocol close.",
+    "layout": "owner",
+    "cards": [["REPAY", "Safe pure repayment in Recovery Mode"], ["CLAIM", "Recovered collateral to owner"], ["CLOSE", "Protocol-gated; no queued exit"]],
+    "guide": "Recovery Mode blocks new leverage and can block full close. It does not imply a guaranteed exit. Rescue, repayment, claim and exit carry zero Coil fee.",
+    "seconds": 14
+  },
+  {
+    "title": "One bound. Explicit operational limits.",
+    "kicker": "COMPLETION RELEASE  /  SAFETY CONTRACT",
+    "body": "All pool fills use the same PriceMin snapshot before flash and in callback, including owner flash close. No second slippage widening.",
+    "layout": "safety",
+    "cards": [["PAUSED FIRST", "Finite nonzero opening caps"], ["OWNER / GUARDIAN", "Owner unpauses; guardian pauses"], ["RISK REDUCTION", "Repay, guard and top-up stay available"]],
+    "guide": "Public keeper status must show scan freshness and execution mode. A process start, old heartbeat or monitoring-only service is not active transaction protection.",
+    "seconds": 14
+  },
+  {
+    "title": "Historical execution is useful evidence.",
+    "kicker": "MATSNET 31611  /  HISTORICAL BUILD ONLY",
+    "body": "An October testnet run recorded flash open, a ratio-improving guard with a 1 MEZO tip, and close. Those receipts belong to an older factory.",
+    "layout": "history",
+    "cards": [["OPEN", "0x576e5383..."], ["GUARD", "0xcb90da85..."], ["CLOSE", "0x296bb52c..."]],
+    "guide": "Historical receipts do not prove the completion release's fees, claim or Recovery Mode flow. Exact links and limitations are in DEPLOYMENTS.md.",
+    "seconds": 14
+  },
+  {
+    "title": "A release earns its proof.",
+    "kicker": "RELEASE GATES  /  MAINNET NOT LIVE",
+    "body": "The new build still needs funded matsnet feature receipts, full indexed source verification, matching app and keeper metadata, and 3-5 recruited testers.",
+    "layout": "gates",
+    "cards": [["LOCAL / FORK", "Behaviour checks, labelled separately"], ["MATSNET", "Actual receipts and real testers"], ["MAINNET", "Depth, finite caps, approval, rollback"]],
+    "guide": "Existing clones are not upgradeable. Mainnet stays gated, starts paused and requires a separate go-live decision after the release checks pass. The contracts are unaudited.",
+    "seconds": 14
+  },
+  {
+    "title": "Build the BTC leverage desk with us.",
+    "kicker": "COIL LABS  /  TEAM AND NEXT STEP",
+    "body": "Prabal Pratap Singh   /   Nikhil Verma   /   Neha Singh",
+    "layout": "team",
+    "cards": [["TRY", "Funded matsnet tester recruitment"], ["REVIEW", "Bounded execution and owner actions"], ["FOLLOW", "coil.up.railway.app"]],
+    "guide": "Explore the public app and repository. This pitch is illustrative release-candidate material; no new deployment, independent audit or recruited-user count is claimed.",
+    "seconds": 14
+  }
+]

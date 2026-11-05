@@ -1,0 +1,31 @@
+1
+00:00:00,000 --> 00:00:14,000
+Start with the product: BTC holders choose exposure; the account holds the trove. This is an illustrative walkthrough, not a new transaction recording.
+
+2
+00:00:14,000 --> 00:00:28,000
+The transaction enforces the accepted fee ceiling. A flash open succeeds atomically only when pool liquidity, oracle bounds and opening policy allow it.
+
+3
+00:00:28,000 --> 00:00:42,000
+A guard is a best-effort risk tool, not guaranteed liquidation protection. With an empty reserve and unsafe sale, it returns false without a tip.
+
+4
+00:00:42,000 --> 00:00:56,000
+Recovery Mode blocks new leverage and can block full close. It does not imply a guaranteed exit. Rescue, repayment, claim and exit carry zero Coil fee.
+
+5
+00:00:56,000 --> 00:01:10,000
+Public keeper status must show scan freshness and execution mode. A process start, old heartbeat or monitoring-only service is not active transaction protection.
+
+6
+00:01:10,000 --> 00:01:24,000
+Historical receipts do not prove the completion release's fees, claim or Recovery Mode flow. Exact links and limitations are in DEPLOYMENTS.md.
+
+7
+00:01:24,000 --> 00:01:38,000
+Existing clones are not upgradeable. Mainnet stays gated, starts paused and requires a separate go-live decision after the release checks pass. The contracts are unaudited.
+
+8
+00:01:38,000 --> 00:01:52,000
+Explore the public app and repository. This pitch is illustrative release-candidate material; no new deployment, independent audit or recruited-user count is claimed.
