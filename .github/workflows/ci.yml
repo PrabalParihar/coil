@@ -3,15 +3,26 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   foundry:
     name: size, tests, deploy dry-run
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
       - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.5
 
       # Exits non-zero when any contract runtime exceeds EIP-170 (24,576 bytes).
       - name: contract sizes
@@ -37,3 +48,105 @@ jobs:
           cast block-number --rpc-url http://127.0.0.1:18545
           PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
             forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:18545 --broadcast
+
+  keeper:
+    name: keeper typecheck and checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: keeper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: keeper/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run check
+
+  web:
+    name: web image and HTTP checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production web image
+        run: docker build --tag coil-web:ci ./web
+      - name: Check static routes and 404 handling
+        shell: bash
+        run: |
+          set -euo pipefail
+          container=$(docker run --detach --rm -e PORT=3000 -p 127.0.0.1:41823:3000 coil-web:ci)
+          trap 'docker logs "$container"; docker stop "$container" >/dev/null' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:41823/ >/dev/null; then break; fi
+            sleep 1
+          done
+          for route in / /guard /stats; do
+            curl --fail --silent --show-error "http://127.0.0.1:41823$route" -o /tmp/coil-page.html
+            python3 -c 'from pathlib import Path; s = Path("/tmp/coil-page.html").read_text(); assert "Coil Labs" in s and "</html>" in s'
+          done
+          status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' http://127.0.0.1:41823/route-that-does-not-exist)
+          test "$status" = 404
+
+  deploy:
+    name: deploy web to Railway
+    needs: [foundry, keeper, web]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+      RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+      RAILWAY_PUBLIC_URL: ${{ vars.RAILWAY_PUBLIC_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify deployment settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in RAILWAY_TOKEN RAILWAY_PROJECT_ID RAILWAY_ENVIRONMENT_ID RAILWAY_SERVICE_ID RAILWAY_PUBLIC_URL; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Configure $name in the GitHub production environment before deploying."
+              exit 1
+            fi
+          done
+          case "$RAILWAY_PUBLIC_URL" in
+            https://*) ;;
+            *) echo '::error::RAILWAY_PUBLIC_URL must be an HTTPS URL.'; exit 1 ;;
+          esac
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.71.0 --no-audit --no-fund
+      - name: Deploy and wait for Railway health check
+        shell: bash
+        run: |
+          set -euo pipefail
+          logs="$RUNNER_TEMP/coil-railway-deployment.jsonl"
+          railway up web --path-as-root --ci --json \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --message "GitHub Actions $GITHUB_SHA" | tee "$logs"
+          if ! jq --slurp --exit-status 'map(select(.status? != null)) | last | .status == "success"' "$logs" >/dev/null; then
+            echo '::error::Railway did not confirm a successful deployment. Check its deployment logs.'
+            exit 1
+          fi
+      - name: Check public application routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=${RAILWAY_PUBLIC_URL%/}
+          for route in / /guard /stats; do
+            curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 3 \
+              --max-time 30 "$base$route" -o /tmp/coil-page.html
+            python3 -c 'from pathlib import Path; s = Path("/tmp/coil-page.html").read_text(); assert "Coil Labs" in s and "</html>" in s'
+          done
