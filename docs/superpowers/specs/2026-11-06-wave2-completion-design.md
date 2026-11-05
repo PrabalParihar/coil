@@ -1,6 +1,6 @@
 # Coil Wave 2 completion design
 
-Status: proposed design for approval. The Recovery Mode approach below was selected by Prabal in chat on 6 November 2026. The complete design has not yet been approved for implementation.
+Status: approved by Prabal in chat on 6 November 2026, with explicit instructions to implement and merge. The Recovery Mode approach below was separately selected by Prabal. Mainnet go-live retains the release gate described below.
 
 Base: `78a40edb6964638a3fcec73047c91b715d771f53`, `PrabalParihar/coil` main. Reference: the supplied Wave 2 PRD and `/workspace/coil-wave2-prd-gap-audit.md`.
 
