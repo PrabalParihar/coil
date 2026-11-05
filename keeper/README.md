@@ -1,0 +1,92 @@
+# Coil keeper
+
+Node 22 service. Run `npm ci`, `npm run typecheck`, and `npm run check`; start with
+`npm start -- --watch`. Monitoring is the default. Add `--execute` or
+`COIL_EXECUTE=true` only for an authorized funded keeper. The service only submits
+`guard()` and `heartbeat()` transactions and simulates both before submission.
+
+The canonical `../deployments/manifest.json` generates `src/deployment.generated.ts`.
+Run the root deployment generator after changing the manifest; include the generated
+copy in the keeper Docker build context. Build with `docker build keeper`.
+
+Configuration:
+
+| Variable | Meaning |
+| --- | --- |
+| `COIL_CHAIN_ID` | `31611` (default, matsnet) or `31612` (mainnet) |
+| `COIL_RPC_URL` | Selected chain's HTTP RPC; defaults to manifest RPC. `MEZO_TESTNET_RPC` / `MEZO_MAINNET_RPC` are chain-specific fallbacks. |
+| `COIL_FACTORY`, `COIL_FACTORY_DEPLOY_BLOCK` | Optional selection **pair**, nonzero address and positive decimal block. Active and retained manifest factories require their matching chain and creation block. |
+| `COIL_EXPECTED_KEEPER` | Expected public signer; defaults to manifest keeper for that deployment. Mandatory for execution. Must match manifest and wallet; heartbeat additionally requires live factory `keeper()`. |
+| `KEEPER_PRIVATE_KEY` | Execution key from service secrets. Never put it in build arguments, checked-in files, public status, or logs. |
+| `COIL_MAINNET_ENABLED` | Mainnet execution additionally requires `true` and a ready active or retained mainnet manifest deployment. This is a release gate, not authorization to go live. |
+| `KEEPER_WATCH` | `true` for continuous polling (Docker default). |
+| `KEEPER_POLL_MS` | Poll interval, default `20000`, range 3000–300000 ms. |
+| `PORT` | HTTP listen port on `0.0.0.0`; Railway assigned value, default `3000`. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Optional alerts and `/watch`, `/unwatch`, `/help` commands. No configured Telegram means no notification requests. |
+| `WATCHES_PATH` | Optional watch file, default `/tmp/coil-watches.json`; mount a volume if watches must persist. Watched clones must belong to the selected factory. |
+
+A keeper service covers **one chain/factory/deployment-block generation**. The generated
+`DEPLOYMENTS` selects the active generation by default; `RETAINED_DEPLOYMENTS` records
+older deployed generations. An explicit pair selecting a retained generation binds its
+own expected signer, implementation, RPC, explorer and capabilities. It never inherits
+those fields from a replacement active deployment. Incorrect known blocks, other-chain
+pairs and a signer conflicting with the selected record fail configuration. Mainnet
+execution still requires that selected record to be `ready` and the explicit enable flag;
+retention alone cannot upgrade release readiness.
+
+Before replacing an active factory, pin the existing keeper service to its exact public
+`COIL_CHAIN_ID`, `COIL_FACTORY`, and `COIL_FACTORY_DEPLOY_BLOCK`. Preserve its signer,
+funding, environment, watch volume, and public status URL. Keep that service running for
+as long as accounts on that generation retain state requiring monitoring or rescue.
+Updating the active manifest must not redirect that pinned service. Create a separate
+service for the replacement factory, configure its own selected pair and expected signer,
+and verify its own account enumeration, fresh successful scans, confirmed expected-keeper
+heartbeats, and rescue behavior before claiming execution coverage. Each generation has
+its own health URL; a healthy new service says nothing about an older factory's accounts.
+Retire an old service only after the accounts no longer need it or an explicitly validated
+replacement service covers that exact generation. No deployment or coverage proof is
+created by this configuration support alone.
+
+Do not add clones from an older factory to the new service's `/watch` list as a rollout
+shortcut. Watched clones must report the selected factory; foreign clones fail snapshot
+validation and degrade scanning instead of being silently counted as protected. With a
+retained manifest keeper of null, the service has no authenticated expected signer by
+default and monitoring must be described as monitoring. Execution requires an authorized
+configured signer; heartbeat health additionally requires matching live factory registration.
+
+Use separate service environments and funded identities for matsnet and mainnet.
+Protocol addresses are read from the selected clone, never reused from matsnet.
+Every scan checks the RPC chain and latest block freshness; factory code must exist
+at the configured deployment block and a known implementation must match the manifest.
+Writes recheck chain freshness; heartbeat also checks the live expected keeper. Permissionless guard remains available if only the heartbeat registration differs. Failed simulations
+never submit a transaction. Only successful receipts increment confirmation counters.
+A failed, reverted, or unconfirmed heartbeat never advances heartbeat freshness.
+
+Per-account no-op/failure retries begin at twice the polling interval and increase
+exponentially, capped at five minutes. Every poll still refreshes the account's
+position, oracle, pool liquidity, funded reserve, guard settings, Recovery Mode, and pool pause/fee policy. Any change
+resets its delay immediately, so a changed emergency bypasses an earlier failure.
+Unchanged failure alerts and actionable monitoring alerts are deduplicated.
+State is in memory and restarts clear backoff. Telegram/provider errors are reported
+using fixed safe messages; response bodies, RPC URLs, keys, and tokens are omitted.
+
+`GET /status` returns only `chainId`, `factory`, public `keeper` (or null), `mode`,
+`lastScanAt`, `lastHeartbeatAt`, `status`, and numeric `counters`. Timestamps are
+Unix epoch milliseconds, null before success. No environment or raw errors appear.
+`GET /health` has the same JSON and returns HTTP 200 for fresh `monitoring` or
+`healthy` operation; `starting`, `degraded`, and `stale` return HTTP 503. `/status`
+remains HTTP 200 so clients can inspect unhealthy state. A read-only service is
+`monitoring`, never active transaction protection. Set Railway's health path to
+`/health` using service settings and the service root to `keeper`.
+
+A completed scan ages out after the greater of 60 seconds or three polling intervals.
+RPC/position read failures cannot refresh its success timestamp. Execute health also
+requires a recent confirmed heartbeat from the configured wallet. Legacy factories
+have permissionless heartbeat events: this service's confirmed transactions are
+operational observations, not evidence that arbitrary historical events came from
+the expected keeper. Consumers must check sender identity for on-chain history.
+
+`npm run check` includes a real ephemeral localhost HTTP server. Restricted sandboxes
+may require the test command to run with localhost listen permission. No checks send
+external notifications or chain transactions; RPC behavior uses an in-process boundary
+fixture and the HTTP check calls only localhost.

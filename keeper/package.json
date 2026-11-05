@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "node --import tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "check": "tsx src/revert.check.ts && tsx src/alerts.check.ts"
+    "check": "node --import tsx src/revert.check.ts && node --import tsx src/alerts.check.ts && node --import tsx src/config.check.ts && node --import tsx src/rpc.check.ts && node --import tsx src/engine.check.ts"
   },
   "dependencies": {
     "tsx": "^4.20.6",

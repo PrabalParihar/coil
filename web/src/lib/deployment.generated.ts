@@ -4,6 +4,7 @@ export type Deployment = {
   status: "legacy" | "ready" | "pending";
   factory: `0x${string}` | null; deploymentBlock: string | null;
   implementation: `0x${string}` | null; keeper: `0x${string}` | null;
+  parkGovernor?: `0x${string}`;
   contracts: Record<string, `0x${string}`>;
   capabilities: { policy: boolean; coilFee: boolean; ownerActions: boolean };
 };
@@ -49,4 +50,93 @@ export const DEPLOYMENTS: Record<string, Deployment> = {
       "ownerActions": false
     }
   }
+};
+export const RETAINED_DEPLOYMENTS: Record<string, Deployment[]> = {
+  "31611": [
+    {
+      "chainId": 31611,
+      "name": "Mezo Testnet",
+      "rpcUrl": "https://rpc.test.mezo.org",
+      "explorerUrl": "https://explorer.test.mezo.org",
+      "status": "legacy",
+      "factory": "0xff3335576f998EE872596d4EB7ABECb71a0D5BC8",
+      "deploymentBlock": "16408315",
+      "implementation": "0xd4495f969995b3e48998573b5adc6f3106672b80",
+      "keeper": "0x1D2621480011C44693a47801C1158E70b25b4B4F",
+      "contracts": {
+        "CoilFactory": "0xff3335576f998EE872596d4EB7ABECb71a0D5BC8",
+        "CoilAccount": "0xd4495f969995b3e48998573b5adc6f3106672b80",
+        "CoilLegacy": "0xb75d1F6Fe5D9Ab999CbcdDE99589976e66B25eC4",
+        "CoilExit": "0x43D76243f5E5383c37557a364647F16DfBe8D03a",
+        "FlashSizer": "0x757dec022926b1d05d295aede98a52e60e455c87",
+        "CoilPark": "0x1cc8c8df3f4cb25e4201b3aa892b51c2e9954333"
+      },
+      "capabilities": {
+        "policy": false,
+        "coilFee": false,
+        "ownerActions": false
+      }
+    },
+    {
+      "chainId": 31611,
+      "name": "Mezo Testnet",
+      "rpcUrl": "https://rpc.test.mezo.org",
+      "explorerUrl": "https://explorer.test.mezo.org",
+      "status": "legacy",
+      "factory": "0x2218D33d2f9279A4266b49dB572F5b1343d09De5",
+      "deploymentBlock": "16407578",
+      "implementation": "0x31D5964A2bc4CA86c0807Ea5e95882fF72693076",
+      "keeper": null,
+      "contracts": {
+        "CoilFactory": "0x2218D33d2f9279A4266b49dB572F5b1343d09De5",
+        "CoilAccount": "0x31D5964A2bc4CA86c0807Ea5e95882fF72693076"
+      },
+      "capabilities": {
+        "policy": false,
+        "coilFee": false,
+        "ownerActions": false
+      }
+    },
+    {
+      "chainId": 31611,
+      "name": "Mezo Testnet",
+      "rpcUrl": "https://rpc.test.mezo.org",
+      "explorerUrl": "https://explorer.test.mezo.org",
+      "status": "legacy",
+      "factory": "0x6A38f560cF8612cc81cF966831890DBb310e31F7",
+      "deploymentBlock": "16400160",
+      "implementation": "0x522DED4F0cF62cfc12456A28FbF82b044178564b",
+      "keeper": null,
+      "contracts": {
+        "CoilFactory": "0x6A38f560cF8612cc81cF966831890DBb310e31F7",
+        "CoilAccount": "0x522DED4F0cF62cfc12456A28FbF82b044178564b"
+      },
+      "capabilities": {
+        "policy": false,
+        "coilFee": false,
+        "ownerActions": false
+      }
+    },
+    {
+      "chainId": 31611,
+      "name": "Mezo Testnet",
+      "rpcUrl": "https://rpc.test.mezo.org",
+      "explorerUrl": "https://explorer.test.mezo.org",
+      "status": "legacy",
+      "factory": "0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e",
+      "deploymentBlock": "16243828",
+      "implementation": "0x1bc9Ba4c62D62296aba1441fBB16BC9651a460Ce",
+      "keeper": "0xFc58045fFB104D983de0e78F748Ab8e9cb6Bfc61",
+      "contracts": {
+        "CoilFactory": "0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e",
+        "CoilAccount": "0x1bc9Ba4c62D62296aba1441fBB16BC9651a460Ce"
+      },
+      "capabilities": {
+        "policy": false,
+        "coilFee": false,
+        "ownerActions": false
+      }
+    }
+  ],
+  "31612": []
 };

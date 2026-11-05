@@ -86,15 +86,16 @@ export async function notify(
   log: (line: string) => void = (line) => console.error(line),
 ) {
   if (!tg) return;
-  const response = await fetchImpl(`https://api.telegram.org/bot${tg.token}/sendMessage`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: tg.chatId, text, disable_web_page_preview: true }),
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    log(`telegram ${response.status}: ${body.slice(0, 200)}`);
-  }
+  try {
+    const response = await fetchImpl(`https://api.telegram.org/bot${tg.token}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: tg.chatId, text, disable_web_page_preview: true }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    // Providers may echo request URLs/tokens in response bodies and transport errors.
+    if (!response.ok) log(`telegram ${response.status}: delivery failed`);
+  } catch { log("telegram delivery unavailable"); }
 }
 
 export function isWatchAddress(value: string | undefined): value is Address {
