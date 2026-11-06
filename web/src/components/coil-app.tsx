@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePassportConnect } from "@/app/providers";
 import { parseEther } from "viem";
@@ -18,6 +17,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Bitcoin, Check, Lock, Plug, ShieldCheck, Wallet } from "lucide-react";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
+import { MobileNavigation, SiteNavigation } from "@/components/site-navigation";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -945,25 +945,17 @@ export function CoilApp() {
       </a>
 
       <header className="sticky top-0 z-30 border-b border-border/70 bg-background/70 backdrop-blur-xl">
-        <div className="relative mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-          <a href="#" className="flex items-center gap-2.5" aria-label="Coil Labs home">
+        <div className="relative mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          <a href="#" className="flex min-h-11 shrink-0 items-center gap-2.5" aria-label="Coil Labs home">
             <CoilMark className="size-8" />
             <span className="text-lg font-semibold tracking-tight">Coil Labs</span>
             <span className="hidden rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
               {mezoTestnet.id === 31611 ? "testnet" : "mainnet"}
             </span>
           </a>
-          <nav aria-label="Primary" className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
-            <a className="hover:text-foreground" href="#how">How it works</a>
-            <a className="hover:text-foreground" href="#app">App</a>
-            <Link className="hover:text-foreground" href="/guard">Guard log</Link>
-            <Link className="hover:text-foreground" href="/stats">Stats</Link>
-            <Link className="hover:text-foreground" href="/keeper">Keeper</Link>
-            <a className="hover:text-foreground" href="#proof">Receipts</a>
-            <a className="hover:text-foreground" href="#risks">Risks</a>
-          </nav>
-          <div className="flex items-center gap-2">
-            <p className="hidden items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground lg:flex">
+          <SiteNavigation />
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="hidden items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground 2xl:flex">
               <Bitcoin className="size-3.5 text-filament" aria-hidden />
               {market ? (
                 <TweenValue
@@ -981,7 +973,7 @@ export function CoilApp() {
               <button
                 type="button"
                 onClick={() => switchChainAsync({ chainId: mezoTestnet.id }).catch(fail)}
-                className="rounded-full border border-danger/50 bg-danger/10 px-3 py-1.5 font-mono text-[11px] text-danger hover:bg-danger/20"
+                className="min-h-11 rounded-full border border-danger/50 bg-danger/10 px-3 py-1.5 font-mono text-[11px] text-danger hover:bg-danger/20"
               >
                 Wrong network · switch
               </button>
@@ -999,13 +991,14 @@ export function CoilApp() {
             ) : (
               <Button
                 type="button"
-                className="btn-btc h-9 rounded-full px-4 font-semibold"
+                className="btn-btc min-h-11 rounded-full px-4 font-semibold"
                 disabled={!mounted || connecting}
                 onClick={connectWallet}
               >
                 {connecting ? "Connecting…" : "Connect"}
               </Button>
             )}
+            <MobileNavigation />
           </div>
           {busy ? <div className="busy-bar" aria-hidden /> : null}
         </div>

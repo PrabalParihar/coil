@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { PublicPage } from "@/components/public-page";
 import { useCallback, useEffect, useState } from "react";
 import { formatUnits, type Address } from "viem";
 import { usePublicClient } from "wagmi";
@@ -63,10 +63,7 @@ export default function GuardPage() {
     finally { setBusy(false); }
   }, [client]);
   useEffect(() => { void load(); const timer = setInterval(() => void load(), 30_000); return () => clearInterval(timer); }, [load]);
-  return <main className="mx-auto max-w-3xl px-4 py-10">
-    <nav className="flex gap-5 text-sm"><Link href="/">Coil Labs</Link><Link href="/keeper">Keeper status</Link><Link href="/stats">Stats</Link></nav>
-    <p className="eyebrow mt-10 text-filament">Guard log</p>
-    <h1 className="mt-3 text-4xl font-semibold">Rescues and heartbeats</h1>
+  return <PublicPage eyebrow="Guard log" title="Rescues and heartbeats">
     <p className="mt-3 text-sm text-muted-foreground">{selectedChain.name} · {deployment.status} factory <a className="link break-all font-mono" href={factoryAddress ? `${explorerUrl}/address/${factoryAddress}` : undefined}>{factoryAddress ?? "pending deployment"}</a> · deploy block {deployment.deploymentBlock ?? "pending"}.</p>
     <KeeperStatus />
     <p className="mt-5 text-sm text-muted-foreground">Recent 9,999 blocks load first. Older history is paginated below. Rescue/de-lever events cover the first {scanned} accounts (limit 40); heartbeat events cover the selected factory. Anyone can call guard; only actual risk reduction can earn a tip.</p>
@@ -74,5 +71,5 @@ export default function GuardPage() {
     <button type="button" disabled={busy || !factoryAddress} className="link mt-4" onClick={() => void load(error ? failedBefore : undefined)}>Retry / refresh history</button>
     {!factoryAddress ? <p className="mt-5">History unconfigured for this chain.</p> : !loaded ? <p className="mt-5">{busy ? "Reading recent chain history…" : "History unavailable."}</p> : rows.length === 0 ? <p className="mt-5">No events in the loaded windows.</p> : <ol className="mt-6 divide-y divide-border">{rows.map(row => <li className="py-4" key={`${row.tx}-${row.index}`}><div className="flex justify-between gap-3"><strong>{row.kind}</strong><a className="link font-mono text-xs" href={`${explorerUrl}/tx/${row.tx}`}>{shorten(row.tx)}</a></div><p className="mt-1 text-sm text-muted-foreground">{row.detail} · block {row.block.toString()}</p></li>)}</ol>}
     {cursor !== null && cursor > FACTORY_DEPLOY_BLOCK ? <button type="button" className="link mt-6" disabled={busy} onClick={() => void load(cursor)}>{busy ? "Loading…" : `Load older history before block ${cursor}`}</button> : null}
-  </main>;
+  </PublicPage>;
 }
