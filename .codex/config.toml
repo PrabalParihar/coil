@@ -1,0 +1,5 @@
+[mcp_servers.design_browser]
+command = "bash"
+args = ["scripts/design-mcp.sh"]
+startup_timeout_sec = 120
+tool_timeout_sec = 90
