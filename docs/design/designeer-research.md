@@ -31,3 +31,13 @@ Some third-party gallery preview requests reported console/network warnings; the
 Keep Coil's orange/dark identity, existing routes and wallet/contract semantics. Improve hierarchy, density, spacing, visual feedback and the deposit-to-review flow. Explore three 1440×1024 primary desktop screens before implementation; the selected direction will be adapted responsively. Generated numbers are illustrative and must never stand in for a live quote, keeper-health proof or funded release receipt. Preserve testnet/legacy labeling and opening/Recovery Mode/peg restrictions in the eventual implementation.
 
 Exploration directions: an app-first two-column desk; a progressively guided input/review flow; a typographic layout with a compact exposure visualization. These are design candidates, not added product features or a selected build plan.
+
+## Latest user correction
+
+The initial three concepts were rejected as too text-heavy with excessive typography. The next pass uses one sans-serif family, 13–14px body/labels, a maximum 24px section heading, and numbers up to 32px. Remove marketing hero copy, long descriptions, redundant headings, decorative cards and repeated notices. Keep concise field labels, one action, essential risk/blocked-state context and expandable secondary details. Use fresh Designeer Minimal Gallery, Sombra and Interface references from the requested libraries; maintain the current orange/dark identity and financial semantics.
+
+Latest displayed candidate set (the earlier text-heavy set is rejected):
+- 1: Quiet Desk — `/workspace/generated_images/exec-a1efba60-0044-406e-b8f1-60b8a4a96fb2.png`.
+- 2: Compact Bar — `/workspace/generated_images/exec-e872e00a-5a1e-4d56-9f1f-a2dfbfe9348d.png`.
+- 3: Minimal Workbench — `/workspace/generated_images/exec-3e8793bf-44e5-45b8-abcb-4249c7a22201.png`.
+Implementation has not started; the next choice must resolve against this latest displayed set. Mockup values remain illustrative and must be replaced by actual quote/state bindings.
