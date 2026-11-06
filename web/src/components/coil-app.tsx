@@ -14,7 +14,7 @@ import {
   useWriteContract,
 } from "wagmi";
 import { AnimatePresence, motion } from "motion/react";
-import { Bitcoin, Check, Lock, Plug, ShieldCheck, Wallet } from "lucide-react";
+import { Bitcoin, Check, ChevronDown, Lock, Plug, ShieldCheck, Wallet } from "lucide-react";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import { MobileNavigation, SiteNavigation } from "@/components/site-navigation";
@@ -85,7 +85,7 @@ import {
   useMotionOk,
   type TxLink,
 } from "@/components/shell";
-import { Footer, HowItWorks, Hero, Proof, Risks, Ticker } from "@/components/landing";
+import { Footer, HowItWorks, Hero, Proof, Risks } from "@/components/landing";
 
 const WAD = 10n ** 18n;
 const PRESETS = ["0.01", "0.025", "0.04", "0.05"] as const;
@@ -927,8 +927,8 @@ export function CoilApp() {
 
   const setup = [
     { label: "Wallet", done: connected },
-    { label: mezoTestnet.name, done: connected && !wrongChain },
-    { label: "Coil account", done: Boolean(account) },
+    { label: "Network", done: connected && !wrongChain },
+    { label: "Account", done: Boolean(account) },
     { label: "Loop", done: Boolean(position?.active) },
   ];
   const currentPrice = market ? formatUsd(market.price) : null;
@@ -1007,14 +1007,12 @@ export function CoilApp() {
       <div className="mx-auto flex w-full max-w-7xl flex-col px-4 sm:px-6 lg:px-8">
         <main aria-busy={busy}>
           <Hero market={effectiveMarket} marketError={marketError} />
-          <Ticker />
-          <HowItWorks />
 
-          <section id="app" aria-labelledby="app-title" className="scroll-mt-20 py-16">
+          <section id="app" aria-labelledby="app-title" className="scroll-mt-20 py-7">
             <div className="flex flex-wrap items-end justify-between gap-6">
               <div>
                 <p className="eyebrow text-filament">The desk</p>
-                <h2 id="app-title" className="mt-3 text-4xl font-semibold tracking-[-0.035em] sm:text-5xl">
+                <h2 id="app-title" className="mt-1 text-xl font-semibold tracking-tight">
                   Open a coil
                 </h2>
               </div>
@@ -1070,7 +1068,7 @@ export function CoilApp() {
                   Selected network: {mezoTestnet.name} (chain {mezoTestnet.id}). Bitcoin wallets use OrangeKit while Passport remains unavailable.
                 </Banner>
               ) : null}
-              <Banner tone="warn" title={`${mezoTestnet.name} · ${deployment.status} deployment`}>
+              <Banner tone="info" title={`${mezoTestnet.name} · ${deployment.status} · unaudited`} detailsLabel="Deployment details">
                 Unaudited contracts and thin pool liquidity. Mainnet starts at 200% CR (about 2×).
                 {policy ? ` Coil fee ${policy.feeBps} bps; opens ${policy.opensPaused ? "paused" : "enabled"}. Position limits: ${formatBtc(policy.maxCollateral)} BTC / ${formatMusd(policy.maxDebt)} MUSD total debt.` : " Legacy accounts retain their original capabilities; no upgrade is implied."}
                 {!writesEnabled ? " Transactions remain disabled until deployment and release gates are satisfied." : ""}
@@ -1086,6 +1084,8 @@ export function CoilApp() {
                 <Banner
                   tone={pegBlocked ? "warn" : "info"}
                   title={pegBlocked ? "PegOff: a new loop is blocked" : "Pool versus oracle"}
+                  detailsLabel={!account ? "Pool details" : undefined}
+                  summaryText={!account ? `Deviation ${poolGap.toString()} bps${reserveFactory ? ` · open cap ${openCap} bps` : ""}` : undefined}
                   action={
                     account && reserveFactory ? (
                       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Open cap in bps">
@@ -1130,7 +1130,7 @@ export function CoilApp() {
 
             <div className="mt-6 grid items-start gap-5 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
               {/* Composer */}
-              <section className="panel p-5 sm:p-7" aria-labelledby="compose-title">
+              <section className="panel p-5 sm:p-6" aria-labelledby="compose-title">
                 <h3 id="compose-title" className="sr-only">Compose</h3>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -1154,7 +1154,7 @@ export function CoilApp() {
                       value={btcText}
                       onChange={(event) => setBtcText(event.target.value)}
                       aria-describedby="btc-usd"
-                      className="h-14 border-0 bg-transparent px-0 font-mono text-4xl font-medium tracking-tight shadow-none focus-visible:ring-0 md:text-4xl dark:bg-transparent"
+                      className="h-12 border-0 bg-transparent px-0 text-[32px] font-medium tabular-nums tracking-tight shadow-none focus-visible:ring-0 md:text-[32px] dark:bg-transparent"
                     />
                     <span className="flex shrink-0 items-center gap-2 rounded-full border border-border bg-foreground/5 py-1.5 pr-3 pl-1.5 text-sm font-semibold">
                       <span className="flex size-6 items-center justify-center rounded-full bg-filament text-ink">
@@ -1184,7 +1184,7 @@ export function CoilApp() {
                     display={
                       <div className="flex items-end gap-4 text-right">
                         <div>
-                          <TweenValue canonical={`${targetPct}%`} numeric={targetPct} digits={0} suffix="%" className={cn("num block text-4xl font-semibold tracking-tight", riskOf(targetPct).tone)} />
+                          <TweenValue canonical={`${targetPct}%`} numeric={targetPct} digits={0} suffix="%" className={cn("num block text-[28px] font-semibold tracking-tight", riskOf(targetPct).tone)} />
                         </div>
                         <div className="pb-1">
                           <p className="num text-lg font-medium">{leverageLabel(targetCR)}</p>
@@ -1223,7 +1223,11 @@ export function CoilApp() {
                   </div>
                 </div>
 
-                <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+                <details className="group/execution mt-6 border-t border-border">
+                  <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 text-xs text-muted-foreground hover:text-foreground">
+                    <span>Execution &amp; liquidity</span><span className="flex items-center gap-2">Slippage {(slippageBps / 100).toFixed(2)}%<ChevronDown className="size-3.5 transition-transform group-open/execution:rotate-180" aria-hidden /></span>
+                  </summary>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="eyebrow">Open slippage</p>
                     <p className="mt-1 text-xs text-muted-foreground">Default 1%. Rescue and close use a separate cap.</p>
@@ -1232,7 +1236,7 @@ export function CoilApp() {
                 </div>
                 <PoolDepth deposit={collateral} testnet={market} quote={sensible} />
 
-                <div className="mt-8 grid gap-3 border-t border-border pt-6 sm:grid-cols-3">
+                <div className="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-3">
                   {[
                     ["01", "Borrow MUSD", "against your BTC"],
                     ["02", "Buy BTC", "on Mezo Pools"],
@@ -1247,6 +1251,7 @@ export function CoilApp() {
                     </div>
                   ))}
                 </div>
+                </details>
               </section>
 
               {/* Review */}
@@ -1281,7 +1286,7 @@ export function CoilApp() {
                 {needsStateQuote ? <button type="button" className="link mt-4 text-xs" disabled={busy} onClick={() => setQuoteRetry(value => value + 1)}>Refresh state-aware fee quote</button> : null}
                 <Button
                   type="button"
-                  className={cn("mt-6 h-13 w-full rounded-2xl text-[15px] font-semibold", primary.disabled ? "" : "btn-btc")}
+                  className={cn("mt-5 min-h-11 w-full rounded-lg text-sm font-medium", primary.disabled ? "" : "btn-btc")}
                   variant={primary.disabled ? "secondary" : "default"}
                   disabled={primary.disabled}
                   onClick={primary.onClick}
@@ -1290,7 +1295,7 @@ export function CoilApp() {
                   {primary.label}
                 </Button>
                 <p className="mt-3 text-center text-[11px] text-muted-foreground">
-                  {needsStateQuote ? "State-aware contract quote includes existing collateral, total debt and refinancing. " : position?.active ? "Legacy fresh-position estimate: actual increase totals may differ. " : "Fresh-position estimate. "}Contract limits apply to actual totals. Your wallet shows the exact call before anything is sent. The clone stays yours: only your wallet can loop or unwind.
+                  {needsStateQuote ? "State-aware contract quote includes existing collateral, total debt and refinancing. " : position?.active ? "Legacy fresh-position estimate: actual increase totals may differ. " : "Fresh-position estimate. "}Contract limits apply. Review the exact call in your wallet before signing.
                 </p>
 
                 {scope === "compose" ? (
@@ -1493,6 +1498,7 @@ export function CoilApp() {
             </section>
           </section>
 
+          <HowItWorks />
           <Proof />
           <Risks />
         </main>

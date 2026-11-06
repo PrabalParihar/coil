@@ -36,8 +36,14 @@ Exploration directions: an app-first two-column desk; a progressively guided inp
 
 The initial three concepts were rejected as too text-heavy with excessive typography. The next pass uses one sans-serif family, 13–14px body/labels, a maximum 24px section heading, and numbers up to 32px. Remove marketing hero copy, long descriptions, redundant headings, decorative cards and repeated notices. Keep concise field labels, one action, essential risk/blocked-state context and expandable secondary details. Use fresh Designeer Minimal Gallery, Sombra and Interface references from the requested libraries; maintain the current orange/dark identity and financial semantics.
 
-Latest displayed candidate set (the earlier text-heavy set is rejected):
-- 1: Quiet Desk — `/workspace/generated_images/exec-a1efba60-0044-406e-b8f1-60b8a4a96fb2.png`.
-- 2: Compact Bar — `/workspace/generated_images/exec-e872e00a-5a1e-4d56-9f1f-a2dfbfe9348d.png`.
-- 3: Minimal Workbench — `/workspace/generated_images/exec-3e8793bf-44e5-45b8-abcb-4249c7a22201.png`.
-Implementation has not started; the next choice must resolve against this latest displayed set. Mockup values remain illustrative and must be replaced by actual quote/state bindings.
+All generated candidate sets were rejected; none is the implementation target. The implementation adapts actual inspected references to the existing Coil UI, as specified in `docs/superpowers/specs/2026-11-07-designeer-density-design.md`.
+
+## Targeted search correction and final grounding
+
+The site Search UI was used with finance, defi, trading, wallet and dashboard. Finance returned bookkeeping/template listings; defi/trading returned weak substring matches and wallet returned no matches. Dashboard returned BoardUI, Revone, Tremor, UIAble, Preline UI and Open Design. Search-result screenshots and raw snapshots were retained locally. Those results are not claimed to be DeFi app screenshots.
+
+Finds > more type options > Dashboard returned https://designeer.xyz/finds/heydamir-2115063463063998736, Damir Sokolovsky's **Unslopping a vibecoded dashboard**. The video was inspected at both its initial and final states, including a paused 8.7-second frame from its 9.8-second clip. The final frame showed restrained sans-serif typography, neutral grouped surfaces, quieter navigation and useful density. This is the concrete design-principle reference for the actual Coil refinement; its fictional revenue/credit-card/chart content is not transferred into Coil.
+
+https://designeer.xyz/inspiration/mobbin was opened as the product-flow reference from the user's Inspiration source. The actual public Revone landing page was also visited, but its captured element was a marketing/background image, not an accepted app-screen reference. It must not be presented as such.
+
+The resulting Coil changes use real existing controls and values: compact typography, a single font family, neutral surfaces, early access to the actual form and explicit optional disclosures. All opening/Recovery Mode limits remain immediate; no static generated values are inserted.
