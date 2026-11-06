@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
+import { PublicPage } from "@/components/public-page";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
 import { usePublicClient } from "wagmi";
-import { CoilMark, shorten } from "@/components/shell";
+import { shorten } from "@/components/shell";
 import { FACTORY_DEPLOY_BLOCK, factoryAddress, selectedChain } from "@/lib/mezo";
 import { deployment, explorerUrl } from "@/lib/network";
 import { loadPublicStats, mergeStatsEvents, summarizeStatsEvents, type StatsBase, type StatsEvent } from "@/lib/stats-reader";
@@ -49,16 +49,9 @@ export default function StatsPage() {
     ["MEZO tips paid", loadedHistory ? `${formatUnits(counts.tips, 18)} MEZO` : "Reading…", "Guarded tips in loaded windows; first 40 accounts"],
     ["Heartbeats", loadedHistory ? String(counts.heartbeats) : "Reading…", "Selected-factory events in loaded windows"],
   ] : [];
-  return <div className="relative min-h-screen">
-    <div className="atmosphere pointer-events-none fixed inset-0 -z-10" aria-hidden />
-    <header className="border-b border-border/70"><div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-4">
-      <Link href="/" className="flex items-center gap-2.5"><CoilMark className="size-8" /><span className="text-lg font-semibold">Coil Labs</span></Link>
-      <nav className="flex gap-4 text-sm"><Link href="/keeper">Keeper</Link><Link href="/guard">Guard log</Link><Link href="/#app">App</Link></nav>
-    </div></header>
-    <main className="mx-auto max-w-3xl px-4 py-10">
-      <p className="eyebrow text-filament">Public stats</p><h1 className="mt-3 text-4xl font-semibold">What the chain shows</h1>
+  return <PublicPage eyebrow="Public stats" title="What the chain shows">
       <p className="mt-3 text-sm text-muted-foreground">{selectedChain.name}, chain {selectedChain.id}, {deployment.status} deployment. Factory and position counts publish before event history. History starts with the latest 9,999-block window; older windows load only when requested.</p>
-      <p className="mt-3 break-all font-mono text-xs">Factory <a className="link" href={factoryAddress ? `${explorerUrl}/address/${factoryAddress}` : undefined}>{factoryAddress ? shorten(factoryAddress) : "pending"}</a> · deploy block {FACTORY_DEPLOY_BLOCK.toString()}{base ? ` · snapshot block ${base.latest}` : ""}</p>
+      <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs"><span>Factory <a className="link" href={factoryAddress ? `${explorerUrl}/address/${factoryAddress}` : undefined}>{factoryAddress ? shorten(factoryAddress) : "pending"}</a></span><span>Deploy block {FACTORY_DEPLOY_BLOCK.toString()}</span>{base ? <span>Snapshot block {base.latest.toString()}</span> : null}</p>
       <p className="mt-3 text-xs text-muted-foreground">Last successful base snapshot: {updated ?? "unavailable"}. Event counts cover loaded windows, not complete chain history. Position/rescue reads cover at most the first 40 accounts. Public chain observations are not real-user recruitment evidence.</p>
       <button type="button" className="link mt-4 text-sm" disabled={busy || !factoryAddress} onClick={() => void load(error ? failedBefore : undefined)}>Retry / refresh stats</button>
       {error ? <p role="alert" className="mt-4 text-danger">{error}</p> : null}
@@ -67,6 +60,5 @@ export default function StatsPage() {
       {base ? <dl className="mt-8 grid gap-3 sm:grid-cols-2">{cards.map(([label, value, detail]) => <div key={label} className="well p-5"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="num mt-1 text-3xl font-medium">{value}</dd><p className="mt-1 text-xs text-muted-foreground">{detail}</p></div>)}</dl> : null}
       {cursor !== null ? <p className="mt-5 text-xs text-muted-foreground">Loaded history begins at block {cursor.toString()}. Refreshes deduplicate event identities; older pages end strictly before the earliest loaded block.</p> : null}
       {cursor !== null && cursor > FACTORY_DEPLOY_BLOCK ? <button type="button" className="link mt-4" disabled={busy || Boolean(error)} onClick={() => void load(cursor)}>{busy ? "Loading…" : `Load older history before block ${cursor}`}</button> : null}
-    </main>
-  </div>;
+  </PublicPage>;
 }

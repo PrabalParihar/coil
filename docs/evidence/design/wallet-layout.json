@@ -1,0 +1,42 @@
+[
+  {
+    "width": 320,
+    "scroll": 320,
+    "headerHeight": 177
+  },
+  {
+    "width": 390,
+    "scroll": 390,
+    "headerHeight": 125
+  },
+  {
+    "width": 768,
+    "scroll": 768,
+    "headerHeight": 69
+  },
+  {
+    "width": 1024,
+    "scroll": 1024,
+    "headerHeight": 69
+  },
+  {
+    "width": 1280,
+    "scroll": 1280,
+    "headerHeight": 69
+  },
+  {
+    "width": 1440,
+    "scroll": 1440,
+    "headerHeight": 69
+  },
+  {
+    "width": 1536,
+    "scroll": 1536,
+    "headerHeight": 69
+  },
+  {
+    "width": 1920,
+    "scroll": 1920,
+    "headerHeight": 69
+  }
+]

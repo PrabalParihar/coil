@@ -1,0 +1,205 @@
+{
+  "results": [
+    {
+      "width": 320,
+      "route": "/",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 320,
+      "route": "/guard",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 320,
+      "route": "/stats",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 320,
+      "route": "/keeper",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "route": "/",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "route": "/guard",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "route": "/stats",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "route": "/keeper",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "case": "same-page App anchor closes dialog and reveals desk",
+      "pass": true
+    },
+    {
+      "case": "cross-page Keeper and return-to-App navigation",
+      "pass": true
+    },
+    {
+      "width": 768,
+      "route": "/",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "route": "/guard",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "route": "/stats",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "route": "/keeper",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/guard",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/stats",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "route": "/keeper",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1280,
+      "route": "/",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1280,
+      "route": "/guard",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1280,
+      "route": "/stats",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1280,
+      "route": "/keeper",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "route": "/",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "route": "/guard",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "route": "/stats",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "route": "/keeper",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/guard",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/stats",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1536,
+      "route": "/keeper",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "route": "/",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "route": "/guard",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "route": "/stats",
+      "status": 200,
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "route": "/keeper",
+      "status": 200,
+      "overflow": false
+    }
+  ],
+  "errors": []
+}

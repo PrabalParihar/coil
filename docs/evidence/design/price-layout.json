@@ -1,0 +1,42 @@
+[
+  {
+    "width": 1536,
+    "scope": "Synthetic long BTC-price label for layout only",
+    "height": 68,
+    "rows": [
+      {
+        "top": 12,
+        "bottom": 56
+      },
+      {
+        "top": 12,
+        "bottom": 56
+      },
+      {
+        "top": 12,
+        "bottom": 56
+      }
+    ],
+    "overflow": false
+  },
+  {
+    "width": 1920,
+    "scope": "Synthetic long BTC-price label for layout only",
+    "height": 68,
+    "rows": [
+      {
+        "top": 12,
+        "bottom": 56
+      },
+      {
+        "top": 12,
+        "bottom": 56
+      },
+      {
+        "top": 12,
+        "bottom": 56
+      }
+    ],
+    "overflow": false
+  }
+]
