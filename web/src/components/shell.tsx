@@ -481,11 +481,15 @@ export function Banner({
   children,
   tone,
   action,
+  detailsLabel,
+  summaryText,
 }: {
   title: string;
   children: React.ReactNode;
   tone: "warn" | "bad" | "info";
   action?: React.ReactNode;
+  detailsLabel?: string;
+  summaryText?: React.ReactNode;
 }) {
   return (
     <div
@@ -501,7 +505,11 @@ export function Banner({
         <AlertTriangle className={cn("mt-0.5 size-4 shrink-0", tone === "bad" ? "text-danger" : tone === "warn" ? "text-warn" : "text-muted-foreground")} aria-hidden />
         <div className="min-w-0">
           <p className="font-medium text-foreground">{title}</p>
-          <p className="mt-0.5 leading-relaxed break-words text-muted-foreground">{children}</p>
+          {summaryText ? <p className="mt-0.5 text-xs text-muted-foreground">{summaryText}</p> : null}
+          {detailsLabel ? <details className="text-muted-foreground">
+            <summary className="min-h-11 cursor-pointer py-3 text-xs hover:text-foreground">{detailsLabel}</summary>
+            <p className="mt-1 leading-relaxed break-words">{children}</p>
+          </details> : <p className="mt-0.5 leading-relaxed break-words text-muted-foreground">{children}</p>}
         </div>
       </div>
       {action}

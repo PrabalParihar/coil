@@ -1,23 +1,11 @@
 import { deployment, selectedChain } from "@/lib/network";
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { Geist } from "next/font/google";
 import { Providers } from "./providers";
 import "./globals.css";
 
 const geist = Geist({
   variable: "--font-geist",
-  subsets: ["latin"],
-});
-
-const instrumentSerif = Instrument_Serif({
-  variable: "--font-instrument-serif",
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
-});
-
-const mono = Geist_Mono({
-  variable: "--font-geist-mono",
   subsets: ["latin"],
 });
 
@@ -47,7 +35,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`dark ${geist.variable} ${instrumentSerif.variable} ${mono.variable}`}>
+    <html lang="en" className={`dark ${geist.variable}`}>
       <body className="min-h-screen antialiased">
         <Providers>{children}</Providers>
       </body>

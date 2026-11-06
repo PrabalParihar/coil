@@ -1,0 +1,147 @@
+{
+  "results": [
+    {
+      "width": 320,
+      "route": "/",
+      "status": 200,
+      "scroll": 320,
+      "h1": 24
+    },
+    {
+      "width": 320,
+      "case": "keyboard disclosures, amount/ratio presets and slippage",
+      "pass": true
+    },
+    {
+      "width": 320,
+      "route": "/guard",
+      "status": 200,
+      "scroll": 320,
+      "h1": 24
+    },
+    {
+      "width": 320,
+      "route": "/stats",
+      "status": 200,
+      "scroll": 320,
+      "h1": 24
+    },
+    {
+      "width": 320,
+      "route": "/keeper",
+      "status": 200,
+      "scroll": 320,
+      "h1": 24
+    },
+    {
+      "width": 390,
+      "route": "/",
+      "status": 200,
+      "scroll": 390,
+      "h1": 24
+    },
+    {
+      "width": 390,
+      "case": "keyboard disclosures, amount/ratio presets and slippage",
+      "pass": true
+    },
+    {
+      "width": 390,
+      "case": "market preview settled",
+      "pass": true
+    },
+    {
+      "width": 390,
+      "route": "/guard",
+      "status": 200,
+      "scroll": 390,
+      "h1": 24
+    },
+    {
+      "width": 390,
+      "route": "/stats",
+      "status": 200,
+      "scroll": 390,
+      "h1": 24
+    },
+    {
+      "width": 390,
+      "route": "/keeper",
+      "status": 200,
+      "scroll": 390,
+      "h1": 24
+    },
+    {
+      "width": 768,
+      "route": "/",
+      "status": 200,
+      "scroll": 768,
+      "h1": 24
+    },
+    {
+      "width": 768,
+      "case": "keyboard disclosures, amount/ratio presets and slippage",
+      "pass": true
+    },
+    {
+      "width": 768,
+      "route": "/guard",
+      "status": 200,
+      "scroll": 768,
+      "h1": 24
+    },
+    {
+      "width": 768,
+      "route": "/stats",
+      "status": 200,
+      "scroll": 768,
+      "h1": 24
+    },
+    {
+      "width": 768,
+      "route": "/keeper",
+      "status": 200,
+      "scroll": 768,
+      "h1": 24
+    },
+    {
+      "width": 1440,
+      "route": "/",
+      "status": 200,
+      "scroll": 1440,
+      "h1": 24
+    },
+    {
+      "width": 1440,
+      "case": "keyboard disclosures, amount/ratio presets and slippage",
+      "pass": true
+    },
+    {
+      "width": 1440,
+      "case": "market preview settled",
+      "pass": true
+    },
+    {
+      "width": 1440,
+      "route": "/guard",
+      "status": 200,
+      "scroll": 1440,
+      "h1": 24
+    },
+    {
+      "width": 1440,
+      "route": "/stats",
+      "status": 200,
+      "scroll": 1440,
+      "h1": 24
+    },
+    {
+      "width": 1440,
+      "route": "/keeper",
+      "status": 200,
+      "scroll": 1440,
+      "h1": 24
+    }
+  ],
+  "errors": []
+}

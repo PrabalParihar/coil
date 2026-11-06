@@ -1,10 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
-import { parseEther } from "viem";
 import {
-  ArrowDown,
   ArrowLeftRight,
   ArrowUpRight,
   Bitcoin,
@@ -17,11 +14,11 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { cn } from "cn";
-import { formatBtc, formatMusd, formatUsd, percentToCr, quoteFlashLoop, type Market } from "@/lib/quote";
+import { formatUsd, type Market } from "@/lib/quote";
 import { factoryAddress } from "@/lib/mezo";
 import { deployment, selectedChain } from "@/lib/network";
 import { DEPLOYMENTS } from "@/lib/deployment.generated";
-import { dropToLiquidation, shorten, useMotionOk } from "@/components/shell";
+import { shorten, useMotionOk } from "@/components/shell";
 
 const RING = "M240 70 a170 170 0 1 1 0 340 a170 170 0 1 1 0 -340";
 
@@ -154,97 +151,17 @@ export function LoopViz() {
 /* ------------------------------------------------------------------ */
 
 export function Hero({ market, marketError }: { market: Market | null; marketError: string | null }) {
-  const sample = useMemo(() => {
-    if (!market) return null;
-    try {
-      return quoteFlashLoop(parseEther("0.05"), percentToCr(200), 50n, market);
-    } catch {
-      return null;
-    }
-  }, [market]);
-  const cr = sample ? Number((sample.cr * 10000n) / 10n ** 18n) / 100 : 0;
   return (
-    <section className="relative grid items-center gap-x-12 gap-y-10 pt-10 pb-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:pt-16 lg:pb-24">
-      <div className="lg:col-start-1 lg:row-start-1 lg:self-end">
-        <p className="rise chip border-filament/30 text-foreground/85">
-          <span className="relative flex size-1.5" aria-hidden>
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-safe opacity-70" />
-            <span className="relative inline-flex size-1.5 rounded-full bg-safe" />
-          </span>
-          {selectedChain.name} · chain {selectedChain.id} · {deployment.status}
-        </p>
-        <h1 className="mt-6 text-[2.9rem] leading-[0.95] font-semibold tracking-[-0.045em] sm:text-7xl lg:text-[5.4rem]">
-          <span className="rise rise-1 block">Stack more</span>
-          <span className="rise rise-2 block">
-            <span className="btc-text">Bitcoin</span> in{" "}
-            <em className="font-serif font-normal tracking-[-0.02em] italic">one</em>
-          </span>
-          <span className="rise rise-3 block">transaction.</span>
-        </h1>
-        <p className="rise rise-3 mt-6 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-          Coil borrows MUSD against your BTC, buys more BTC on Mezo Pools, and posts it back as collateral — stopping at the
-          collateral ratio you pick. A keeper you configure can only make the position <span className="text-foreground">safer</span>.
-        </p>
-        <div className="rise rise-4 mt-8 flex flex-wrap items-center gap-3">
-          <a
-            href="#app"
-            className="btn-btc inline-flex h-12 items-center gap-2 rounded-full px-6 text-[15px] font-semibold focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
-          >
-            Open the app <ArrowDown className="size-4" aria-hidden />
-          </a>
-          <a
-            href="#proof"
-            className="inline-flex h-12 items-center gap-2 rounded-full border border-border px-5 text-[15px] font-medium text-foreground/90 transition-colors hover:border-foreground/30 hover:bg-foreground/5"
-          >
-            See it on-chain <ArrowUpRight className="size-4" aria-hidden />
-          </a>
-        </div>
+    <section aria-label="Coil overview" className="flex flex-wrap items-center justify-between gap-4 border-b border-border py-6 sm:py-8">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Bitcoin leverage</h1>
+        <p className="mt-1.5 text-sm text-muted-foreground">Set a deposit and target ratio.</p>
       </div>
-
-      <div className="rise rise-2 px-6 pb-12 sm:px-10 sm:pb-14 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:px-4">
-        <LoopViz />
-      </div>
-
-      <div className="lg:col-start-1 lg:row-start-2 lg:self-start">
-        <div className="rise rise-4 panel max-w-xl p-4 sm:p-5">
-          <div className="flex items-center justify-between gap-3">
-            <p className="eyebrow">Live quote · 0.05 BTC @ 200%</p>
-            <p className="font-mono text-[11px] text-muted-foreground">
-              {market ? `BTC ${formatUsd(market.price)}` : marketError ? "RPC unavailable" : "reading oracle…"}
-            </p>
-          </div>
-          {sample ? (
-            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
-              <HeroStat label="Collateral" value={`${formatBtc(sample.collateral)} BTC`} accent />
-              <HeroStat label="Debt" value={`${formatMusd(sample.debt, 0)} MUSD`} />
-              <HeroStat label="Liq. price" value={formatUsd(sample.liquidationPrice)} />
-              <HeroStat label="BTC can fall" value={`${dropToLiquidation(cr).toFixed(1)}%`} />
-            </dl>
-          ) : (
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-busy="true">
-              {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="space-y-2">
-                  <div className="skeleton h-3 w-16 rounded" />
-                  <div className="skeleton h-5 w-24 rounded" />
-                </div>
-              ))}
-            </div>
-          )}
-          <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-            Computed in your browser from the Mezo price feed and the MUSD/BTC pool reserves, 0.5% slippage.
-          </p>
-        </div>
+      <div className="flex w-full flex-wrap justify-between gap-x-4 gap-y-1 text-xs text-muted-foreground sm:block sm:w-auto sm:space-y-1 sm:text-right">
+        <p>{selectedChain.name} · {deployment.status}</p>
+        <p>{market ? `BTC ${formatUsd(market.price)}` : marketError ? "Market data unavailable" : "Reading market data…"}</p>
       </div>
     </section>
-  );
-}
-
-function HeroStat({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div>
-      <dt className="text-[11px] text-muted-foreground">{label}</dt>
-      <dd className={cn("num mt-0.5 text-[15px] font-medium", accent && "text-filament")}>{value}</dd>
-    </div>
   );
 }
 
@@ -307,12 +224,12 @@ const HOW = [
 
 export function HowItWorks() {
   return (
-    <section id="how" aria-labelledby="how-title" className="scroll-mt-24 py-20">
+    <section id="how" aria-labelledby="how-title" className="scroll-mt-24 border-t border-border py-10">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="eyebrow text-filament">How it works</p>
-          <h2 id="how-title" className="mt-3 max-w-xl text-4xl font-semibold tracking-[-0.035em] sm:text-5xl">
-            Three moves. <span className="font-serif font-normal italic">One</span> transaction.
+          <h2 id="how-title" className="mt-3 max-w-xl text-2xl font-semibold tracking-tight">
+            Three moves. One transaction.
           </h2>
         </div>
         <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
@@ -320,16 +237,16 @@ export function HowItWorks() {
           Transaction paths are checked against Mezo’s 20-call limit; the two-swap loop remains the fallback when the pool is paused.
         </p>
       </div>
-      <ol className="mt-10 grid gap-4 md:grid-cols-3">
+      <ol className="mt-5 grid gap-3 md:grid-cols-3">
         {HOW.map((step, i) => (
-          <li key={step.title} className="panel group p-6 transition-colors hover:border-filament/40">
+          <li key={step.title} className="panel group p-4 transition-colors hover:border-filament/40">
             <div className="flex items-center justify-between">
               <span className="flex size-11 items-center justify-center rounded-2xl border border-filament/30 bg-filament/10 text-filament">
                 <step.icon className="size-5" aria-hidden />
               </span>
               <span className="font-mono text-xs text-muted-foreground">0{i + 1}</span>
             </div>
-            <h3 className="mt-6 text-xl font-semibold tracking-tight">{step.title}</h3>
+            <h3 className="mt-4 text-sm font-semibold tracking-tight">{step.title}</h3>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{step.body}</p>
             <p className="mt-5 inline-block rounded-md bg-foreground/5 px-2 py-1 font-mono text-[11px] text-foreground/70">{step.tag}</p>
           </li>
@@ -389,11 +306,11 @@ const PROOF: { kicker: string; big: string; title: string; body: string; receipt
 
 export function Proof() {
   return (
-    <section id="proof" aria-labelledby="proof-title" className="scroll-mt-24 py-20">
+    <section id="proof" aria-labelledby="proof-title" className="scroll-mt-24 border-t border-border py-10">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="eyebrow text-filament">Receipts</p>
-          <h2 id="proof-title" className="mt-3 max-w-2xl text-4xl font-semibold tracking-[-0.035em] sm:text-5xl">
+          <h2 id="proof-title" className="mt-3 max-w-2xl text-2xl font-semibold tracking-tight">
             Already run on Mezo testnet.
           </h2>
         </div>
@@ -405,7 +322,7 @@ export function Proof() {
         {PROOF.map((item) => (
           <article key={item.title} className="panel flex flex-col p-6">
             <p className="font-mono text-xs text-filament">{item.kicker}</p>
-            <p className="num mt-4 text-5xl font-semibold tracking-tighter">{item.big}</p>
+            <p className="num mt-3 text-2xl font-semibold tracking-tight">{item.big}</p>
             <h3 className="mt-3 text-lg font-semibold tracking-tight">{item.title}</h3>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.body}</p>
             <ul className="mt-auto space-y-2 border-t border-border pt-4">
@@ -475,9 +392,9 @@ const RISKS = [
 
 export function Risks() {
   return (
-    <section id="risks" aria-labelledby="risks-title" className="scroll-mt-24 py-20">
+    <section id="risks" aria-labelledby="risks-title" className="scroll-mt-24 border-t border-border py-10">
       <p className="eyebrow text-filament">Know the risks</p>
-      <h2 id="risks-title" className="mt-3 max-w-2xl text-4xl font-semibold tracking-[-0.035em] sm:text-5xl">
+      <h2 id="risks-title" className="mt-3 max-w-2xl text-2xl font-semibold tracking-tight">
         Leverage, with the edges in plain sight.
       </h2>
       <div className="mt-10 grid gap-4 sm:grid-cols-2">

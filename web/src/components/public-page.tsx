@@ -22,7 +22,7 @@ export function PublicPage({ eyebrow, title, children }: { eyebrow: string; titl
     <main id="public-content" tabIndex={-1} className="mx-auto max-w-3xl scroll-mt-24 px-4 py-10 outline-none sm:py-14">
       <p className="mb-7 inline-flex flex-wrap gap-x-2 rounded-xl border border-border bg-foreground/3 px-3 py-2 font-mono text-xs text-muted-foreground"><span>{selectedChain.name}</span><span>Chain {selectedChain.id}</span><span className="text-filament">{deployment.status} deployment</span></p>
       <p className="eyebrow text-filament">{eyebrow}</p>
-      <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">{title}</h1>
+      <h1 className="mt-3 text-2xl font-semibold tracking-tight">{title}</h1>
       {children}
     </main>
   </div>;
