@@ -1,0 +1,323 @@
+{
+  "scope": "web presentation redesign; live route checks plus labelled read-only fixtures; no signed transactions",
+  "viewports": {
+    "origin": "http://127.0.0.1:43129",
+    "results": [
+      {
+        "width": 320,
+        "route": "/",
+        "status": 200,
+        "scroll": 320,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 320,
+        "case": "keyboard disclosures, deposit/ratio presets and slippage",
+        "pass": true
+      },
+      {
+        "width": 320,
+        "route": "/guard",
+        "status": 200,
+        "scroll": 320,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 320,
+        "route": "/stats",
+        "status": 200,
+        "scroll": 320,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 320,
+        "route": "/keeper",
+        "status": 200,
+        "scroll": 320,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 390,
+        "route": "/",
+        "status": 200,
+        "scroll": 390,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 390,
+        "case": "keyboard disclosures, deposit/ratio presets and slippage",
+        "pass": true
+      },
+      {
+        "width": 390,
+        "route": "/guard",
+        "status": 200,
+        "scroll": 390,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 390,
+        "route": "/stats",
+        "status": 200,
+        "scroll": 390,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 390,
+        "route": "/keeper",
+        "status": 200,
+        "scroll": 390,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "case": "cross-page mobile navigation and visible App anchor",
+        "pass": true
+      },
+      {
+        "width": 768,
+        "route": "/",
+        "status": 200,
+        "scroll": 768,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 768,
+        "case": "keyboard disclosures, deposit/ratio presets and slippage",
+        "pass": true
+      },
+      {
+        "width": 768,
+        "route": "/guard",
+        "status": 200,
+        "scroll": 768,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 768,
+        "route": "/stats",
+        "status": 200,
+        "scroll": 768,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 768,
+        "route": "/keeper",
+        "status": 200,
+        "scroll": 768,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1024,
+        "route": "/",
+        "status": 200,
+        "scroll": 1024,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1024,
+        "case": "keyboard disclosures, deposit/ratio presets and slippage",
+        "pass": true
+      },
+      {
+        "width": 1024,
+        "route": "/guard",
+        "status": 200,
+        "scroll": 1024,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1024,
+        "route": "/stats",
+        "status": 200,
+        "scroll": 1024,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1024,
+        "route": "/keeper",
+        "status": 200,
+        "scroll": 1024,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1280,
+        "route": "/",
+        "status": 200,
+        "scroll": 1280,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1280,
+        "case": "keyboard disclosures, deposit/ratio presets and slippage",
+        "pass": true
+      },
+      {
+        "width": 1280,
+        "route": "/guard",
+        "status": 200,
+        "scroll": 1280,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1280,
+        "route": "/stats",
+        "status": 200,
+        "scroll": 1280,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1280,
+        "route": "/keeper",
+        "status": 200,
+        "scroll": 1280,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1440,
+        "route": "/",
+        "status": 200,
+        "scroll": 1440,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1440,
+        "case": "keyboard disclosures, deposit/ratio presets and slippage",
+        "pass": true
+      },
+      {
+        "width": 1440,
+        "route": "/guard",
+        "status": 200,
+        "scroll": 1440,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1440,
+        "route": "/stats",
+        "status": 200,
+        "scroll": 1440,
+        "h1": 20,
+        "pass": true
+      },
+      {
+        "width": 1440,
+        "route": "/keeper",
+        "status": 200,
+        "scroll": 1440,
+        "h1": 20,
+        "pass": true
+      }
+    ],
+    "errors": []
+  },
+  "quote_fixture": {
+    "results": [
+      {
+        "width": 320,
+        "case": "successful quote, all fees/risk rows visible, invalid zero input",
+        "fixture": "read-only market RPC responses; not production data",
+        "hits": 15,
+        "pass": true
+      },
+      {
+        "width": 320,
+        "case": "wallet dialog opens from redesigned header",
+        "pass": true
+      },
+      {
+        "width": 390,
+        "case": "successful quote, all fees/risk rows visible, invalid zero input",
+        "fixture": "read-only market RPC responses; not production data",
+        "hits": 15,
+        "pass": true
+      },
+      {
+        "width": 390,
+        "case": "wallet dialog opens from redesigned header",
+        "pass": true
+      },
+      {
+        "width": 1440,
+        "case": "successful quote, all fees/risk rows visible, invalid zero input",
+        "fixture": "read-only market RPC responses; not production data",
+        "hits": 15,
+        "pass": true
+      },
+      {
+        "width": 1440,
+        "case": "wallet dialog opens from redesigned header",
+        "pass": true
+      }
+    ],
+    "errors": []
+  },
+  "connected_fixture": {
+    "results": [
+      {
+        "wrong": false,
+        "scroll": 320,
+        "width": 320,
+        "header": 114,
+        "heading": {
+          "x": 16,
+          "y": 162,
+          "width": 101.109375,
+          "height": 28,
+          "top": 162,
+          "right": 117.109375,
+          "bottom": 190,
+          "left": 16
+        },
+        "fixture": "read-only injected test provider; no signing or transactions",
+        "pass": true
+      },
+      {
+        "wrong": true,
+        "scroll": 320,
+        "width": 320,
+        "header": 222,
+        "heading": {
+          "x": 16,
+          "y": 270,
+          "width": 101.109375,
+          "height": 28,
+          "top": 270,
+          "right": 117.109375,
+          "bottom": 298,
+          "left": 16
+        },
+        "fixture": "read-only injected test provider; no signing or transactions",
+        "pass": true
+      }
+    ]
+  },
+  "regressions": {
+    "sidebar_geometry": "passed in 24 viewport/route checks",
+    "short_desktop_sidebar": "1280x400 source link reachable after rail scroll",
+    "brand_gradient_ids": "unique after useId fix",
+    "wrong_network_anchor": "320px header222, heading270",
+    "network_warning_width": "at least160px after wrapping action onto a separate row"
+  }
+}

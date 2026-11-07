@@ -1,8 +1,8 @@
 "use client";
 import { explorerUrl, selectedChain } from "@/lib/network";
 
-import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, ArrowUpRight, Check, X } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { AlertTriangle, ArrowRight, ArrowUpRight, Check, ChevronDown, X } from "lucide-react";
 import { animate, AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
@@ -113,16 +113,17 @@ export function TweenValue({
 }
 
 export function CoilMark({ className }: { className?: string }) {
+  const gradientId = `coil-mark-${useId()}`;
   return (
     <svg viewBox="0 0 36 36" className={cn("size-9 shrink-0", className)} aria-hidden>
       <defs>
-        <linearGradient id="coil-mark" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+        <linearGradient id={gradientId} x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#ffc06b" />
           <stop offset=".55" stopColor="#f7931a" />
           <stop offset="1" stopColor="#e2640c" />
         </linearGradient>
       </defs>
-      <rect width="36" height="36" rx="10" fill="url(#coil-mark)" />
+      <rect width="36" height="36" rx="10" fill={`url(#${gradientId})`} />
       <path d="M25.5 13.2a9 9 0 1 0 1.3 7.6" fill="none" stroke="#1a0f02" strokeWidth="2.6" strokeLinecap="round" />
       <path d="M26.6 8.8l-.6 5.3-5.2-1" fill="none" stroke="#1a0f02" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
       <circle cx="18" cy="18" r="3" fill="#1a0f02" />
@@ -434,16 +435,16 @@ export function ReviewRow({
   tone?: string;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 py-2.5">
-      <dt className="text-sm text-muted-foreground">{label}</dt>
-      <dd className={cn("num flex items-baseline gap-2 text-right", emphasis ? "text-lg font-medium" : "text-sm", tone)}>
+    <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] items-baseline gap-3 py-2.5">
+      <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
+      <dd className={cn("num flex min-w-0 flex-wrap items-baseline justify-end gap-x-1.5 gap-y-1 text-right break-words", emphasis ? "text-sm font-medium" : "text-xs", tone)}>
         {before !== undefined ? (
           <>
             <span className="text-muted-foreground/80">{before}</span>
             <ArrowRight className="size-3.5 self-center text-muted-foreground" aria-hidden />
           </>
         ) : null}
-        <span>{after}</span>
+        <span className="min-w-0 [overflow-wrap:anywhere]">{after}</span>
       </dd>
     </div>
   );
@@ -495,21 +496,22 @@ export function Banner({
     <div
       role={tone === "bad" ? "alert" : "status"}
       className={cn(
-        "flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm",
+        "flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg border px-3 py-1 text-sm",
         tone === "bad" && "border-danger/40 bg-danger/10",
         tone === "warn" && "border-warn/40 bg-warn/10",
         tone === "info" && "border-border bg-foreground/[0.03]",
       )}
     >
-      <div className="flex min-w-0 items-start gap-3">
-        <AlertTriangle className={cn("mt-0.5 size-4 shrink-0", tone === "bad" ? "text-danger" : tone === "warn" ? "text-warn" : "text-muted-foreground")} aria-hidden />
-        <div className="min-w-0">
-          <p className="font-medium text-foreground">{title}</p>
-          {summaryText ? <p className="mt-0.5 text-xs text-muted-foreground">{summaryText}</p> : null}
-          {detailsLabel ? <details className="text-muted-foreground">
-            <summary className="min-h-11 cursor-pointer py-3 text-xs hover:text-foreground">{detailsLabel}</summary>
-            <p className="mt-1 leading-relaxed break-words">{children}</p>
-          </details> : <p className="mt-0.5 leading-relaxed break-words text-muted-foreground">{children}</p>}
+      <div className="flex min-w-0 flex-1 basis-64 items-start gap-2.5">
+        <AlertTriangle className={cn("mt-3.5 size-3.5 shrink-0", tone === "bad" ? "text-danger" : tone === "warn" ? "text-warn" : "text-muted-foreground")} aria-hidden />
+        <div className="min-w-0 flex-1">
+          {detailsLabel ? <details className="group/status text-muted-foreground">
+            <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-xs hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <span className="min-w-0"><span className="block font-medium text-foreground">{title}</span>{summaryText ? <span className="mt-0.5 block text-muted-foreground">{summaryText}</span> : null}</span>
+              <span className="inline-flex items-center gap-1.5 text-[11px]">{detailsLabel}<ChevronDown className="size-3 transition-transform group-open/status:rotate-180" aria-hidden /></span>
+            </summary>
+            <p className="pb-3 text-xs leading-relaxed break-words">{children}</p>
+          </details> : <div className="py-2"><p className="text-xs font-medium text-foreground">{title}</p>{summaryText ? <p className="mt-0.5 text-xs text-muted-foreground">{summaryText}</p> : null}<p className="mt-0.5 text-xs leading-relaxed break-words text-muted-foreground">{children}</p></div>}
         </div>
       </div>
       {action}

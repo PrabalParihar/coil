@@ -60,9 +60,9 @@
 
 :root,
 .dark {
-  --background: #111113;
+  --background: #101012;
   --foreground: #f2f2f3;
-  --card: #19191c;
+  --card: #18181b;
   --card-foreground: oklch(0.97 0.008 80);
   --popover: oklch(0.19 0.008 60);
   --popover-foreground: oklch(0.97 0.008 80);
@@ -71,7 +71,7 @@
   --secondary: oklch(0.235 0.008 60);
   --secondary-foreground: oklch(0.97 0.008 80);
   --muted: oklch(0.22 0.007 60);
-  --muted-foreground: oklch(0.72 0.014 75);
+  --muted-foreground: #a1a1aa;
   --accent: oklch(0.28 0.02 62);
   --accent-foreground: oklch(0.97 0.008 80);
   --destructive: oklch(0.69 0.19 25);
@@ -229,6 +229,11 @@
     var(--safe) 38%, var(--safe) 100%);
 }
 
+}
+
+/* Sticky utility headers can grow when wallet/network controls wrap. */
+.workspace-shell :is(section[id], main[id]) {
+  scroll-margin-top: var(--workspace-header-offset, 8rem);
 }
 
 /* ---------- motion ---------- */
