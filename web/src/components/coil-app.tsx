@@ -17,7 +17,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Bitcoin, Check, ChevronDown, Lock, Plug, ShieldCheck, Wallet } from "lucide-react";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
-import { MobileNavigation, SiteNavigation } from "@/components/site-navigation";
+import { MobileNavigation, SiteNavigation, WorkspaceHeader, WorkspaceNavigation } from "@/components/site-navigation";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -85,7 +85,7 @@ import {
   useMotionOk,
   type TxLink,
 } from "@/components/shell";
-import { Footer, HowItWorks, Hero, Proof, Risks } from "@/components/landing";
+import { Footer, HowItWorks, Proof, Risks } from "@/components/landing";
 
 const WAD = 10n ** 18n;
 const PRESETS = ["0.01", "0.025", "0.04", "0.05"] as const;
@@ -934,7 +934,7 @@ export function CoilApp() {
   const currentPrice = market ? formatUsd(market.price) : null;
 
   return (
-    <div className="relative min-h-screen overflow-x-clip">
+    <div className="workspace-shell relative min-h-screen lg:pl-52">
       <div className="atmosphere pointer-events-none fixed inset-0 -z-10" aria-hidden />
       <div className="grain pointer-events-none fixed inset-0 -z-10" aria-hidden />
       <a
@@ -943,19 +943,20 @@ export function CoilApp() {
       >
         Skip to the app
       </a>
+      <SiteNavigation />
 
-      <header className="sticky top-0 z-30 border-b border-border/70 bg-background/70 backdrop-blur-xl">
+      <WorkspaceHeader className="sticky top-0 z-30 border-b border-border/70 bg-background/70 backdrop-blur-xl">
         <div className="relative mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-          <a href="#" className="flex min-h-11 shrink-0 items-center gap-2.5" aria-label="Coil Labs home">
-            <CoilMark className="size-8" />
-            <span className="text-lg font-semibold tracking-tight">Coil Labs</span>
+          <a href="#" className="flex min-h-11 shrink-0 items-center gap-2.5 lg:hidden" aria-label="Coil Labs home">
+            <CoilMark className="size-7" />
+            <span className="text-base font-semibold tracking-tight">Coil Labs</span>
             <span className="hidden rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
               {mezoTestnet.id === 31611 ? "testnet" : "mainnet"}
             </span>
           </a>
-          <SiteNavigation />
+          <p className="hidden text-xs text-muted-foreground lg:block">Workspace <span className="mx-2 text-foreground/30">/</span><span className="text-foreground">App</span></p>
           <div className="flex flex-wrap items-center gap-2">
-            <p className="hidden items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground 2xl:flex">
+            <p className="hidden items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground sm:flex">
               <Bitcoin className="size-3.5 text-filament" aria-hidden />
               {market ? (
                 <TweenValue
@@ -991,7 +992,7 @@ export function CoilApp() {
             ) : (
               <Button
                 type="button"
-                className="btn-btc min-h-11 rounded-full px-4 font-semibold"
+                className="btn-btc min-h-11 rounded-lg px-4 font-medium"
                 disabled={!mounted || connecting}
                 onClick={connectWallet}
               >
@@ -1002,39 +1003,38 @@ export function CoilApp() {
           </div>
           {busy ? <div className="busy-bar" aria-hidden /> : null}
         </div>
-      </header>
+        <WorkspaceNavigation />
+      </WorkspaceHeader>
 
       <div className="mx-auto flex w-full max-w-7xl flex-col px-4 sm:px-6 lg:px-8">
         <main aria-busy={busy}>
-          <Hero market={effectiveMarket} marketError={marketError} />
-
-          <section id="app" aria-labelledby="app-title" className="scroll-mt-20 py-7">
-            <div className="flex flex-wrap items-end justify-between gap-6">
+          <section id="app" aria-labelledby="app-title" className="scroll-mt-32 py-7 lg:scroll-mt-20">
+            <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <p className="eyebrow text-filament">The desk</p>
-                <h2 id="app-title" className="mt-1 text-xl font-semibold tracking-tight">
+                <p className="mb-1 text-xs text-muted-foreground">Bitcoin leverage</p>
+                <h1 id="app-title" className="text-xl font-semibold tracking-tight">
                   Open a coil
-                </h2>
+                </h1>
               </div>
               <ol className="flex flex-wrap items-center gap-1.5" aria-label="Setup progress">
                 {setup.map((step, i) => (
                   <li key={step.label} className="flex items-center gap-1.5">
                     <span
                       className={cn(
-                        "chip",
+                        "flex min-h-8 items-center gap-1.5 text-[11px]",
                         step.done ? "border-safe/40 text-safe" : "text-muted-foreground",
                       )}
                     >
                       {step.done ? <Check className="size-3" aria-hidden /> : <span className="font-mono text-[10px]">{i + 1}</span>}
                       {step.label}
                     </span>
-                    {i < setup.length - 1 ? <span className="h-px w-3 bg-border" aria-hidden /> : null}
+                    {i < setup.length - 1 ? <span className="mx-1 h-px w-3 bg-border" aria-hidden /> : null}
                   </li>
                 ))}
               </ol>
             </div>
 
-            <div className="mt-6 space-y-3">
+            <div className="mt-5 space-y-2">
               {connected ? <div className="well space-y-2 p-4">
                 <Label htmlFor="owner-deployment">Your account generation / factory</Label>
                 <select id="owner-deployment" disabled={busy} className="w-full rounded border border-border bg-background p-2 text-sm" value={selectedChoice.key} onChange={event => setManualChoice({ ownerKey, key: event.target.value })}>
@@ -1128,13 +1128,13 @@ export function CoilApp() {
               ) : null}
             </div>
 
-            <div className="mt-6 grid items-start gap-5 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
+            <div className="mt-5 grid items-start gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
               {/* Composer */}
-              <section className="panel p-5 sm:p-6" aria-labelledby="compose-title">
-                <h3 id="compose-title" className="sr-only">Compose</h3>
+              <section className="panel p-4 sm:p-5" aria-labelledby="compose-title">
+                <h2 id="compose-title" className="mb-5 flex items-center gap-2 text-sm font-medium"><span className="flex size-5 items-center justify-center rounded-md border border-border text-[10px] text-muted-foreground" aria-hidden>1</span>Build your position</h2>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label htmlFor="btc" className="eyebrow">You deposit</Label>
+                    <Label htmlFor="btc" className="text-xs text-muted-foreground">You deposit</Label>
                     {connected && balance ? (
                       <span className="font-mono text-[11px] text-muted-foreground">
                         Wallet <span className="text-foreground">{formatBtc(balance.value)}</span> BTC
@@ -1145,7 +1145,7 @@ export function CoilApp() {
                       </a>
                     ) : null}
                   </div>
-                  <div className="well flex items-center gap-3 px-4 py-3 focus-within:border-filament/60">
+                  <div className="deposit-field flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 focus-within:border-filament/60">
                     <Input
                       id="btc"
                       inputMode="decimal"
@@ -1171,7 +1171,7 @@ export function CoilApp() {
                   </div>
                 </div>
 
-                <div className="mt-8">
+                <div className="mt-6 border-t border-border pt-5">
                   <RatioSlider
                     label="Target collateral ratio"
                     thumbLabel="Target collateral ratio"
@@ -1196,7 +1196,7 @@ export function CoilApp() {
                       <span className="flex flex-wrap items-center gap-2">
                         <RiskPill percent={targetPct} />
                         <span>
-                          Liquidation is 110%. Coil will not target below 115%. Lower ratios are redeemed first.
+                          Liquidation 110% · minimum target 115%. Lower ratios are redeemed first.
                         </span>
                       </span>
                     }
@@ -1230,7 +1230,7 @@ export function CoilApp() {
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="eyebrow">Open slippage</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Default 1%. Rescue and close use a separate cap.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Rescue and close use a separate cap.</p>
                   </div>
                   <ChipGroup label="Open slippage" options={SLIPPAGE} value={slippageBps as (typeof SLIPPAGE)[number]} onChange={setSlippageBps} render={(v) => `${(v / 100).toFixed(2)}%`} />
                 </div>
@@ -1255,16 +1255,16 @@ export function CoilApp() {
               </section>
 
               {/* Review */}
-              <section className="panel panel-glow p-5 sm:p-7 lg:sticky lg:top-20" aria-labelledby="review-title">
+              <section className="panel quote-panel p-4 sm:p-5 xl:sticky xl:top-20" aria-labelledby="review-title">
                 <div className="flex items-center justify-between gap-3">
-                  <h3 id="review-title" className="text-lg font-semibold tracking-tight">Review before you sign</h3>
+                  <h2 id="review-title" className="flex items-center gap-2 text-sm font-medium"><span className="flex size-5 items-center justify-center rounded-md border border-border text-[10px] text-muted-foreground" aria-hidden>2</span>Review before you sign</h2>
                   {preview.kind === "ok" ? <RiskPill percent={crToPercent(preview.quote.cr)} /> : null}
                 </div>
                 <ReviewCard preview={preview} existing={needsStateQuote && position?.active ? position : undefined} deposit={collateral} currentPrice={currentPrice} redemption={redemption} zone={zone} flash={flashFactory} />
 
                 <div className="mt-5 space-y-2">
-                  <p className="eyebrow">Transactions</p>
-                  <ol className="space-y-1.5 text-sm">
+                  <p className="text-xs text-muted-foreground">Transactions</p>
+                  <ol className="space-y-2 text-xs">
                     {!account ? (
                       <li className="flex items-center gap-2.5">
                         <span className={cn("flex size-5 items-center justify-center rounded-full border font-mono text-[10px]", "border-filament/60 text-filament")}>1</span>
@@ -1313,11 +1313,10 @@ export function CoilApp() {
             </div>
 
             {/* Position */}
-            <section id="position" className="panel mt-5 scroll-mt-20 p-5 sm:p-7" aria-labelledby="position-title">
+            <section id="position" className="panel mt-5 scroll-mt-32 p-4 sm:p-5 lg:scroll-mt-20" aria-labelledby="position-title">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="eyebrow text-filament">Position</p>
-                  <h3 id="position-title" className="mt-2 text-2xl font-semibold tracking-tight">Your trove</h3>
+                  <h2 id="position-title" className="text-base font-medium tracking-tight">Your position</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
                     {account ? (
                       <>
@@ -1370,16 +1369,13 @@ export function CoilApp() {
                   {discoveryPending ? <p className="text-sm text-muted-foreground">Discovering your current and retained positions…</p> : !factoryAddress ? (
                     <EmptyState title="Nothing on-chain yet" body="The preview uses the selected chain market. A confirmed Coil deployment is required before this card can show a clone position." />
                   ) : !connected ? (
-                    <div className="grid items-center gap-6 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                      <div className="well px-4 py-6 opacity-70">
-                        <CrGauge percent={110} empty label="-" sub="collateral ratio" />
+                    <div className="flex flex-wrap items-center gap-4 rounded-lg border border-dashed border-border p-4">
+                      <Wallet className="size-6 shrink-0 text-muted-foreground" strokeWidth={1.5} aria-hidden />
+                      <div className="min-w-0 flex-1 basis-48">
+                        <p className="text-sm font-medium">Connect to see your trove</p>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">Use an injected or supported Bitcoin wallet on {mezoTestnet.name}.{mezoTestnet.id === 31611 ? <> Test BTC: <a className="link" href="https://faucet.test.mezo.org" target="_blank" rel="noreferrer noopener">Mezo faucet</a>.</> : " Mainnet transactions remain subject to the release gate."}</p>
                       </div>
-                      <EmptyState
-                        icon={<Wallet className="mb-4 size-10 text-filament" strokeWidth={1.5} aria-hidden />}
-                        title="Connect to see your trove"
-                        body={<>Use an injected or supported Bitcoin wallet on {mezoTestnet.name}.{mezoTestnet.id === 31611 ? <> Test BTC comes from <a className="link" href="https://faucet.test.mezo.org" target="_blank" rel="noreferrer noopener">faucet.test.mezo.org</a>.</> : " Mainnet transactions remain subject to the release gate."}</>}
-                        action={mounted ? { label: connecting ? "Connecting…" : "Connect wallet", onClick: connectWallet, disabled: connecting } : undefined}
-                      />
+                      {mounted ? <Button type="button" variant="outline" className="min-h-11 px-4" onClick={connectWallet} disabled={connecting}>{connecting ? "Connecting…" : "Connect wallet"}</Button> : null}
                     </div>
                   ) : !account ? (
                     <EmptyState
@@ -1561,17 +1557,16 @@ function ReviewCard({
   const drop = dropToLiquidation(ratio);
   return (
     <div className="mt-5">
-      <div className="well grid grid-cols-2 gap-4 px-4 py-4">
+      <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] gap-3 rounded-lg border border-border bg-background px-4 py-5">
         <div>
-          <p className="text-[11px] text-muted-foreground">You end with</p>
-          <p className="num mt-1 text-2xl font-semibold text-filament">
+          <p className="text-[11px] text-muted-foreground">Total BTC collateral</p>
+          <p className="num mt-1 text-[28px] font-medium tracking-tight">
             <TweenValue canonical={formatBtc(q.collateral)} numeric={wad(q.collateral, 4)} digits={4} /> <span className="text-base">BTC</span>
           </p>
-          <p className="text-[11px] text-muted-foreground">as collateral</p>
         </div>
         <div className="text-right">
           <p className="text-[11px] text-muted-foreground">Leverage</p>
-          <p className="num mt-1 text-2xl font-semibold">{q.leverage}</p>
+          <p className="num mt-2 text-xl font-medium">{q.leverage}</p>
           <p className="text-[11px] text-muted-foreground">BTC exposure</p>
         </div>
       </div>
