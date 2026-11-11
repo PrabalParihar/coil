@@ -70,7 +70,7 @@ import {
 import { canWrite, isUnsupportedPolicy, loopArguments, ownerActionState, ownerTransactions } from "@/lib/readiness";
 import { DEPLOYMENTS, RETAINED_DEPLOYMENTS } from "@/lib/deployment.generated";
 import { discoverOwnerAccounts, ownerDeploymentCatalog, ownerDiscoveryView, selectOwnerDeployment, type OwnerDiscovery } from "@/lib/owner-accounts";
-import { readStateAwareQuote, selectPositionPreview, startPositionQuote, type PositionQuoteState } from "@/lib/position-quote";
+import { canSubmitPositionPreview, presentPositionPreview, readStateAwareQuote, startPositionQuote, type PositionQuoteState } from "@/lib/position-quote";
 import { EMPTY_DEPOSIT_HELPER, LEVERAGE_CHOICES, PRICE_CHECK_CTA, RECOVERY_STILL, bpsToPercent, feeCapLabel, feeChipLabel, leverageChoice, poolWarning } from "@/lib/product-copy";
 import { exceedsFactoryLimit, quoteCardView } from "@/lib/quote-card";
 import { QuoteCard } from "@/components/quote-card";
@@ -371,12 +371,10 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
     return () => { cancel?.(); clearInterval(timer); };
   }, [needsStateQuote, account, publicClient, collateral, newCapabilities, feeBpsLive, positionQuoteKey, targetPct, slippageBps, flashFactory]);
   const preview = useMemo(() => {
-    if (collateral === null || collateral <= 0n) return { kind: "error" as const, message: "Enter a positive BTC amount.", illustrative: false };
-    if (feePending) return freshPreview.kind === "ok" ? freshPreview : { kind: "loading" as const, illustrative: false };
-    if (feeUnavailable) return { kind: "error" as const, message: "Factory policy is unavailable. Fee-bearing opens are disabled.", illustrative: false };
-    const selected = selectPositionPreview(needsStateQuote, positionQuoteKey, positionQuote, freshPreview);
-    if (selected.kind === "ok") return { ...selected, illustrative: false };
-    return freshPreview.kind === "ok" ? freshPreview : selected;
+    if (collateral === null || collateral <= 0n) return { kind: "error" as const, message: "Enter a positive BTC amount.", illustrative: false, displayOnly: false };
+    if (feePending) return freshPreview.kind === "ok" ? { ...freshPreview, displayOnly: true } : { kind: "loading" as const, illustrative: false, displayOnly: true };
+    if (feeUnavailable) return { kind: "error" as const, message: "Factory policy is unavailable. Fee-bearing opens are disabled.", illustrative: false, displayOnly: true };
+    return presentPositionPreview(needsStateQuote, positionQuoteKey, positionQuote, freshPreview);
   }, [collateral, feePending, feeUnavailable, needsStateQuote, positionQuoteKey, positionQuote, freshPreview]);
 
   const redemption = useMemo(() => {
@@ -770,7 +768,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
   }
 
   function doLoop() {
-    if (!account || collateral === null || !loopReady || preview.kind !== "ok") return;
+    if (!account || collateral === null || !loopReady || !canSubmitPositionPreview(preview)) return;
     begin();
     send(`Loop to ${targetPct}%`, () =>
       writeContractAsync({
@@ -1010,7 +1008,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
     !openBlock &&
     Boolean(factoryAddress) &&
     Boolean(account) &&
-    preview.kind === "ok" &&
+    canSubmitPositionPreview(preview) &&
     collateral !== null &&
     collateral !== 0n;
   const primary: { label: string; onClick?: () => void; disabled: boolean; icon?: React.ReactNode } = pegBlocked
@@ -1148,6 +1146,9 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
             </div>
 
             <div className="mt-5 space-y-2">
+              <p id="coil-open-fee" role="status" className="rounded-lg border border-border bg-foreground/[0.03] px-3 py-2.5 text-sm leading-relaxed text-foreground">
+                {openFeeText}
+              </p>
               {connected ? <div className="well space-y-2 p-4">
                 <Label htmlFor="owner-deployment">Your account generation / factory</Label>
                 <select id="owner-deployment" disabled={busy} className="w-full rounded border border-border bg-background p-2 text-sm" value={selectedChoice.key} onChange={event => setManualChoice({ ownerKey, key: event.target.value })}>

@@ -174,6 +174,40 @@ test('active fee consent fails closed on unavailable or input-stale on-chain quo
   assert.deepEqual(positionQuotes.selectPositionPreview(true, 'active', { key: 'active', kind: 'error', message: 'Quote RPC failed' }, { kind: 'ok', quote: increasedQuote }), { kind: 'error', message: 'Quote RPC failed' });
   assert.equal(positionQuotes.selectPositionPreview(false, 'fresh', null, freshEstimate), freshEstimate);
 });
+test('a policy account cannot submit a fresh estimate while the state-aware quote is pending, failed, or mismatched', () => {
+  const fresh = { kind: 'ok', quote: increasedQuote, illustrative: false };
+  const key = '31611:factory:account';
+  const blocked = [
+    null,
+    { key: 'other', kind: 'ok', quote: increasedQuote },
+    { key, kind: 'error', message: 'State-aware quote unavailable.' },
+    { key, kind: 'loading' },
+  ];
+  for (const state of blocked) {
+    const shown = positionQuotes.presentPositionPreview(true, key, state, fresh);
+    assert.equal(shown.displayOnly, true);
+    assert.equal(positionQuotes.canSubmitPositionPreview(shown), false);
+    if (shown.kind === 'ok') assert.equal(shown.quote, increasedQuote);
+  }
+  const ready = positionQuotes.presentPositionPreview(true, key, { key, kind: 'ok', quote: increasedQuote }, fresh);
+  assert.equal(ready.displayOnly, false);
+  assert.equal(ready.illustrative, false);
+  assert.equal(ready.kind, 'ok');
+  assert.equal(positionQuotes.canSubmitPositionPreview(ready), true);
+});
+test('a fresh sample stays illustrative and cannot be submitted for a retained legacy account', () => {
+  const sample = { kind: 'ok', quote: increasedQuote, illustrative: true };
+  const kept = positionQuotes.selectPositionPreview(false, 'legacy', null, sample);
+  assert.equal(kept, sample);
+  assert.equal(kept.illustrative, true);
+  const shown = positionQuotes.presentPositionPreview(false, 'legacy', null, sample);
+  assert.equal(shown.illustrative, true);
+  assert.equal(shown.displayOnly, false);
+  assert.equal(positionQuotes.canSubmitPositionPreview(shown), false);
+  const live = positionQuotes.selectPositionPreview(true, 'active', { key: 'active', kind: 'ok', quote: increasedQuote }, sample);
+  assert.equal(live.kind, 'ok');
+  assert.equal(live.illustrative, false);
+});
 test('cancelled quote read cannot publish a previous account or chain result', async () => {
   assert.equal(typeof positionQuotes.startPositionQuote, 'function');
   let finish;

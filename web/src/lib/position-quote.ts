@@ -3,9 +3,9 @@ import { coilAccountAbi } from "./mezo";
 import { leverageLabel, type FlashPreview } from "./quote";
 
 export type PositionPreview =
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ok"; quote: FlashPreview };
+  | { kind: "loading"; illustrative?: boolean }
+  | { kind: "error"; message: string; illustrative?: boolean }
+  | { kind: "ok"; quote: FlashPreview; illustrative?: boolean };
 export type PositionQuoteState = PositionPreview & { key: string };
 export type PositionQuoteRequest = {
   account: Address; chainId: number; deposit: bigint;
@@ -25,9 +25,27 @@ export async function readStateAwareQuote(client: Pick<PublicClient, "readContra
 export function selectPositionPreview(required: boolean, key: string, state: PositionQuoteState | null, freshPreview: PositionPreview): PositionPreview {
   if (!required) return freshPreview;
   if (!state || state.key !== key) return { kind: "loading" };
-  if (state.kind === "ok") return { kind: "ok", quote: state.quote };
+  if (state.kind === "ok") return { kind: "ok", quote: state.quote, illustrative: false };
   if (state.kind === "error") return { kind: "error", message: state.message };
   return { kind: "loading" };
+}
+
+/**
+ * A required state-aware quote is the only result that can be submitted.
+ * Pending, failed, and mismatched reads may still show the fresh estimate, but only as a sample.
+ */
+export function presentPositionPreview(required: boolean, key: string, state: PositionQuoteState | null, freshPreview: PositionPreview): PositionPreview & { displayOnly: boolean } {
+  const selected = selectPositionPreview(required, key, state, freshPreview);
+  if (required && selected.kind === "ok" && state?.key === key && state.kind === "ok") {
+    return { kind: "ok", quote: selected.quote, illustrative: false, displayOnly: false };
+  }
+  if (freshPreview.kind === "ok") return { ...freshPreview, displayOnly: required };
+  if (selected.kind === "error") return { ...selected, displayOnly: true };
+  return { kind: "loading", illustrative: false, displayOnly: true };
+}
+
+export function canSubmitPositionPreview(preview: { kind: string; illustrative?: boolean; displayOnly?: boolean }): boolean {
+  return preview.kind === "ok" && preview.illustrative !== true && preview.displayOnly !== true;
 }
 
 /** viem eth_call cannot abort its transport; cancel prevents any stale publication. */
