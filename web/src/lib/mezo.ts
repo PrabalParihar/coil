@@ -167,6 +167,8 @@ export const factoryFeeAbi = [
 ] as const;
 
 export const coilFactoryAbi = [
+  { type: "function", name: "coilFeeBps", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint16" }] },
+  { type: "function", name: "opensPaused", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bool" }] },
   { type: "function", name: "policy", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "tuple", components: [
     { name: "feeBps", type: "uint16" }, { name: "feeRecipient", type: "address" },
     { name: "opensPaused", type: "bool" }, { name: "maxCollateral", type: "uint256" }, { name: "maxDebt", type: "uint256" },

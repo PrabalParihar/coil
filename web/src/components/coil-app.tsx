@@ -57,6 +57,15 @@ import {
   type Market,
 } from "@/lib/quote";
 import { deployment as activeDeployment, walletConnectProjectId } from "@/lib/network";
+import {
+  coilOpenFeeLegacyStatement,
+  coilOpenFeePendingStatement,
+  coilOpenFeeStatement,
+  coilOpenFeeUnavailableStatement,
+  formatOpenFeePercent,
+  readFeeBps,
+  type OpenFeeSnapshot,
+} from "@/lib/open-fee";
 import { canWrite, isUnsupportedPolicy, loopArguments, ownerActionState, ownerTransactions } from "@/lib/readiness";
 import { DEPLOYMENTS, RETAINED_DEPLOYMENTS } from "@/lib/deployment.generated";
 import { discoverOwnerAccounts, ownerDeploymentCatalog, ownerDiscoveryView, selectOwnerDeployment, type OwnerDiscovery } from "@/lib/owner-accounts";
@@ -92,7 +101,7 @@ const PRESETS = ["0.01", "0.025", "0.04", "0.05"] as const;
 const SLIPPAGE = [50, 100, 150, 200] as const;
 const RESCUE_SLIPPAGE = [50, 100, 150, 200, 300] as const;
 
-export function CoilApp() {
+export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnapshot | null }) {
   const [mounted, setMounted] = useState(false);
   const [btcText, setBtcText] = useState("0.04");
   const [targetPct, setTargetPct] = useState(200);
@@ -255,15 +264,41 @@ export function CoilApp() {
     functionName: "precompileBudget",
     query: { enabled: Boolean(implementation), retry: false },
   });
-  const { data: policy, isFetched: policyFetched, error: policyError } = useReadContract({
+  const { data: policy, error: policyError } = useReadContract({
     chainId: mezoTestnet.id,
     address: factoryAddress, abi: coilFactoryAbi, functionName: "policy",
     query: { enabled: Boolean(factoryAddress), retry: false, refetchInterval: 15_000 },
   });
+  const { data: coilFeeRaw, isFetched: coilFeeFetched, error: coilFeeError } = useReadContract({
+    chainId: mezoTestnet.id,
+    address: factoryAddress, abi: coilFactoryAbi, functionName: "coilFeeBps",
+    query: { enabled: Boolean(factoryAddress), retry: false, refetchInterval: 15_000 },
+  });
+  const { data: opensPausedRaw, isFetched: opensPausedFetched } = useReadContract({
+    chainId: mezoTestnet.id,
+    address: factoryAddress, abi: coilFactoryAbi, functionName: "opensPaused",
+    query: { enabled: Boolean(factoryAddress), retry: false, refetchInterval: 15_000 },
+  });
   const hasPolicy = Boolean(policy);
-  const policyUnreadable = !policy && policyFetched && !isUnsupportedPolicy(policyError);
   const newCapabilities = deployment.capabilities.policy || hasPolicy;
-  const effectiveMarket = useMemo(() => market ? { ...market, coilFeeBps: BigInt(policy?.feeBps ?? 0) } : null, [market, policy]);
+  const feeSnapshot = initialPolicy && factoryAddress && initialPolicy.factory.toLowerCase() === factoryAddress.toLowerCase() ? initialPolicy : null;
+  const clientFeeBps = readFeeBps(coilFeeRaw);
+  // Prefer a successful coilFeeBps() read. Keep the build snapshot if that read has not returned a value.
+  const feeBpsLive = clientFeeBps ?? feeSnapshot?.feeBps ?? null;
+  const legacyFactory = !newCapabilities && coilFeeFetched && isUnsupportedPolicy(coilFeeError ?? policyError);
+  const feePending = Boolean(factoryAddress) && newCapabilities && feeBpsLive === null && !coilFeeFetched;
+  const feeUnavailable = Boolean(factoryAddress) && newCapabilities && feeBpsLive === null && coilFeeFetched && !legacyFactory;
+  const opensPausedLive = typeof opensPausedRaw === "boolean"
+    ? opensPausedRaw
+    : typeof policy?.opensPaused === "boolean"
+      ? policy.opensPaused
+      : feeSnapshot?.opensPaused ?? null;
+  const pausePending = Boolean(factoryAddress) && newCapabilities && opensPausedLive === null && !opensPausedFetched;
+  const effectiveMarket = useMemo(() => {
+    if (!market) return null;
+    if (newCapabilities && feeBpsLive === null) return null;
+    return { ...market, coilFeeBps: BigInt(feeBpsLive ?? 0) };
+  }, [market, newCapabilities, feeBpsLive]);
   const flashFactory = Boolean(implementation) && Boolean(budget) && !budgetMissing;
 
   const { data: coilAccount, refetch: refetchAccount } = useReadContract({
@@ -289,7 +324,6 @@ export function CoilApp() {
 
   const freshPreview = useMemo(() => {
     if (!effectiveMarket) return { kind: "loading" as const };
-    if (policyUnreadable || (newCapabilities && !policy)) return { kind: "error" as const, message: "Factory policy is unavailable. Fee-bearing opens are disabled." };
     if (collateral === null) return { kind: "error" as const, message: "Enter a BTC amount." };
     try {
       const target = percentToCr(targetPct);
@@ -301,7 +335,7 @@ export function CoilApp() {
       const message = error instanceof QuoteError ? error.message : "Preview failed.";
       return { kind: "error" as const, message };
     }
-  }, [effectiveMarket, collateral, targetPct, slippageBps, flashFactory, newCapabilities, policy, policyUnreadable]);
+  }, [effectiveMarket, collateral, targetPct, slippageBps, flashFactory]);
 
   const [positionQuote, setPositionQuote] = useState<PositionQuoteState | null>(null);
   const [quoteRetry, setQuoteRetry] = useState(0);
@@ -309,10 +343,10 @@ export function CoilApp() {
   // Once connected to a new clone, only its state-aware view can authorize a loop.
   const needsStateQuote = Boolean(account && newCapabilities);
   const positionQuoteKey = [mezoTestnet.id, factoryAddress, account, collateral, targetPct, slippageBps,
-    policy?.feeBps, position?.active, position?.collateral, position?.debt, market?.borrowRate,
+    feeBpsLive, position?.active, position?.collateral, position?.debt, market?.borrowRate,
     market?.refiPct, market?.price, flashFactory, quoteRetry].join(":");
   useEffect(() => {
-    if (!needsStateQuote || !account || !publicClient || collateral === null || collateral <= 0n || !policy) return;
+    if (!needsStateQuote || !account || !publicClient || collateral === null || collateral <= 0n || (newCapabilities && feeBpsLive === null)) return;
     let cancel: (() => void) | undefined;
     const refresh = () => {
       cancel?.();
@@ -324,13 +358,15 @@ export function CoilApp() {
     refresh();
     const timer = setInterval(refresh, 15_000);
     return () => { cancel?.(); clearInterval(timer); };
-  }, [needsStateQuote, account, publicClient, collateral, policy, positionQuoteKey, targetPct, slippageBps, flashFactory]);
+  }, [needsStateQuote, account, publicClient, collateral, newCapabilities, feeBpsLive, positionQuoteKey, targetPct, slippageBps, flashFactory]);
   const preview = useMemo(() => collateral === null || collateral <= 0n
     ? { kind: "error" as const, message: "Enter a positive BTC amount." }
-    : policyUnreadable || (newCapabilities && !policy)
+    : feePending
+    ? { kind: "loading" as const }
+    : feeUnavailable
     ? { kind: "error" as const, message: "Factory policy is unavailable. Fee-bearing opens are disabled." }
     : selectPositionPreview(needsStateQuote, positionQuoteKey, positionQuote, freshPreview),
-    [collateral, policyUnreadable, newCapabilities, policy, needsStateQuote, positionQuoteKey, positionQuote, freshPreview]);
+    [collateral, feePending, feeUnavailable, needsStateQuote, positionQuoteKey, positionQuote, freshPreview]);
 
   const redemption = useMemo(() => {
     if (preview.kind !== "ok" || tail.length === 0 || !market) return null;
@@ -396,7 +432,7 @@ export function CoilApp() {
   });
   const pegGuardBps = typeof pegGuardRaw === "number" ? pegGuardRaw : Number(pegGuardRaw ?? 0);
   const maxPegBps = typeof maxPegRaw === "number" ? maxPegRaw : Number(maxPegRaw ?? 200);
-  const { data: recoveryRaw } = useReadContract({
+  const { data: recoveryRaw, isFetched: recoveryFetched, isError: recoveryFailed } = useReadContract({
     chainId: mezoTestnet.id,
     address: addr.troveManager,
     abi: troveRecoveryAbi,
@@ -726,7 +762,7 @@ export function CoilApp() {
         address: account,
         abi: coilAccountAbi,
         functionName: flashFactory ? "flashLoop" : "loop",
-        args: loopArguments(targetCR, BigInt(slippageBps), policy?.feeBps ?? 0, hasPolicy),
+        args: loopArguments(targetCR, BigInt(slippageBps), feeBpsLive ?? policy?.feeBps ?? 0, hasPolicy || (newCapabilities && feeBpsLive !== null)),
         value: collateral,
         chainId: mezoTestnet.id,
         gas: 8_000_000n,
@@ -882,8 +918,40 @@ export function CoilApp() {
   const belowPeg = market ? musdBelowPegBps(market.reserveMusd, market.reserveBtc, market.price) : 0n;
   const openCap = reserveFactory ? (maxPegBps > 0 ? maxPegBps : 200) : 200;
   const pegBlocked = reserveFactory && poolGap > BigInt(openCap);
-  const capExceeded = preview.kind === "ok" && policy && (preview.quote.collateral > policy.maxCollateral || preview.quote.debt > policy.maxDebt);
-  const openingPolicyBlock = policyUnreadable ? "Factory policy read failed. Retry after RPC recovers; opens remain disabled." : recoveryRaw === undefined ? "Mezo Recovery Mode status is unavailable. Opens remain disabled." : !writesEnabled ? "Transactions disabled for this deployment." : !policyFetched ? "Checking factory policy…" : newCapabilities && !policy ? "Factory policy could not be read. Opens are disabled." : policy?.opensPaused ? "Factory opens are paused. Repay, claim, collateral top-up and permitted exits remain available." : capExceeded ? "This preview exceeds the factory collateral or debt limit." : marketError ? "Market data could not refresh. Wait for a fresh preview." : null;
+  const limitCollateral = policy?.maxCollateral ?? (feeSnapshot?.maxCollateral ? BigInt(feeSnapshot.maxCollateral) : null);
+  const limitDebt = policy?.maxDebt ?? (feeSnapshot?.maxDebt ? BigInt(feeSnapshot.maxDebt) : null);
+  const capExceeded = preview.kind === "ok" && limitCollateral !== null && limitDebt !== null && (preview.quote.collateral > limitCollateral || preview.quote.debt > limitDebt);
+  const openingPolicyBlock = feeUnavailable
+    ? "Factory policy read failed. Retry after RPC recovers; opens remain disabled."
+    : recoveryRaw === undefined && (!market || !recoveryFetched || !recoveryFailed)
+      ? "Checking Mezo Recovery Mode. Opens stay disabled until that read finishes."
+      : recoveryRaw === undefined
+        ? "Mezo Recovery Mode status is unavailable. Opens remain disabled."
+      : !writesEnabled
+        ? "Transactions disabled for this deployment."
+        : feePending
+          ? "Checking factory policy…"
+          : pausePending
+            ? "Checking whether factory opens are paused."
+            : opensPausedLive
+              ? "Factory opens are paused. Repay, claim, collateral top-up and permitted exits remain available."
+              : capExceeded
+                ? "This preview exceeds the factory collateral or debt limit."
+                : marketError
+                  ? "Market data could not refresh. Wait for a fresh preview."
+                  : null;
+  const openFeeText = legacyFactory
+    ? coilOpenFeeLegacyStatement()
+    : feeBpsLive !== null
+      ? coilOpenFeeStatement(feeBpsLive)
+      : feeUnavailable
+        ? coilOpenFeeUnavailableStatement()
+        : coilOpenFeePendingStatement();
+  const deploymentFeeText = !newCapabilities
+    ? " Legacy accounts retain their original capabilities; no upgrade is implied."
+    : feeBpsLive === null
+      ? " Reading the factory open fee."
+      : ` Coil open fee ${formatOpenFeePercent(feeBpsLive)}; ${opensPausedLive === null ? "opens still being read" : opensPausedLive ? "opens paused" : "opens enabled"}.${limitCollateral !== null && limitDebt !== null ? ` Position limits: ${formatBtc(limitCollateral)} BTC / ${formatMusd(limitDebt)} MUSD total debt.` : ""}`;
   const ownerState = ownerActionState(newCapabilities, recoveryRaw !== false, Boolean(account && connected && writesEnabled && !discoveryPending));
   const openBlock = openingPolicyBlock ?? (inRecovery
     ? "Mezo is in Recovery Mode. A new loop is refused."
@@ -1035,6 +1103,9 @@ export function CoilApp() {
             </div>
 
             <div className="mt-5 space-y-2">
+              <p id="coil-open-fee" role="status" className="rounded-lg border border-border bg-foreground/[0.03] px-3 py-2.5 text-sm leading-relaxed text-foreground">
+                {openFeeText}
+              </p>
               {connected ? <div className="well space-y-2 p-4">
                 <Label htmlFor="owner-deployment">Your account generation / factory</Label>
                 <select id="owner-deployment" disabled={busy} className="w-full rounded border border-border bg-background p-2 text-sm" value={selectedChoice.key} onChange={event => setManualChoice({ ownerKey, key: event.target.value })}>
@@ -1070,7 +1141,7 @@ export function CoilApp() {
               ) : null}
               <Banner tone="info" title={`${mezoTestnet.name} · ${deployment.status} · unaudited`} detailsLabel="Deployment details">
                 Unaudited contracts and thin pool liquidity. Mainnet starts at 200% CR (about 2×).
-                {policy ? ` Coil fee ${policy.feeBps} bps; opens ${policy.opensPaused ? "paused" : "enabled"}. Position limits: ${formatBtc(policy.maxCollateral)} BTC / ${formatMusd(policy.maxDebt)} MUSD total debt.` : " Legacy accounts retain their original capabilities; no upgrade is implied."}
+                {deploymentFeeText}
                 {!writesEnabled ? " Transactions remain disabled until deployment and release gates are satisfied." : ""}
                 {!walletConnectProjectId ? " WalletConnect is unavailable: no project ID configured. Injected and Bitcoin wallets remain available." : ""}
               </Banner>
