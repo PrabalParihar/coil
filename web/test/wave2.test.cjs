@@ -369,6 +369,59 @@ test('generated testnet deployment is the paused completion factory and keeps th
   const selected = readiness.resolveDeployment(active, active.factory, active.deploymentBlock, generated.DEPLOYMENTS);
   assert.equal(selected.keeper, '0x1D2621480011C44693a47801C1158E70b25b4B4F');
 });
+test('open fee copy formats coilFeeBps as a percent and states the hard 50 bps cap', () => {
+  const fee = require('../src/lib/open-fee.ts');
+  assert.equal(fee.COIL_OPEN_FEE_CAP_BPS, 50);
+  assert.equal(fee.formatOpenFeePercent(25), '0.25%');
+  assert.equal(fee.formatOpenFeePercent(50), '0.5%');
+  assert.equal(fee.formatOpenFeePercent(1), '0.01%');
+  assert.equal(fee.formatOpenFeePercent(10), '0.1%');
+  assert.equal(fee.readFeeBps(25n), 25);
+  assert.equal(fee.readFeeBps(10_001), null);
+  const statement = fee.coilOpenFeeStatement(25);
+  assert.equal(statement, 'Coil open fee: 0.25% of newly minted MUSD (owner-capped at 0.5%). Rescue and exit: 0 (guard, owner exit, repay, unwind).');
+  for (const text of [statement, fee.coilOpenFeePendingStatement(), fee.coilOpenFeeUnavailableStatement(), fee.coilOpenFeeLegacyStatement()]) {
+    assert.equal(text.includes('\u2014'), false);
+    assert.equal(text.includes('WitLabs'), false);
+  }
+  assert.equal(fee.coilOpenFeePendingStatement().includes('unavailable'), false);
+  assert.equal(fee.coilOpenFeePendingStatement().includes('paused'), false);
+});
+test('fee snapshot uses coilFeeBps and does not invent a paused state', async () => {
+  const { readOpenFeeFromClient } = require('../src/lib/factory-policy.ts');
+  const factory = '0x339ef0116e17BA42987c1E2E380Af59B38f62064';
+  const calls = [];
+  const snapshot = await readOpenFeeFromClient({
+    readContract: async ({ functionName }) => {
+      calls.push(functionName);
+      if (functionName === 'coilFeeBps') return 25;
+      if (functionName === 'opensPaused') return false;
+      if (functionName === 'policy') return { feeBps: 99, opensPaused: true, maxCollateral: 10n ** 18n, maxDebt: 1000n * 10n ** 18n };
+      throw new Error(functionName);
+    },
+  }, factory);
+  assert.deepEqual(calls.sort(), ['coilFeeBps', 'opensPaused', 'policy']);
+  assert.equal(snapshot.feeBps, 25);
+  assert.equal(snapshot.opensPaused, false);
+  assert.equal(snapshot.maxCollateral, (10n ** 18n).toString());
+  const pausedGetterDown = await readOpenFeeFromClient({
+    readContract: async ({ functionName }) => {
+      if (functionName === 'coilFeeBps') return 40;
+      if (functionName === 'opensPaused') throw new Error('rpc down');
+      return { opensPaused: true, maxCollateral: 1n, maxDebt: 2n };
+    },
+  }, factory);
+  assert.equal(pausedGetterDown.feeBps, 40);
+  assert.equal(pausedGetterDown.opensPaused, true);
+  const feeDown = await readOpenFeeFromClient({
+    readContract: async ({ functionName }) => {
+      if (functionName === 'coilFeeBps') throw new Error('rpc down');
+      if (functionName === 'opensPaused') return false;
+      return { opensPaused: false, maxCollateral: 1n, maxDebt: 2n, feeBps: 25 };
+    },
+  }, factory);
+  assert.equal(feeDown, null);
+});
 test('same-owner discovery refresh preserves the funded view while changed-owner refresh discards old consent', () => {
   assert.equal(typeof ownerAccounts.ownerDiscoveryView, 'function');
   const catalog = ownerAccounts.ownerDeploymentCatalog(newFactory, [oldFactory]);
