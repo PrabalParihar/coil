@@ -36,13 +36,13 @@ export function coilOpenFeeStatement(feeBps: number): string {
 }
 
 export function coilOpenFeePendingStatement(): string {
-  return `Coil open fee: reading the factory (owner-capped at ${formatOpenFeePercent(COIL_OPEN_FEE_CAP_BPS)}). Rescue and exit: 0 (guard, owner exit, repay, unwind).`;
+  return `Coil open fee: reading the factory (owner-capped at ${formatOpenFeePercent(COIL_OPEN_FEE_CAP_BPS)}). Rescue and exit: 0 (protection, owner exit, repay, unwind).`;
 }
 
 export function coilOpenFeeUnavailableStatement(): string {
-  return `Coil open fee could not be read from the factory (owner-capped at ${formatOpenFeePercent(COIL_OPEN_FEE_CAP_BPS)}). Rescue and exit: 0 (guard, owner exit, repay, unwind).`;
+  return `Coil open fee could not be read from the factory (owner-capped at ${formatOpenFeePercent(COIL_OPEN_FEE_CAP_BPS)}). Rescue and exit: 0 (protection, owner exit, repay, unwind).`;
 }
 
 export function coilOpenFeeLegacyStatement(): string {
-  return `This factory charges no Coil open fee. Rescue and exit: 0 (guard, owner exit, repay, unwind).`;
+  return `This factory charges no Coil open fee. Rescue and exit: 0 (protection, owner exit, repay, unwind).`;
 }

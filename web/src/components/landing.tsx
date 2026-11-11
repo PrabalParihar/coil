@@ -14,6 +14,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { formatUsd, type Market } from "@/lib/quote";
+import { formatOneDecimalPercent } from "@/lib/product-copy";
 import { factoryAddress } from "@/lib/mezo";
 import { selectedChain } from "@/lib/network";
 import { DEPLOYMENTS } from "@/lib/deployment.generated";
@@ -123,8 +124,8 @@ export function Hero({ market, marketError }: { market: Market | null; marketErr
 /* ------------------------------------------------------------------ */
 
 const TICKER = [
-  "0.0475 BTC opened to 200.09% in one transaction",
-  "Lowered leverage, landing at 288.04%",
+  `0.0475 BTC opened to ${formatOneDecimalPercent(200.09)} in one transaction`,
+  `Lowered leverage, landing at ${formatOneDecimalPercent(288.04)}`,
   "Closing and lowering leverage each fit in one transaction",
   "Liquidation 110% · Coil floor 115%",
   "Keeper earns MEZO only when the ratio rises",
@@ -187,7 +188,6 @@ export function HowItWorks() {
         </div>
         <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
           Your account holds the position. A Mezo Pools swap borrows the BTC, posts it, and repays the pool before the transaction ends.
-          Transaction paths stay inside the Mezo call limit. A two-swap path remains the fallback when the pool is paused.
         </p>
       </div>
       <ol className="mt-5 grid gap-3 md:grid-cols-3">
@@ -205,6 +205,10 @@ export function HowItWorks() {
           </li>
         ))}
       </ol>
+      <details className="mt-4 text-sm text-muted-foreground">
+        <summary className="cursor-pointer">Technical details</summary>
+        <p className="mt-2 leading-relaxed">Transaction paths stay inside the Mezo call limit. A two-swap path remains the fallback when the pool is paused.</p>
+      </details>
     </section>
   );
 }
@@ -213,46 +217,42 @@ export function HowItWorks() {
 /* Proof                                                               */
 /* ------------------------------------------------------------------ */
 
-type Receipt = { title: string; call?: string; hash: `0x${string}` };
+type Receipt = { title: string; call: string; hash: `0x${string}`; time: string; amounts: string };
 
-const PROOF: { call?: string; big: string; title: string; body: string; receipts: Receipt[] }[] = [
+const PROOF: { title: string; big: string; body: string; receipts: Receipt[] }[] = [
   {
     big: "4.00×",
     title: "Opened 4x leverage",
-    call: "loop",
-    body: "An earlier factory opened 0.05183 BTC of collateral against 3,100.8 MUSD. A keeper then raised 133.30% to 150.00% for 1 MEZO, and one close returned the position. Those receipts are not this factory.",
+    body: `An earlier factory opened 0.05183 BTC of collateral against 3,100.8 MUSD. A keeper then raised ${formatOneDecimalPercent(133.3)} to ${formatOneDecimalPercent(150)} for 1 MEZO, and one close returned the position. Those receipts are not this factory.`,
     receipts: [
-      { title: "Opened 4x leverage", call: "loop", hash: "0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef" },
-      { title: "Protection triggered", call: "guard", hash: "0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a" },
-      { title: "Closed position", call: "flashUnwind", hash: "0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2" },
+      { title: "Opened 4x leverage", call: "loop", time: "27 Oct 2026, 12:11 UTC", amounts: "0.015 BTC in, 0.05183 BTC collateral, 3,100.8 MUSD", hash: "0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef" },
+      { title: "Protection triggered", call: "guard", time: "27 Oct 2026, 12:13 UTC", amounts: `${formatOneDecimalPercent(133.3)} to ${formatOneDecimalPercent(150)}, 1 MEZO`, hash: "0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a" },
+      { title: "Closed position", call: "flashUnwind", time: "27 Oct 2026, 12:14 UTC", amounts: "Full close", hash: "0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2" },
     ],
   },
   {
-    big: "200.09%",
+    big: formatOneDecimalPercent(200.09),
     title: "Opened 2x leverage",
-    call: "loop(200%, 1%)",
-    body: "Collateral went from 0.0475 to 0.0939 BTC with 3,859.73 MUSD of debt, landing just above the 200% target.",
-    receipts: [{ title: "Opened 2x leverage", call: "loop(200%, 1%)", hash: "0xfb9af4255b2317ea89feb36c530c29bfeace97b0098a3c6074fec015f52d7f85" }],
+    body: `Collateral went from 0.0475 to 0.0939 BTC with 3,859.73 MUSD of debt, landing just above the ${formatOneDecimalPercent(200)} target.`,
+    receipts: [{ title: "Opened 2x leverage", call: "loop(200%, 1%)", time: "19 Oct 2026, 12:02 UTC", amounts: "0.0475 to 0.0939 BTC, 3,859.73 MUSD", hash: "0xfb9af4255b2317ea89feb36c530c29bfeace97b0098a3c6074fec015f52d7f85" }],
   },
   {
-    big: "288.04%",
+    big: formatOneDecimalPercent(288.04),
     title: "Lowered leverage to 3x",
-    call: "deleverTo(300%)",
     body: "One sale repaid the debt to exactly 2,000 MUSD, Mezo's floor for that position. A second call succeeded without selling.",
     receipts: [
-      { title: "Lowered leverage to 3x", call: "deleverTo(300%)", hash: "0x8e742936951d59555c236f9c03dfd20d7d3d28d3a91b74e29f7863c18a6885a8" },
-      { title: "Lowered leverage to 3x", call: "deleverTo(300%)", hash: "0xbafe5283fbcb373b167591cec8015b80606e5b970742bb17aa76ea70f47ff060" },
+      { title: "Lowered leverage to 3x", call: "deleverTo(300%)", time: "19 Oct 2026, 12:03 UTC", amounts: "Debt 2,000 MUSD", hash: "0x8e742936951d59555c236f9c03dfd20d7d3d28d3a91b74e29f7863c18a6885a8" },
+      { title: "Lowered leverage to 3x", call: "deleverTo(300%)", time: "19 Oct 2026, 12:03 UTC", amounts: "No further sale", hash: "0xbafe5283fbcb373b167591cec8015b80606e5b970742bb17aa76ea70f47ff060" },
     ],
   },
   {
-    big: "2 txs",
+    big: "2 transactions",
     title: "Closed position",
-    call: "unwind(100%)",
-    body: "A new 0.046 BTC open at 200.09% closed in two transactions: repay to the floor at 281.99%, then close the position.",
+    body: `A new 0.046 BTC open at ${formatOneDecimalPercent(200.09)} closed in two transactions: repay to the floor at ${formatOneDecimalPercent(281.99)}, then close the position.`,
     receipts: [
-      { title: "Opened 2x leverage", call: "loop(200%, 1%)", hash: "0xd72758f1114ac3add69ed08a519603d1059c41c2fa959b9e225fc88769d9fd89" },
-      { title: "Closed position", call: "unwind(100%)", hash: "0x3ff34e57f63d0278bf5932442f786bd346e08028f40bae0cbb5dc1f5d2efc2fd" },
-      { title: "Closed position", call: "unwind(100%)", hash: "0xd55cdf5fb1d882f36f7c6cc66ff62960eeab30b8a4122240aa09329bcc8defdc" },
+      { title: "Opened 2x leverage", call: "loop(200%, 1%)", time: "19 Oct 2026, 12:04 UTC", amounts: "0.046 BTC, 3,732.34 MUSD", hash: "0xd72758f1114ac3add69ed08a519603d1059c41c2fa959b9e225fc88769d9fd89" },
+      { title: "Closed position", call: "unwind(100%)", time: "19 Oct 2026, 12:04 UTC", amounts: "Debt 2,000 MUSD", hash: "0x3ff34e57f63d0278bf5932442f786bd346e08028f40bae0cbb5dc1f5d2efc2fd" },
+      { title: "Closed position", call: "unwind(100%)", time: "19 Oct 2026, 12:04 UTC", amounts: "Position closed", hash: "0xd55cdf5fb1d882f36f7c6cc66ff62960eeab30b8a4122240aa09329bcc8defdc" },
     ],
   },
 ];
@@ -275,32 +275,40 @@ export function Proof() {
         {PROOF.map((item) => (
           <article key={item.title} className="panel flex flex-col p-6">
             <h3 className="text-lg font-semibold tracking-tight">{item.title}</h3>
-            {item.call ? <p className="mt-1 text-xs text-muted-foreground">{item.call}</p> : null}
             <p className="num mt-3 text-2xl font-semibold tracking-tight">{item.big}</p>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.body}</p>
-            <ul className="mt-auto space-y-2 border-t border-border pt-4">
+            <ul className="mt-auto space-y-3 border-t border-border pt-4">
               {item.receipts.map((r) => (
-                <li key={r.hash} className="flex items-center justify-between gap-3 text-xs">
-                  <span className="min-w-0 text-muted-foreground">
-                    <span className="flex items-center gap-2">
-                      <span className="size-1.5 rounded-full bg-safe" aria-hidden />
-                      {r.title}
-                    </span>
-                    {r.call ? <span className="mt-0.5 block pl-3.5 text-[11px]">{r.call}</span> : null}
+                <li key={r.hash} className="text-xs text-muted-foreground">
+                  <span className="flex items-center gap-2 text-foreground">
+                    <span className="size-1.5 rounded-full bg-safe" aria-hidden />
+                    {r.title}
                   </span>
-                  <a
-                    href={`${DEPLOYMENTS["31611"].explorerUrl}/tx/${r.hash}`}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="inline-flex items-center gap-1 font-mono text-foreground/90 underline decoration-filament/40 underline-offset-[3px] hover:decoration-filament"
-                  >
-                    {r.hash.slice(0, 10)}…{r.hash.slice(-6)}
-                    <ArrowUpRight className="size-3" aria-hidden />
-                    <span className="sr-only">{r.title} on the Mezo explorer</span>
-                  </a>
+                  <span className="mt-1 block pl-3.5">{r.time}</span>
+                  <span className="mt-0.5 block pl-3.5">{r.amounts}</span>
                 </li>
               ))}
             </ul>
+            <details className="mt-4 text-xs text-muted-foreground">
+              <summary className="cursor-pointer text-sm">Technical details</summary>
+              <ul className="mt-2 space-y-2">
+                {item.receipts.map((r) => (
+                  <li key={`${r.hash}-tech`} className="break-all">
+                    <span className="font-mono">{r.call}</span>
+                    {" · "}
+                    <a
+                      href={`${DEPLOYMENTS["31611"].explorerUrl}/tx/${r.hash}`}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="link font-mono"
+                    >
+                      {r.hash.slice(0, 10)}…{r.hash.slice(-6)}
+                      <span className="sr-only"> {r.title} on the Mezo explorer</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </details>
           </article>
         ))}
       </div>
@@ -337,12 +345,12 @@ const RISKS = [
   {
     icon: ShieldCheck,
     title: "A keeper that can only help",
-    body: "If you set a guard, the keeper may reduce risk up to your target. It cannot open, close, or withdraw. Unset, it cannot touch the position.",
+    body: "If you turn on protection, the keeper may reduce risk up to your target. It cannot open, close, or withdraw. Left off, it cannot touch the position.",
   },
   {
     icon: TimerReset,
-    title: "Exits can take a few txs",
-    body: "Pool exits require the BTC price feed bound and Mezo permission. Full close is blocked in Recovery Mode; owner MUSD repayment can reduce debt safely without selling collateral.",
+    title: "Exits can take a few transactions",
+    body: "Selling BTC to exit only works when the pool price is close enough to the BTC price feed and Mezo allows the trade. A full close is blocked in Recovery Mode. You can still repay with MUSD to reduce the debt without selling BTC.",
   },
 ];
 
@@ -391,7 +399,7 @@ export function Footer() {
         </div>
         <nav aria-label="Footer" className="flex flex-wrap gap-x-6 gap-y-2">
           <a className="hover:text-foreground" href="#app">App</a>
-          <Link className="hover:text-foreground" href="/guard">Guard log</Link>
+          <Link className="hover:text-foreground" href="/guard">Protection log</Link>
           <Link className="hover:text-foreground" href="/stats">Stats</Link>
           <a className="hover:text-foreground" href="#proof">Receipts</a>
           <a className="hover:text-foreground" href="#risks">Risks</a>

@@ -495,7 +495,7 @@ test('an off-oracle pool still yields a sample liquidation price', () => {
   });
   assert.equal(view.badge, 'Sample preview');
   assert.equal(view.liquidationPrice, '$1');
-  assert.equal(view.dropLine, 'BTC can fall 45%');
+  assert.equal(view.dropLine, 'BTC can fall 45.0%');
   assert.match(view.pegMessage, /6\.64%/);
   assert.match(view.pegMessage, /within 2%/);
   assert.match(view.pegMessage, /Raising slippage will not help/);
@@ -512,7 +512,7 @@ test('quote card shows liquidation price, how far BTC can fall, and fees', () =>
   });
   assert.equal(view.badge, 'Quote');
   assert.equal(view.liquidationPrice, '$50,000');
-  assert.equal(view.dropLine, 'BTC can fall 45%');
+  assert.equal(view.dropLine, 'BTC can fall 45.0%');
   assert.match(view.feeLine, /0\.25%/);
   assert.equal(view.feeCapLabel, 'Max 0.5%, set on-chain');
   assert.equal(view.pegMessage, null);
@@ -594,7 +594,7 @@ test('leverage choices are 2x then 3x then 4x, with LTV next to CR', () => {
   }
   assert.equal(productCopy.HERO_TITLE, 'Leverage your BTC in one transaction.');
   assert.notEqual(productCopy.HERO_TITLE, 'Turn your BTC into more BTC.');
-  assert.equal(productCopy.btcCanFallLine(45), 'BTC can fall 45%');
+  assert.equal(productCopy.btcCanFallLine(45), 'BTC can fall 45.0%');
 });
 
 test('user-facing strings omit banned jargon, mainnet claims, and the em dash', () => {
@@ -649,7 +649,7 @@ test('user-facing strings omit banned jargon, mainnet claims, and the em dash', 
   assert.equal(productCopy.HERO_SUBLINE, 'Coil borrows MUSD against your bitcoin, buys more BTC on Mezo Pools and posts it back, all in one transaction, inside an account only you control. A protection keeper can only make your position safer.');
   assert.equal(productCopy.heroEyebrow(31611), 'Mezo testnet · chain 31611 · not audited');
   assert.equal(productCopy.BLOCKED_CARD_LABEL, 'Sample preview');
-  assert.equal(productCopy.poolWarning(663, 200), 'Pool price is 6.6% away from the BTC price feed. Opens need under 2%.');
+  assert.equal(productCopy.poolWarning(663, 200), 'Pool price is 6.6% away from the BTC price feed. Opens need under 2.0%.');
   assert.equal(productCopy.poolGapOneDecimal(665), '6.7%');
   assert.equal(productCopy.MOAT_CARDS.length, 4);
   assert.doesNotMatch(landing + productCopy.HERO_TITLE + productCopy.HERO_SUBLINE + productCopy.MOAT_CARDS.map(card => card.title + card.body).join('\n'), /Turn your BTC into more BTC/);
@@ -741,8 +741,17 @@ test('one percent formatter shows 5.43 as 5.4%', () => {
   const warning = productCopy.poolWarning(543, 200);
   assert.match(warning, /5\.4%/);
   assert.doesNotMatch(warning, /5\.43/);
-  assert.equal(productCopy.priceCheckStatus(productCopy.formatBpsOneDecimal(543), productCopy.formatBpsOneDecimal(200)), 'Opening is paused by a safety check. The Mezo pool price is 5.4% away from the BTC price feed, and Coil only opens within 2%. Existing positions, protection and exits are not affected. Raising slippage will not help.');
-  assert.equal(productCopy.btcCanFallLine(45), 'BTC can fall 45%');
+  assert.equal(productCopy.priceCheckStatus(productCopy.formatBpsOneDecimal(543), productCopy.formatBpsOneDecimal(200)), 'Opening is paused by a safety check. The Mezo pool price is 5.4% away from the BTC price feed, and Coil only opens within 2.0%. Existing positions, protection and exits are not affected. Raising slippage will not help.');
+  assert.equal(productCopy.btcCanFallLine(45), 'BTC can fall 45.0%');
+  assert.equal(productCopy.formatOneDecimalPercent(200), '200.0%');
+  assert.equal(productCopy.formatOneDecimalPercent(50), '50.0%');
+  assert.equal(productCopy.formatOneDecimalPercent(133.33), '133.3%');
+  assert.equal(productCopy.formatOneDecimalPercent(200 / 3), '66.7%');
+  assert.deepEqual(productCopy.LEVERAGE_CHOICES.map(choice => `${choice.crLabel} · ${choice.ltvLabel}`), [
+    '200.0% CR · 50.0% LTV',
+    '150.0% CR · 66.7% LTV',
+    '133.3% CR · 75.0% LTV',
+  ]);
 });
 
 test('main UI copy has no em dash and none of the removed jargon', () => {
@@ -803,4 +812,85 @@ test('main UI copy has no em dash and none of the removed jargon', () => {
   assert.match(landing, /Prabal Pratap Singh/);
   assert.equal(productCopy.HERO_TITLE, 'Leverage your BTC in one transaction.');
   assert.equal(productCopy.TESTNET_NOTE, 'Coil runs on Mezo testnet and is not audited. Use test funds only.');
+});
+
+test('fee cap label stays visible for an empty or invalid deposit', () => {
+  for (const inputError of ['Enter how much BTC to deposit.', 'Enter a number, like 0.05.', 'Enter an amount above 0.']) {
+    const view = quoteCard.quoteCardView({
+      paused: false,
+      pegBlocked: false,
+      overLimit: false,
+      inputError,
+      liquidationPrice: '$80,000',
+      dropPercent: 45,
+      feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage.',
+      feeCapLabel: 'Max 0.5%, set on-chain',
+    });
+    assert.equal(view.showResults, false);
+    assert.equal(view.feeLine, null);
+    assert.equal(view.feeCapLabel, 'Max 0.5%, set on-chain');
+    assert.equal(view.sampleReason, null);
+  }
+  assert.equal(quoteCard.classifyDeposit('').message, 'Enter how much BTC to deposit.');
+  assert.equal(quoteCard.classifyDeposit('nope').ok, false);
+});
+
+test('no wallet under the minimum debt shows the deposit line, not a pending account quote', () => {
+  const sample = { ...market, price: 100000n * W };
+  const levers = [['2x', 200], ['3x', 150], ['4x', 133.33]];
+  for (const [multiple, crPercent] of levers) {
+    const target = quote.percentToCr(crPercent);
+    const minWei = quote.minimumDepositWei(sample, target);
+    const shown = quote.formatBtcCeil(minWei);
+    const message = productCopy.minDebtDepositMessage(quote.formatMusd(sample.minNetDebt, 0), multiple, shown);
+    assert.equal(message, `Mezo needs at least 1,800 MUSD of debt. At ${multiple}, deposit at least ${shown} BTC.`);
+    const parsed = quoteCard.classifyDeposit(shown);
+    assert.equal(parsed.ok, true);
+    assert.ok(parsed.wei >= minWei);
+    assert.ok(parsed.wei < minWei + 10n ** 12n);
+    const opened = quote.quoteFlashLoop(parsed.wei, target, 50n, sample, true);
+    assert.ok(opened.debt >= sample.minNetDebt);
+    assert.throws(() => quote.quoteFlashLoop(W / 1000000n, target, 50n, sample, true));
+    const presets = quote.depositPresets(minWei, W);
+    assert.ok(presets.length > 0);
+    for (const preset of presets) {
+      const row = quoteCard.classifyDeposit(preset);
+      assert.equal(row.ok, true);
+      assert.ok(row.wei >= minWei, `${multiple} preset ${preset} is below ${minWei}`);
+      assert.ok(row.wei <= W);
+    }
+  }
+  const target = quote.percentToCr(200);
+  const minWei = quote.minimumDepositWei(sample, target);
+  const message = productCopy.minDebtDepositMessage('1,800', '2x', quote.formatBtcCeil(minWei));
+  const fresh = { kind: 'error', message };
+  const preview = positionQuotes.presentPositionPreview(false, 'nowallet', null, fresh);
+  assert.equal(preview.displayOnly, false);
+  assert.equal(preview.reason, null);
+  assert.equal(preview.message, message);
+  const view = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: true,
+    illustrative: true,
+    displayOnly: preview.displayOnly,
+    overLimit: false,
+    sampleReason: preview.message,
+    gapPercent: '5.5%',
+    withinPercent: '2.0%',
+    liquidationPrice: null,
+    dropPercent: null,
+    feeLine: 'fees',
+    feeCapLabel: 'Max 0.5%, set on-chain',
+  });
+  assert.equal(view.sampleReason, message);
+  assert.match(view.pegMessage, /5\.5%/);
+  assert.match(view.pegMessage, /within 2\.0%/);
+  assert.doesNotMatch(`${view.sampleReason} ${view.badge}`, /still loading|account quote/i);
+  assert.equal(view.feeCapLabel, 'Max 0.5%, set on-chain');
+  const pending = positionQuotes.presentPositionPreview(false, 'nowallet', null, { kind: 'error', message: 'Fresh deposit is below minimum debt' });
+  assert.equal(pending.displayOnly, false);
+  assert.equal(quoteCard.quoteCardView({
+    paused: false, pegBlocked: false, displayOnly: pending.displayOnly, overLimit: false,
+    sampleReason: pending.reason, liquidationPrice: null, dropPercent: null, feeLine: 'fees',
+  }).sampleReason, null);
 });

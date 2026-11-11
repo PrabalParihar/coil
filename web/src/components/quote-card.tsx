@@ -7,6 +7,7 @@ export function QuoteCard({ view }: { view: QuoteCardView }) {
       <div className="mt-5" data-quote-badge="invalid">
         <p className="text-xs text-muted-foreground">If you opened this amount</p>
         <p role="alert" className="mt-3 text-sm leading-relaxed text-warn">{view.inputError}</p>
+        {view.feeCapLabel ? <p className="mt-3 text-xs text-muted-foreground">{view.feeCapLabel}</p> : null}
       </div>
     );
   }

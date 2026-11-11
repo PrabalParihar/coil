@@ -1,5 +1,4 @@
 import {
-  ACCOUNT_QUOTE_PENDING,
   BLOCKED_CARD_LABEL,
   DEPOSIT_NOT_A_NUMBER,
   DEPOSIT_NOT_POSITIVE,
@@ -137,9 +136,7 @@ export function quoteCardView(input: QuoteCardInput): QuoteCardView {
   const pegMessage = !invalid && input.pegBlocked && input.gapPercent && input.withinPercent
     ? priceCheckStatus(input.gapPercent, input.withinPercent)
     : null;
-  const sampleReason = invalid
-    ? null
-    : input.sampleReason ?? (input.displayOnly ? ACCOUNT_QUOTE_PENDING : null);
+  const sampleReason = invalid ? null : input.sampleReason ?? null;
   return {
     badge: invalid ? "" : blocked ? BLOCKED_CARD_LABEL : LIVE_CARD_LABEL,
     blocked,
@@ -150,7 +147,7 @@ export function quoteCardView(input: QuoteCardInput): QuoteCardView {
     liquidationPrice: invalid ? null : input.liquidationPrice,
     dropLine: invalid || input.dropPercent === null ? null : btcCanFallLine(input.dropPercent),
     feeLine: invalid ? null : input.feeLine,
-    feeCapLabel: invalid ? null : input.feeCapLabel ?? null,
+    feeCapLabel: input.feeCapLabel ?? null,
     pegMessage,
     overLimitMessage: !invalid && input.overLimit && input.limitBtc ? depositLimitMessage(input.limitBtc) : null,
     slippageMessage: !invalid && input.slippageMiss && !input.pegBlocked && input.slippagePercent ? slippageMessage(input.slippagePercent) : null,

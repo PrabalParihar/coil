@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { usePublicClient } from "wagmi";
 import { coilFactoryAbi, factoryAddress, FACTORY_DEPLOY_BLOCK, ZERO } from "@/lib/mezo";
 import { deployment, explorerUrl, selectedChain } from "@/lib/network";
@@ -10,7 +10,9 @@ import { fetchPublicStatus, selectServiceRead, serviceStatusView, startPublicSta
 import { chainEvidenceFresh, heartbeatState, isUnsupportedPolicy, recentRange } from "@/lib/readiness";
 
 type Evidence = { timestamp?: number; sender?: string; keeper?: string; authenticated: boolean; blockTime: number };
-export function KeeperStatus({ liveChip = false }: { liveChip?: boolean }) {
+export type KeeperMonitor = ReturnType<typeof useKeeperMonitor>;
+
+export function useKeeperMonitor() {
   const client = usePublicClient({ chainId: selectedChain.id });
   const [evidence, setEvidence] = useState<Evidence | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,35 +72,46 @@ export function KeeperStatus({ liveChip = false }: { liveChip?: boolean }) {
   const serviceRead = selectServiceRead(serviceKey, serviceEvidence);
   const service = serviceRead.kind === "ok" ? serviceStatusView(serviceRead.data, now === null ? Date.now() : now * 1000) : null;
   const age = (milliseconds: number | null) => milliseconds === null ? "unavailable" : `${Math.floor(milliseconds / 1000)} seconds ago`;
-  const plainState = state === "fresh" ? "checked in recently" : state === "stale" ? "the last check-in is old" : state === "unconfigured" ? "not set up on this chain" : "checking";
+  const plainState = state === "fresh" ? "live" : state === "stale" ? "the last check-in is old" : state === "unconfigured" ? "not set up on this chain" : "checking";
+  return { state, plainState, error, evidence, health, service, serviceRead, statusUrl, age, load, refresh: () => { void load(); setServiceRetry(value => value + 1); } };
+}
+
+export function KeeperFacts({ monitor }: { monitor: KeeperMonitor }) {
+  const { plainState, health, evidence, service, serviceRead, statusUrl, age } = monitor;
+  const executes = Boolean(statusUrl && service?.mode === "execute" && service.status === "healthy");
+  return <div className="space-y-2 leading-relaxed">
+    <p>Keeper: {plainState}. {selectedChain.name} · chain {selectedChain.id}. Deployment block {deployment.deploymentBlock ?? "pending"}. This is the same check-in used for the Keeper: live chip. A fresh check-in shows the configured keeper was active recently. It does not show that a rescue transaction was sent.{executes ? " The public status report says execution is enabled." : ""}</p>
+    <p>Latest authenticated heartbeat: {health?.age !== null && health?.age !== undefined && health.age >= 0 ? `${health.age} seconds ago` : "unavailable"}. Freshness expires after 180 seconds.</p>
+    {evidence?.keeper ? <p className="break-all font-mono">Keeper address <a className="link" href={`${explorerUrl}/address/${evidence.keeper}`}>{evidence.keeper}</a></p> : null}
+    {statusUrl ? <div>
+      {service && serviceRead.kind === "ok" ? <>
+        <p>{service.mode === "execute" ? "Public status report: execution enabled. Confirmed chain actions are separate evidence." : "Public status report: reading the chain. This report does not show a rescue being sent."}</p>
+        <p>Last successful scan: {age(service.scanAgeMs)}. Last service-confirmed heartbeat: {age(service.heartbeatAgeMs)}. Scan freshness expires after 60 seconds.</p>
+        <p>Self-reported counters: {serviceRead.data.counters.scans} scans · {serviceRead.data.counters.confirmedGuards} confirmed protections · {serviceRead.data.counters.scanFailures} scan failures.</p>
+      </> : serviceRead.kind === "error" ? <p role="alert">{serviceRead.message}</p>
+        : <p>Reading the configured public status.</p>}
+    </div> : null}
+  </div>;
+}
+
+export function KeeperStatus({ liveChip = false, showDetails = true, detailsExtra }: { liveChip?: boolean; showDetails?: boolean; detailsExtra?: ReactNode }) {
+  const current = useKeeperMonitor();
   if (liveChip) {
-    if (state !== "fresh") return null;
+    if (current.state !== "fresh") return null;
     return <Link href="/keeper" className="chip">Keeper: live</Link>;
   }
   return <section className="well mt-6 p-5" aria-label="Keeper health">
-    <h2 className="text-xl font-semibold">Keeper: {plainState}</h2>
+    <h2 className="text-xl font-semibold">Keeper: {current.plainState}</h2>
     <p className="mt-2 text-sm text-muted-foreground">A keeper can only make a position safer. It cannot open a loan, withdraw, or close for you.</p>
-    <p className="mt-2 text-sm">{state === "fresh" ? "A keeper check-in was confirmed recently." : "No recent keeper check-in is confirmed."}</p>
-    {error ? <p role="alert" className="mt-2 text-sm text-danger">{error} The last check-in on screen may be old.</p> : null}
-    <details className="mt-4 text-xs text-muted-foreground">
+    <p className="mt-2 text-sm">{current.state === "fresh" ? "A keeper check-in was confirmed recently." : "No recent keeper check-in is confirmed."}</p>
+    {current.error ? <p role="alert" className="mt-2 text-sm text-danger">{current.error} The last check-in on screen may be old.</p> : null}
+    {showDetails ? <details className="mt-4 text-xs text-muted-foreground">
       <summary className="cursor-pointer text-sm">Technical details</summary>
-      <div className="mt-2 space-y-2 leading-relaxed">
-        <p>Chain heartbeat evidence: {state}. {selectedChain.name} · chain {selectedChain.id}. Deployment block {deployment.deploymentBlock ?? "pending"}. Monitoring mode does not submit rescues. Transaction protection requires an execution-enabled keeper with funded gas and confirmed chain activity. Status on this deployment: {deployment.status}.</p>
-        <p>Latest authenticated heartbeat: {health?.age !== null && health?.age !== undefined && health.age >= 0 ? `${health.age} seconds ago` : "unavailable"}. Freshness expires after 180 seconds.</p>
-        {evidence?.keeper ? <p className="break-all font-mono">Expected keeper <a className="link" href={`${explorerUrl}/address/${evidence.keeper}`}>{evidence.keeper}</a></p> : null}
-        <p>Legacy permissionless heartbeats do not prove keeper health. A fresh authenticated heartbeat proves recent configured-keeper activity; it does not guarantee a rescue or replace monitoring of confirmed transactions. No authenticated heartbeat is configured for a legacy factory.</p>
-        <div aria-label="Public keeper service status">
-          <p className="font-medium text-foreground">Public service status: {!statusUrl ? "unconfigured" : service?.status ?? (serviceRead.kind === "error" ? "unavailable" : "loading")}</p>
-          {!statusUrl ? <p>Chain evidence only / service mode unavailable. No public keeper status URL is configured.</p>
-            : service && serviceRead.kind === "ok" ? <>
-              <p>{service.mode === "read-only" ? "Mode: read-only monitoring. This service does not submit guard transactions." : "Mode: execution enabled. This is the service report; confirmed chain actions remain separate evidence."}</p>
-              <p>Last successful scan: {age(service.scanAgeMs)}. Last service-confirmed heartbeat: {age(service.heartbeatAgeMs)}. Scan freshness expires after 60 seconds.</p>
-              <p>Self-reported counters: {serviceRead.data.counters.scans} scans · {serviceRead.data.counters.confirmedGuards} confirmed guards · {serviceRead.data.counters.scanFailures} scan failures. Fresh scanning or execution mode does not guarantee a rescue.</p>
-            </> : serviceRead.kind === "error" ? <p role="alert">{serviceRead.message} Service mode and scan freshness are unavailable.</p>
-              : <p>Reading the configured public service. Service mode and scan freshness are not confirmed yet.</p>}
-        </div>
+      <div className="mt-2 space-y-2">
+        <KeeperFacts monitor={current} />
+        {detailsExtra}
       </div>
-    </details>
-    <button type="button" className="link mt-3 text-sm" onClick={() => { void load(); setServiceRetry(value => value + 1); }}>Refresh keeper evidence</button>
+    </details> : null}
+    <button type="button" className="link mt-3 text-sm" aria-label="Refresh keeper status" onClick={current.refresh}>Refresh</button>
   </section>;
 }
