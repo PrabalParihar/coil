@@ -44,21 +44,21 @@ const FLOW = [
 export function LoopViz() {
   const motionOk = useMotionOk();
   return (
-    <figure aria-label="One open, in order" className="panel relative w-full p-3">
+    <figure aria-label="One open, in order" className="panel relative flex w-full flex-col justify-center p-3 min-[1100px]:h-full min-[1100px]:p-6">
       <figcaption className="text-xs text-muted-foreground">One transaction</figcaption>
-      <ol className="relative mt-2 space-y-2">
-        <span className="absolute top-4 bottom-4 left-[15px] w-px bg-filament/35" aria-hidden>
+      <ol className="relative mt-2 space-y-2 min-[1100px]:mt-5 min-[1100px]:space-y-5">
+        <span className="absolute top-4 bottom-4 left-[15px] w-px bg-filament/35 min-[1100px]:left-[21px]" aria-hidden>
           {motionOk ? <span className="flow-step" /> : null}
         </span>
         {FLOW.map((step, index) => (
           <li key={step.title} className="relative flex items-center gap-3">
-            <span className="relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border border-filament/40 bg-background text-filament">
-              <step.icon className="size-3.5" aria-hidden />
+            <span className="relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border border-filament/40 bg-background text-filament min-[1100px]:size-11">
+              <step.icon className="size-3.5 min-[1100px]:size-5" aria-hidden />
             </span>
             <span className="min-w-0">
               <span className="font-mono text-[10px] text-filament">0{index + 1}</span>
-              <span className="ml-2 text-sm font-semibold">{step.title}</span>
-              <span className="block text-xs leading-snug text-muted-foreground">{step.body}</span>
+              <span className="ml-2 text-sm font-semibold min-[1100px]:text-base">{step.title}</span>
+              <span className="block text-xs leading-snug text-muted-foreground min-[1100px]:text-sm">{step.body}</span>
             </span>
           </li>
         ))}
@@ -74,7 +74,7 @@ export function LoopViz() {
 export function Hero({ market, marketError }: { market: Market | null; marketError: string | null }) {
   return (
     <section aria-label="Coil overview" className="border-b border-border py-8 sm:py-12">
-      <div className="grid items-center gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(280px,0.95fr)] lg:gap-12">
+      <div className="grid items-center gap-8 min-[1100px]:grid-cols-2 min-[1100px]:items-center min-[1100px]:gap-14">
         <div>
           <span className="chip border-filament/40 text-foreground">{heroEyebrow(selectedChain.id)}</span>
           <h1 className="mt-5 max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">{HERO_TITLE}</h1>
