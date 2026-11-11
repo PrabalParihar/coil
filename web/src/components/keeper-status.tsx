@@ -83,7 +83,7 @@ export function KeeperStatus({ liveChip = false }: { liveChip?: boolean }) {
     <details className="mt-4 text-xs text-muted-foreground">
       <summary className="cursor-pointer text-sm">Technical details</summary>
       <div className="mt-2 space-y-2 leading-relaxed">
-        <p>Chain heartbeat evidence: {state}. {selectedChain.name} · chain {selectedChain.id}.</p>
+        <p>Chain heartbeat evidence: {state}. {selectedChain.name} · chain {selectedChain.id}. Deployment block {deployment.deploymentBlock ?? "pending"}. Monitoring mode does not submit rescues. Transaction protection requires an execution-enabled keeper with funded gas and confirmed chain activity. Status on this deployment: {deployment.status}.</p>
         <p>Latest authenticated heartbeat: {health?.age !== null && health?.age !== undefined && health.age >= 0 ? `${health.age} seconds ago` : "unavailable"}. Freshness expires after 180 seconds.</p>
         {evidence?.keeper ? <p className="break-all font-mono">Expected keeper <a className="link" href={`${explorerUrl}/address/${evidence.keeper}`}>{evidence.keeper}</a></p> : null}
         <p>Legacy permissionless heartbeats do not prove keeper health. A fresh authenticated heartbeat proves recent configured-keeper activity; it does not guarantee a rescue or replace monitoring of confirmed transactions. No authenticated heartbeat is configured for a legacy factory.</p>

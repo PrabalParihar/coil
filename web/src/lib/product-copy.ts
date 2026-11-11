@@ -25,7 +25,7 @@ export const MOAT_SUBTITLE = "Leverage and protection, in one account you own.";
 export const MOAT_CARDS = [
   {
     title: "One transaction in, one transaction out.",
-    body: "A flash swap borrows the BTC, posts it, mints MUSD and repays the pool before the transaction ends. Unwind closes the same way.",
+    body: "Coil borrows the extra BTC, adds it to your position and pays it back with MUSD, all in one transaction. Closing works the same way.",
   },
   {
     title: "A keeper that can only make you safer.",
@@ -37,7 +37,7 @@ export const MOAT_CARDS = [
   },
   {
     title: "Every fill checked against the BTC price feed.",
-    body: "Opens, rescues and closes must land within a price bound from the BTC price feed, so a pushed pool price makes the transaction revert instead of filling badly.",
+    body: "Opens, rescues and closes must land within a price bound from the BTC price feed, so if the pool price is off, the transaction is cancelled instead of filling at a bad price.",
   },
 ] as const;
 

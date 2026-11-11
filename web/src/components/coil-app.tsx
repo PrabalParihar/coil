@@ -1131,7 +1131,6 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
           <section id="app" aria-labelledby="app-title" className="scroll-mt-32 py-7 lg:scroll-mt-20">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <p className="mb-1 text-xs text-muted-foreground">Your open</p>
                 <h2 id="app-title" className="text-xl font-semibold tracking-tight">
                   Open a position
                 </h2>

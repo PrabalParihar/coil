@@ -143,7 +143,7 @@ export function quoteCardView(input: QuoteCardInput): QuoteCardView {
   return {
     badge: invalid ? "" : blocked ? BLOCKED_CARD_LABEL : LIVE_CARD_LABEL,
     blocked,
-    showRisk: !invalid,
+    showRisk: !invalid && input.displayOnly !== true,
     showResults: !invalid,
     inputError: input.inputError ?? null,
     sampleReason,

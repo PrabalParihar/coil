@@ -712,6 +712,23 @@ test('a display-only account quote is a sample preview, shows the reason, and ca
   assert.equal(view.badge, 'Sample preview');
   assert.equal(view.sampleReason, reason);
   assert.equal(view.showResults, true);
+  assert.equal(view.showRisk, false);
+  const pendingView = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: false,
+    illustrative: false,
+    displayOnly: true,
+    overLimit: false,
+    sampleReason: pending.reason,
+    liquidationPrice: '$50,000',
+    dropPercent: 45,
+    feeLine: 'fees',
+  });
+  assert.equal(pendingView.showRisk, false);
+  assert.equal(quoteCard.quoteCardView({
+    paused: false, pegBlocked: false, illustrative: false, displayOnly: false, overLimit: false,
+    liquidationPrice: '$50,000', dropPercent: 45, feeLine: 'fees',
+  }).showRisk, true);
   const ready = positionQuotes.presentPositionPreview(true, key, { key, kind: 'ok', quote: increasedQuote }, fresh);
   assert.equal(ready.displayOnly, false);
   assert.equal(positionQuotes.canSubmitPositionPreview(ready), true);
