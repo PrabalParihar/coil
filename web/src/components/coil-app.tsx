@@ -61,6 +61,7 @@ import {
   coilOpenFeeLegacyStatement,
   coilOpenFeePendingStatement,
   coilOpenFeeStatement,
+  COIL_OPEN_FEE_CAP_BPS,
   coilOpenFeeUnavailableStatement,
   formatOpenFeePercent,
   readFeeBps,
@@ -70,8 +71,8 @@ import { canWrite, isUnsupportedPolicy, loopArguments, ownerActionState, ownerTr
 import { DEPLOYMENTS, RETAINED_DEPLOYMENTS } from "@/lib/deployment.generated";
 import { discoverOwnerAccounts, ownerDeploymentCatalog, ownerDiscoveryView, selectOwnerDeployment, type OwnerDiscovery } from "@/lib/owner-accounts";
 import { readStateAwareQuote, selectPositionPreview, startPositionQuote, type PositionQuoteState } from "@/lib/position-quote";
-import { LEVERAGE_CHOICES, leverageChoice } from "@/lib/product-copy";
-import { exceedsFactoryLimit, quoteCardView, quoteFeeLine } from "@/lib/quote-card";
+import { EMPTY_DEPOSIT_HELPER, LEVERAGE_CHOICES, PRICE_CHECK_CTA, RECOVERY_STILL, bpsToPercent, feeCapLabel, feeChipLabel, leverageChoice } from "@/lib/product-copy";
+import { exceedsFactoryLimit, quoteCardView } from "@/lib/quote-card";
 import { QuoteCard } from "@/components/quote-card";
 import {
   Activity,
@@ -948,8 +949,8 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
             ? "Checking whether factory opens are paused."
             : opensPausedLive
               ? "Factory opens are paused. Repay, claim, collateral top-up and permitted exits remain available."
-              : overLimit
-                ? "This deposit is over the factory limit. Choose a smaller amount."
+              : overLimit && limitCollateral !== null
+                ? `The current limit is ${formatBtc(limitCollateral)} BTC per position on this release.`
                 : marketError
                   ? "Market data could not refresh. Wait for a fresh preview."
                   : null;
@@ -961,20 +962,22 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
         ? coilOpenFeeUnavailableStatement()
         : coilOpenFeePendingStatement();
   const outcome = preview.kind === "ok" ? preview.quote : null;
+  const illustrative = preview.kind === "ok" && preview.illustrative;
+  const slippageMiss = illustrative && !pegBlocked;
   const quoteView = quoteCardView({
     paused: opensPausedLive === true,
     pegBlocked: Boolean(pegBlocked),
-    illustrative: preview.kind === "ok" && preview.illustrative,
+    illustrative,
     overLimit,
+    limitBtc: limitCollateral !== null ? formatBtc(limitCollateral) : null,
+    gapPercent: bpsToPercent(Number(poolGap)),
+    withinPercent: bpsToPercent(openCap),
+    slippagePercent: formatOpenFeePercent(slippageBps),
+    slippageMiss,
     liquidationPrice: outcome ? formatUsd(outcome.liquidationPrice) : null,
     dropPercent: outcome ? dropToLiquidation(crToPercent(outcome.cr)) : null,
-    feeLine: outcome
-      ? quoteFeeLine(
-          formatMusd(outcome.coilFeeMusd),
-          formatMusd(outcome.poolFeeMusd ?? 0n),
-          feeBpsLive !== null ? formatOpenFeePercent(feeBpsLive) : null,
-        )
-      : openFeeText,
+    feeLine: openFeeText,
+    feeCapLabel: feeBpsLive !== null ? feeCapLabel(formatOpenFeePercent(COIL_OPEN_FEE_CAP_BPS)) : null,
   });
   const deploymentFeeText = !newCapabilities
     ? " Legacy accounts retain their original capabilities; no upgrade is implied."
@@ -982,13 +985,12 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
       ? " Reading the factory open fee."
       : ` Coil open fee ${formatOpenFeePercent(feeBpsLive)}; ${opensPausedLive === null ? "opens still being read" : opensPausedLive ? "opens paused" : "opens enabled"}.${limitCollateral !== null && limitDebt !== null ? ` Position limits: ${formatBtc(limitCollateral)} BTC / ${formatMusd(limitDebt)} MUSD total debt.` : ""}`;
   const ownerState = ownerActionState(newCapabilities, recoveryRaw !== false, Boolean(account && connected && writesEnabled && !discoveryPending));
-  const illustrative = preview.kind === "ok" && preview.illustrative;
   const openBlock = openingPolicyBlock ?? (inRecovery
     ? "Mezo is in Recovery Mode. A new open is refused."
     : pegBlocked
-      ? "The pool price is off the oracle price. Raising slippage will not help."
-      : illustrative
-        ? "This open does not fit the current pool price."
+      ? quoteView.pegMessage
+      : slippageMiss
+        ? quoteView.slippageMessage
         : null);
   const sensible = effectiveMarket && collateral && collateral > 0n ? sensibleOpen(collateral, effectiveMarket) : null;
   const reserveNeed = (() => {
@@ -1007,7 +1009,9 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
     preview.kind === "ok" &&
     collateral !== null &&
     collateral !== 0n;
-  const primary: { label: string; onClick?: () => void; disabled: boolean; icon?: React.ReactNode } = !mounted
+  const primary: { label: string; onClick?: () => void; disabled: boolean; icon?: React.ReactNode } = pegBlocked
+    ? { label: PRICE_CHECK_CTA, disabled: true, icon: <Lock className="size-4" aria-hidden /> }
+    : !mounted
     ? { label: "Connect", disabled: true, icon: <Wallet className="size-4" aria-hidden /> }
     : !isConnected
       ? { label: connecting ? "Connecting…" : "Connect", onClick: connectWallet, disabled: connecting, icon: <Wallet className="size-4" aria-hidden /> }
@@ -1022,7 +1026,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
           : !account
             ? { label: busy ? "Creating account…" : "Create your Coil account", onClick: createAccount, disabled: busy || discoveryPending || !implementation || implementation === ZERO }
             : openBlock
-              ? { label: inRecovery ? "Recovery Mode: opens refused" : opensPausedLive ? "Opens are paused" : "Opening unavailable", disabled: true, icon: <Lock className="size-4" aria-hidden /> }
+              ? { label: inRecovery ? "Recovery Mode: opens refused" : slippageMiss ? "Opening unavailable" : opensPausedLive ? "Opens are paused" : "Opening unavailable", disabled: true, icon: <Lock className="size-4" aria-hidden /> }
               : { label: busy ? "Working…" : `Open at ${leverageChoice(targetPct).multiple}`, onClick: doLoop, disabled: !loopReady, icon: <Lock className="size-4" aria-hidden /> };
 
   const setup = [
@@ -1056,6 +1060,11 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
           </a>
           <p className="hidden text-xs text-muted-foreground lg:block">Workspace <span className="mx-2 text-foreground/30">/</span><span className="text-foreground">App</span></p>
           <div className="flex flex-wrap items-center gap-2">
+            {feeBpsLive !== null ? (
+              <span id="coil-open-fee" className="chip" title={openFeeText} aria-label={openFeeText}>
+                {feeChipLabel(formatOpenFeePercent(feeBpsLive))}
+              </span>
+            ) : null}
             <p className="hidden items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground sm:flex">
               <Bitcoin className="size-3.5 text-filament" aria-hidden />
               {market ? (
@@ -1092,7 +1101,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
             ) : (
               <Button
                 type="button"
-                className="btn-btc hidden min-h-11 rounded-lg px-4 font-medium lg:inline-flex"
+                className={cn("btn-btc min-h-11 rounded-lg px-4 font-medium", !pegBlocked && "hidden lg:inline-flex")}
                 disabled={!mounted || connecting}
                 onClick={connectWallet}
               >
@@ -1107,7 +1116,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
 
       <div className="mx-auto flex w-full max-w-7xl flex-col px-4 pb-28 sm:px-6 lg:px-8 lg:pb-0">
         <main aria-busy={busy}>
-          <Hero market={market} marketError={marketError} feeText={openFeeText} opensPaused={opensPausedLive === true} />
+          <Hero market={market} marketError={marketError} />
           <section id="app" aria-labelledby="app-title" className="scroll-mt-32 py-7 lg:scroll-mt-20">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
@@ -1169,7 +1178,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                 </Banner>
               ) : null}
               <Banner tone="info" title={`${mezoTestnet.name} · ${deployment.status} · not audited`} detailsLabel="Deployment details">
-                Unaudited contracts on Mezo testnet. Pool liquidity is limited.
+                Contracts on Mezo testnet are not audited. Pool liquidity is limited.
                 {deploymentFeeText}
                 {!writesEnabled ? " Transactions remain disabled until deployment and release gates are satisfied." : ""}
                 {!walletConnectProjectId ? " WalletConnect is unavailable: no project ID configured. Injected and Bitcoin wallets remain available." : ""}
@@ -1177,7 +1186,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
               {openingPolicyBlock ? <Banner tone="warn" title="Opening status">{openingPolicyBlock}</Banner> : null}
               {inRecovery ? (
                 <Banner tone="bad" title="Recovery Mode">
-                  Mezo is in Recovery Mode. Opens and full close are blocked. Repay with owner MUSD or funded reserves to reduce debt safely; minimum debt rules still apply. Submit your own close after Mezo permits it. No close is queued.
+                  Mezo is in Recovery Mode. Opens and full close are blocked. Repay with owner MUSD or funded reserves to reduce debt safely; minimum debt rules still apply. Submit your own close after Mezo permits it. No close is queued. {RECOVERY_STILL}
                 </Banner>
               ) : null}
               {market && (poolGap > 0n || reserveFactory) ? (
@@ -1208,7 +1217,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                     ) : null
                   }
                 >
-                  {`The MUSD/BTC pool is ${poolGap.toString()} bps off the oracle${poolGap > 0n ? ` (${(Number(poolGap) / 100).toFixed(2)}%)` : ""}. ${belowPeg > 0n ? `MUSD is ${belowPeg.toString()} bps under $1 in this pool.` : "MUSD is not under $1 in this pool."} ${pegBlocked ? "The pool price is off the oracle price. Raising slippage will not help. Closing an open position is still available." : reserveFactory ? `A new open is refused past ${openCap} bps. The maximum gap is 500 bps.` : ""}`}
+                  {quoteView.pegMessage ?? `The MUSD/BTC pool is ${poolGap.toString()} bps off the oracle${poolGap > 0n ? ` (${bpsToPercent(Number(poolGap))})` : ""}. ${belowPeg > 0n ? `MUSD is ${belowPeg.toString()} bps under $1 in this pool.` : "MUSD is not under $1 in this pool."}${reserveFactory ? ` A new open is refused past ${bpsToPercent(openCap)}.` : ""}`}
                 </Banner>
               ) : null}
               {connectError && !isConnected ? (
@@ -1245,8 +1254,8 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                       spellCheck={false}
                       value={btcText}
                       onChange={(event) => setBtcText(event.target.value)}
-                      aria-describedby={quoteView.overLimitMessage || collateral === null ? "btc-usd btc-limit" : "btc-usd"}
-                      aria-invalid={Boolean(quoteView.overLimitMessage) || collateral === null}
+                      aria-describedby={quoteView.overLimitMessage ? "btc-usd btc-limit" : collateral === 0n ? "btc-usd btc-helper" : "btc-usd"}
+                      aria-invalid={Boolean(quoteView.overLimitMessage)}
                       className="h-12 min-w-0 flex-1 border-0 bg-transparent px-0 text-2xl font-medium tabular-nums tracking-tight shadow-none focus-visible:ring-0 sm:text-[32px] dark:bg-transparent"
                     />
                     <span className="flex shrink-0 items-center gap-2 rounded-full border border-border bg-foreground/5 py-1.5 pr-3 pl-1.5 text-sm font-semibold">
@@ -1264,8 +1273,8 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                   </div>
                   {quoteView.overLimitMessage ? (
                     <p id="btc-limit" role="alert" className="text-sm leading-relaxed text-warn">{quoteView.overLimitMessage}</p>
-                  ) : collateral === null ? (
-                    <p id="btc-limit" role="alert" className="text-sm leading-relaxed text-warn">Enter a BTC amount using digits and one decimal point.</p>
+                  ) : collateral === 0n ? (
+                    <p id="btc-helper" className="text-sm leading-relaxed text-muted-foreground">{EMPTY_DEPOSIT_HELPER}</p>
                   ) : null}
                 </div>
 
@@ -1633,10 +1642,11 @@ function ReviewCard({
     );
   }
   if (preview.kind === "error") {
+    const quiet = /^Enter a /i.test(preview.message);
     return (
       <div>
         <QuoteCard view={outcome} />
-        {blockedCopy ? null : (
+        {blockedCopy || quiet ? null : (
           <div className="mt-4 rounded-lg border border-warn/35 bg-warn/10 px-4 py-4" role="alert">
             <p className="text-sm font-medium text-warn">This open would not go through</p>
             <p className="mt-1 text-sm leading-relaxed text-foreground/90">{preview.message}</p>

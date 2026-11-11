@@ -379,7 +379,9 @@ test('open fee copy formats coilFeeBps as a percent and states the hard 50 bps c
   assert.equal(fee.readFeeBps(25n), 25);
   assert.equal(fee.readFeeBps(10_001), null);
   const statement = fee.coilOpenFeeStatement(25);
-  assert.equal(statement, 'Coil open fee: 0.25% of newly minted MUSD (owner-capped at 0.5%). Rescue and exit: 0 (guard, owner exit, repay, unwind).');
+  assert.equal(statement, 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage. The contract caps it at 0.5%. Protection, rescue, repay, de-lever, unwind and close: 0%. Mezo\'s borrowing fee, pool swap fee and gas are separate.');
+  assert.equal(statement.includes('0.25%'), true);
+  assert.equal(statement.includes('0.5%'), true);
   for (const text of [statement, fee.coilOpenFeePendingStatement(), fee.coilOpenFeeUnavailableStatement(), fee.coilOpenFeeLegacyStatement()]) {
     assert.equal(text.includes('\u2014'), false);
     assert.equal(text.includes('WitLabs'), false);
@@ -451,13 +453,18 @@ test('an off-oracle pool still yields a sample liquidation price', () => {
     pegBlocked: true,
     illustrative: true,
     overLimit: false,
+    gapPercent: '6.64%',
+    withinPercent: '2%',
     liquidationPrice: '$1',
     dropPercent: 45,
     feeLine: 'fees',
   });
-  assert.equal(view.badge, 'Sample');
+  assert.equal(view.badge, 'Preview (Sample, cannot open right now)');
   assert.equal(view.liquidationPrice, '$1');
   assert.equal(view.dropLine, 'BTC can fall 45%');
+  assert.match(view.pegMessage, /6\.64%/);
+  assert.match(view.pegMessage, /within 2%/);
+  assert.match(view.pegMessage, /Raising slippage will not help/);
 });
 test('quote card shows liquidation price, how far BTC can fall, and fees', () => {
   const view = quoteCard.quoteCardView({
@@ -466,14 +473,14 @@ test('quote card shows liquidation price, how far BTC can fall, and fees', () =>
     overLimit: false,
     liquidationPrice: '$50,000',
     dropPercent: 45,
-    feeLine: quoteCard.quoteFeeLine('12.50', '1.20', '0.25%'),
+    feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage. The contract caps it at 0.5%. Protection, rescue, repay, de-lever, unwind and close: 0%.',
+    feeCapLabel: 'Max 0.5%, set on-chain',
   });
   assert.equal(view.badge, 'Quote');
   assert.equal(view.liquidationPrice, '$50,000');
   assert.equal(view.dropLine, 'BTC can fall 45%');
   assert.match(view.feeLine, /0\.25%/);
-  assert.match(view.feeLine, /12\.50 MUSD/);
-  assert.match(view.feeLine, /1\.20 MUSD/);
+  assert.equal(view.feeCapLabel, 'Max 0.5%, set on-chain');
   assert.equal(view.pegMessage, null);
   assert.equal(view.overLimitMessage, null);
 });
@@ -485,12 +492,14 @@ test('paused or peg-blocked opens are labelled Sample and still show the outcome
       overLimit: false,
       liquidationPrice: '$40,000',
       dropPercent: 26.7,
-      feeLine: quoteCard.quoteFeeLine('3.00', '0.40', '0.25%'),
+      gapPercent: '6.64%',
+      withinPercent: '2%',
+      feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage.',
     });
-    assert.equal(view.badge, 'Sample');
+    assert.equal(view.badge, 'Preview (Sample, cannot open right now)');
     assert.equal(view.liquidationPrice, '$40,000');
     assert.equal(view.dropLine, 'BTC can fall 26.7%');
-    assert.match(view.feeLine, /Pool fee 0\.40 MUSD/);
+    assert.match(view.feeLine, /0\.25%/);
   }
 });
 
@@ -501,13 +510,17 @@ test('a peg block says the pool price is off the oracle and that raising slippag
     overLimit: false,
     liquidationPrice: '$40,000',
     dropPercent: 26.7,
-    feeLine: 'Coil fee 0.25% (3.00 MUSD on newly minted debt). Pool fee 0.40 MUSD. Exit fee 0.',
+    gapPercent: '6.64%',
+    withinPercent: '2%',
+    feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage.',
   });
-  assert.equal(view.pegMessage, productCopy.PEG_BLOCK_MESSAGE);
-  assert.match(view.pegMessage, /pool price is off the oracle price/);
+  assert.equal(view.pegMessage, productCopy.priceCheckStatus('6.64%', '2%'));
+  assert.match(view.pegMessage, /pool price is 6\.64% away from the oracle price/);
+  assert.match(view.pegMessage, /within 2%/);
   assert.match(view.pegMessage, /Raising slippage will not help/);
+  assert.equal(view.slippageMessage, null);
   assert.equal(view.overLimitMessage, null);
-  assert.equal(view.badge, 'Sample');
+  assert.equal(view.badge, 'Preview (Sample, cannot open right now)');
 });
 
 test('a deposit over the factory limit gets its own message', () => {
@@ -517,10 +530,18 @@ test('a deposit over the factory limit gets its own message', () => {
     overLimit: true,
     liquidationPrice: '$80,000',
     dropPercent: 45,
-    feeLine: quoteCard.quoteFeeLine('9.00', '2.00', '0.25%'),
+    limitBtc: '0.05',
+    feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage.',
   });
-  assert.equal(view.overLimitMessage, productCopy.OVER_LIMIT_MESSAGE);
-  assert.notEqual(view.overLimitMessage, productCopy.PEG_BLOCK_MESSAGE);
+  assert.equal(view.overLimitMessage, 'The current limit is 0.05 BTC per position on this release.');
+  assert.equal(view.overLimitMessage, productCopy.depositLimitMessage('0.05'));
+  assert.doesNotMatch(view.overLimitMessage, /slippage/i);
+  const slipped = quoteCard.quoteCardView({
+    paused: false, pegBlocked: false, slippageMiss: true, slippagePercent: '0.5%', overLimit: false,
+    liquidationPrice: '$1', dropPercent: 10, feeLine: 'fees',
+  });
+  assert.equal(slipped.slippageMessage, 'The pool would fill worse than your 0.5% limit. Try a higher limit or a lower leverage.');
+  assert.equal(slipped.pegMessage, null);
   assert.doesNotMatch(view.overLimitMessage, /slippage/i);
   assert.equal(view.pegMessage, null);
   assert.equal(view.badge, 'Quote');
@@ -564,6 +585,9 @@ test('user-facing strings omit banned jargon, mainnet claims, and the em dash', 
     { name: 'em dash', re: /\u2014/ },
     { name: 'WitLabs', re: /WitLabs/i },
     { name: 'mainnet claim', re: /\bmainnet\b/i },
+    { name: 'Mainnet depth', re: /Mainnet depth|Mainnet starts at 200%/ },
+    { name: 'guaranteed protection', re: /guaranteed protection/i },
+    { name: 'unaudited', re: /unaudited/i },
   ];
   const hits = [];
   for (const file of files) {
@@ -579,11 +603,15 @@ test('user-facing strings omit banned jargon, mainnet claims, and the em dash', 
       for (const rule of banned) {
         if (rule.re.test(text)) hits.push(`${path.relative(root, file)}: ${rule.name}: ${text.slice(0, 180)}`);
       }
+      if (/\baudited\b/i.test(text.replace(/not audited/ig, ''))) hits.push(`${path.relative(root, file)}: audited: ${text.slice(0, 180)}`);
     }
   }
   assert.deepEqual(hits, []);
   const landing = fs.readFileSync(path.join(root, 'components/landing.tsx'), 'utf8');
   assert.match(landing, /<h1[^>]*>\{HERO_TITLE\}<\/h1>/);
   assert.equal(productCopy.HERO_TITLE, 'Leverage your BTC in one transaction.');
-  assert.doesNotMatch(landing + productCopy.HERO_TITLE + productCopy.HERO_SUBLINE + productCopy.MOAT_LINES.join('\n'), /Turn your BTC into more BTC/);
+  assert.equal(productCopy.HERO_SUBLINE, 'Coil borrows MUSD against your bitcoin, buys more BTC on Mezo Pools and posts it back, all in one transaction, inside an account only you control. A protection keeper can only make your position safer.');
+  assert.equal(productCopy.heroEyebrow(31611), 'Mezo testnet · chain 31611 · not audited');
+  assert.equal(productCopy.MOAT_CARDS.length, 4);
+  assert.doesNotMatch(landing + productCopy.HERO_TITLE + productCopy.HERO_SUBLINE + productCopy.MOAT_CARDS.map(card => card.title + card.body).join('\n'), /Turn your BTC into more BTC/);
 });

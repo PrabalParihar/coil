@@ -1,3 +1,5 @@
+import { coilFeeSentence } from "./product-copy";
+
 /**
  * Owner fee ceiling. `CoilFactory.setCoilFee` in `src/CoilFactory.sol` reverts
  * `BadPolicy` when `bps == 0 || bps > 50`. `coilFeeBps` is a public getter;
@@ -30,7 +32,7 @@ export function formatOpenFeePercent(bps: number): string {
 }
 
 export function coilOpenFeeStatement(feeBps: number): string {
-  return `Coil open fee: ${formatOpenFeePercent(feeBps)} of newly minted MUSD (owner-capped at ${formatOpenFeePercent(COIL_OPEN_FEE_CAP_BPS)}). Rescue and exit: 0 (guard, owner exit, repay, unwind).`;
+  return coilFeeSentence(formatOpenFeePercent(feeBps), formatOpenFeePercent(COIL_OPEN_FEE_CAP_BPS));
 }
 
 export function coilOpenFeePendingStatement(): string {

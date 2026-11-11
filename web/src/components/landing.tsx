@@ -18,7 +18,20 @@ import { formatUsd, type Market } from "@/lib/quote";
 import { factoryAddress } from "@/lib/mezo";
 import { deployment, selectedChain } from "@/lib/network";
 import { DEPLOYMENTS } from "@/lib/deployment.generated";
-import { HERO_SUBLINE, HERO_TITLE, HONEST_LIMITS, MOAT_LINES } from "@/lib/product-copy";
+import {
+  HERO_PRIMARY,
+  HERO_SECONDARY,
+  HERO_SUBLINE,
+  HERO_TITLE,
+  LIMITS_STRIP,
+  MOAT_CARDS,
+  MOAT_FOOTER,
+  MOAT_SUBTITLE,
+  MOAT_TITLE,
+  PROOF_EXIT_FEE,
+  PROOF_OPEN,
+  heroEyebrow,
+} from "@/lib/product-copy";
 import { KeeperStatus } from "@/components/keeper-status";
 import { shorten, useMotionOk } from "@/components/shell";
 
@@ -152,56 +165,44 @@ export function LoopViz() {
 /* Hero                                                                */
 /* ------------------------------------------------------------------ */
 
-export function Hero({
-  market,
-  marketError,
-  feeText,
-  opensPaused,
-}: {
-  market: Market | null;
-  marketError: string | null;
-  feeText: string;
-  opensPaused: boolean;
-}) {
+export function Hero({ market, marketError }: { market: Market | null; marketError: string | null }) {
   return (
     <section aria-label="Coil overview" className="border-b border-border py-8 sm:py-12">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="chip border-filament/40 text-foreground">Testnet</span>
-        <span className="chip border-warn/40 text-warn">Not audited</span>
-        <KeeperStatus pill />
-        {opensPaused ? <span className="chip text-muted-foreground">Opens paused</span> : null}
-      </div>
+      <span className="chip border-filament/40 text-foreground">{heroEyebrow(selectedChain.id)}</span>
       <h1 className="mt-5 max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">{HERO_TITLE}</h1>
       <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">{HERO_SUBLINE}</p>
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <a href="#app" className="btn-btc inline-flex min-h-11 items-center rounded-lg px-4 text-sm font-medium">
-          Open a position
+          {HERO_PRIMARY}
         </a>
-        <p className="text-xs text-muted-foreground">
-          {selectedChain.name}
-          {market ? ` · BTC ${formatUsd(market.price)}` : marketError ? " · market data unavailable" : " · reading the oracle"}
-          {` · ${deployment.status}`}
-        </p>
+        <a href="#protection" className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-medium hover:bg-foreground/5">
+          {HERO_SECONDARY}
+        </a>
       </div>
-      <p id="coil-open-fee" role="status" className="mt-5 max-w-3xl text-sm leading-relaxed text-foreground">
-        {feeText}
+      <p className="mt-3 text-xs text-muted-foreground">
+        {market ? `BTC ${formatUsd(market.price)}` : marketError ? "Market data unavailable" : "Reading the oracle"}
+        {` · ${deployment.status}`}
       </p>
-      <div className="mt-8 grid gap-3 md:grid-cols-3">
-        {MOAT_LINES.map((line, index) => (
-          <article key={line} className="panel p-4">
-            <p className="font-mono text-[11px] text-filament">0{index + 1}</p>
-            <p className="mt-2 text-sm leading-relaxed">{line}</p>
-          </article>
-        ))}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <span className="chip">{PROOF_OPEN}</span>
+        <span className="chip">{PROOF_EXIT_FEE}</span>
+        <KeeperStatus liveChip />
       </div>
-      <div className="mt-4 rounded-lg border border-border px-4 py-3">
-        <p className="text-xs font-medium">What this build does not do</p>
-        <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
-          {HONEST_LIMITS.map((line) => (
-            <li key={line}>{line}</li>
+      <section id="protection" aria-labelledby="why-title" className="mt-10 scroll-mt-28">
+        <p className="text-xs text-muted-foreground">{MOAT_TITLE}</p>
+        <h2 id="why-title" className="mt-2 max-w-2xl text-2xl font-semibold tracking-tight">{MOAT_SUBTITLE}</h2>
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          {MOAT_CARDS.map((card, index) => (
+            <article key={card.title} className="panel p-4">
+              <p className="font-mono text-[11px] text-filament">0{index + 1}</p>
+              <h3 className="mt-2 text-sm font-semibold">{card.title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{card.body}</p>
+            </article>
           ))}
-        </ul>
-      </div>
+        </div>
+        <p className="mt-4 text-sm leading-relaxed text-muted-foreground">{MOAT_FOOTER}</p>
+      </section>
+      <p className="mt-4 rounded-lg border border-border px-4 py-3 text-sm leading-relaxed text-muted-foreground">{LIMITS_STRIP}</p>
     </section>
   );
 }
@@ -451,7 +452,7 @@ export function Risks() {
           </div>
         ))}
       </div>
-      <p className="mt-5 text-xs text-muted-foreground">Unaudited testnet prototype. Writes stay off until this deployment is confirmed and explicitly enabled.</p>
+      <p className="mt-5 text-xs text-muted-foreground">Testnet prototype. The contracts are not audited. Writes stay off until this deployment is confirmed and explicitly enabled.</p>
     </section>
   );
 }

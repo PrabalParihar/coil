@@ -13,7 +13,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://coil.up.railway.app"),
   title: "Coil Labs: Leverage your BTC in one transaction.",
   description:
-    "Deposit BTC. Coil borrows against it, buys more BTC, and posts that BTC back before the transaction ends. A keeper can only reduce risk. Mezo testnet. Not audited.",
+    "Coil borrows MUSD against your bitcoin, buys more BTC on Mezo Pools and posts it back, all in one transaction, inside an account only you control. Mezo testnet. The contracts are not audited.",
   openGraph: {
     title: "Coil Labs: Leverage your BTC in one transaction.",
     description: `One-transaction BTC leverage on MUSD. A keeper can only reduce risk. ${selectedChain.name}: ${deployment.status} deployment. Not audited.`,

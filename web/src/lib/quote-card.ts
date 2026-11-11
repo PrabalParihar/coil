@@ -1,4 +1,11 @@
-import { OVER_LIMIT_MESSAGE, PEG_BLOCK_MESSAGE, btcCanFallLine } from "./product-copy";
+import {
+  BLOCKED_CARD_LABEL,
+  LIVE_CARD_LABEL,
+  btcCanFallLine,
+  depositLimitMessage,
+  priceCheckStatus,
+  slippageMessage,
+} from "./product-copy";
 
 export type QuoteCardInput = {
   /** Factory opensPaused() is true. */
@@ -9,37 +16,57 @@ export type QuoteCardInput = {
   illustrative?: boolean;
   /** Deposit or resulting debt is above the factory limit. */
   overLimit: boolean;
+  /** maxCollateral formatted in BTC, when the factory published one. */
+  limitBtc?: string | null;
+  /** Live pool-versus-oracle gap, already formatted as a percent. */
+  gapPercent?: string | null;
+  /** Live open bound, already formatted as a percent. */
+  withinPercent?: string | null;
+  /** User slippage, formatted as a percent. Used only for a real slippage miss. */
+  slippagePercent?: string | null;
+  /** Strict quote missed the user's slippage while the oracle open bound still allows it. */
+  slippageMiss?: boolean;
   /** Liquidation price already formatted from a quote, or null when no quote exists. */
   liquidationPrice: string | null;
   /** Percent BTC can fall before 110% collateral, from the same quote. */
   dropPercent: number | null;
-  /** Fee sentence built from the quote and the chain fee. */
+  /** Fee sentence built from the chain fee and the contract cap. */
   feeLine: string | null;
+  /** "Max 0.5%, set on-chain", with the percent formatted from the cap. */
+  feeCapLabel?: string | null;
 };
 
 export type QuoteCardView = {
-  badge: "Quote" | "Sample";
+  badge: string;
+  blocked: boolean;
   liquidationPrice: string | null;
   dropLine: string | null;
   feeLine: string | null;
+  feeCapLabel: string | null;
   pegMessage: string | null;
   overLimitMessage: string | null;
+  slippageMessage: string | null;
 };
 
 /**
- * The card always has an outcome slot. Opens that the chain would refuse
- * (paused, or the pool/oracle check would fail) are labelled Sample.
- * An over-limit deposit gets its own message, separate from the peg message.
+ * The card always has an outcome slot. Opens the chain would refuse are labelled
+ * as a preview sample. An over-limit deposit and a real slippage miss stay separate.
  */
 export function quoteCardView(input: QuoteCardInput): QuoteCardView {
   const blocked = input.paused || input.pegBlocked || input.illustrative === true;
+  const pegMessage = input.pegBlocked && input.gapPercent && input.withinPercent
+    ? priceCheckStatus(input.gapPercent, input.withinPercent)
+    : null;
   return {
-    badge: blocked ? "Sample" : "Quote",
+    badge: blocked ? BLOCKED_CARD_LABEL : LIVE_CARD_LABEL,
+    blocked,
     liquidationPrice: input.liquidationPrice,
     dropLine: input.dropPercent === null ? null : btcCanFallLine(input.dropPercent),
     feeLine: input.feeLine,
-    pegMessage: input.pegBlocked ? PEG_BLOCK_MESSAGE : null,
-    overLimitMessage: input.overLimit ? OVER_LIMIT_MESSAGE : null,
+    feeCapLabel: input.feeCapLabel ?? null,
+    pegMessage,
+    overLimitMessage: input.overLimit && input.limitBtc ? depositLimitMessage(input.limitBtc) : null,
+    slippageMessage: input.slippageMiss && !input.pegBlocked && input.slippagePercent ? slippageMessage(input.slippagePercent) : null,
   };
 }
 
@@ -58,9 +85,4 @@ export function exceedsFactoryLimit(text: string, collateral: bigint | null, lim
   } catch {
     return whole.length > 12;
   }
-}
-
-export function quoteFeeLine(coilFeeMusd: string, poolFeeMusd: string, openFeePercent: string | null): string {
-  const rate = openFeePercent ? `Coil fee ${openFeePercent}` : "Coil fee";
-  return `${rate} (${coilFeeMusd} MUSD on newly minted debt). Pool fee ${poolFeeMusd} MUSD. Exit fee 0.`;
 }
