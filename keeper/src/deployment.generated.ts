@@ -14,23 +14,25 @@ export const DEPLOYMENTS: Record<string, Deployment> = {
     "name": "Mezo Testnet",
     "rpcUrl": "https://rpc.test.mezo.org",
     "explorerUrl": "https://explorer.test.mezo.org",
-    "status": "legacy",
-    "factory": "0xff3335576f998EE872596d4EB7ABECb71a0D5BC8",
-    "deploymentBlock": "16408315",
-    "implementation": "0xd4495f969995b3e48998573b5adc6f3106672b80",
+    "status": "ready",
+    "factory": "0x339ef0116e17BA42987c1E2E380Af59B38f62064",
+    "deploymentBlock": "16708730",
+    "implementation": "0xf61CEf72Fc0CA52dBFC86C0eDE7F7a3fC8C64b45",
     "keeper": "0x1D2621480011C44693a47801C1158E70b25b4B4F",
+    "parkGovernor": "0xf74E746a8d7A46A8b0f745C6d5944Ee672c1a3AF",
     "contracts": {
-      "CoilFactory": "0xff3335576f998EE872596d4EB7ABECb71a0D5BC8",
-      "CoilAccount": "0xd4495f969995b3e48998573b5adc6f3106672b80",
-      "CoilLegacy": "0xb75d1F6Fe5D9Ab999CbcdDE99589976e66B25eC4",
-      "CoilExit": "0x43D76243f5E5383c37557a364647F16DfBe8D03a",
-      "FlashSizer": "0x757dec022926b1d05d295aede98a52e60e455c87",
-      "CoilPark": "0x1cc8c8df3f4cb25e4201b3aa892b51c2e9954333"
+      "CoilFactory": "0x339ef0116e17BA42987c1E2E380Af59B38f62064",
+      "CoilAccount": "0xf61CEf72Fc0CA52dBFC86C0eDE7F7a3fC8C64b45",
+      "CoilLegacy": "0x1cC3017eb259ab6A457315455a5691483df4b477",
+      "CoilExit": "0x3e6327B725Af704D35C06d9D8680901a6C86B946",
+      "FlashSizer": "0xdfab302Ee41dFD1BA3732F23B8b5f7eDe40E7699",
+      "CoilPark": "0x9FfA606C93dCF30D3E34159020f6A1667C21f50b",
+      "CoilOwner": "0x5fF7a683c2D7bd20524Ce86dCb7B3991bc5f8d3b"
     },
     "capabilities": {
-      "policy": false,
-      "coilFee": false,
-      "ownerActions": false
+      "policy": true,
+      "coilFee": true,
+      "ownerActions": true
     }
   },
   "31612": {

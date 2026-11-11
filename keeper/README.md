@@ -35,7 +35,10 @@ execution still requires that selected record to be `ready` and the explicit ena
 retention alone cannot upgrade release readiness.
 
 Retention preserves account identity; it does not make every old ABI compatible with the
-current keeper adapter. Public getter checks confirm that the current adapter supports
+current keeper adapter. The active matsnet factory is the paused completion release
+`0x339ef0116e17BA42987c1E2E380Af59B38f62064`, block `16708730`. Its expected keeper is
+`0x1D2621480011C44693a47801C1158E70b25b4B4F`. The previous factory `0xff3335…5BC8`,
+block `16408315`, stays retained. Public getter checks confirm that the current adapter supports
 the reserve generations `0xff3335…5BC8` and `0x2218…9De5` as well as the new policy build.
 The earlier flash generation `0x6A38…31F7` lacks `park`, `pegGuardBps` and
 `rescueSlippageBps`; Wave 1 `0xE29f…8a3e` also lacks `pool` and `tipMezo`. Do not deploy

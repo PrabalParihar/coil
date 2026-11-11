@@ -1,6 +1,6 @@
 # Coil Labs threat model
 
-Scope: Wave 2 completion release candidate, its account/factory/linked libraries, MUSD reserve, web configuration and keeper. This is a design/security document, not an audit. The last review-established public deployment is legacy matsnet `0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`, block 16408315, chain 31611; existing clones do not gain these changes. New deployment and mainnet proof remain pending.
+Scope: Wave 2 completion release candidate, its account/factory/linked libraries, MUSD reserve, web configuration and keeper. This is a design/security document, not an audit. The active public deployment is the paused matsnet completion factory `0x339ef0116e17BA42987c1E2E380Af59B38f62064`, block 16708730, chain 31611. The previous legacy factory `0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`, block 16408315, remains retained; its clones do not gain these changes. Opening is paused. Indexed verification, funded proofs and mainnet go-live remain pending.
 
 ## Assets and trust boundaries
 

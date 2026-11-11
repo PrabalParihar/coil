@@ -1,6 +1,6 @@
 # Wave 2 implementation and release status
 
-This matrix follows the supplied Wave 2 PRD's 19 IDs and the approved completion design. Implementation and local/fork validation do not establish a funded public deployment. Existing public clones are immutable legacy builds. Mainnet go-live remains a separate explicit decision.
+This matrix follows the supplied Wave 2 PRD's 19 IDs and the approved completion design. The paused matsnet completion factory `0x339ef0116e17BA42987c1E2E380Af59B38f62064`, block 16708730, is the active chain 31611 deployment. Opening is paused. That record is not funded acceptance, indexed verification, or an activated live release. Existing public clones on retained factories are immutable legacy builds. Mainnet go-live remains a separate explicit decision.
 
 | ID | Implemented in this change | Public acceptance still needed |
 | --- | --- | --- |
@@ -8,14 +8,14 @@ This matrix follows the supplied Wave 2 PRD's 19 IDs and the approved completion
 | F2 | Safe owner MUSD repayment in actual protocol Recovery Mode, minimum-debt handling, explicit banner and later owner-initiated close | Funded `repayRM` and protocol-permitted full-close proofs |
 | F3 | One oracle bound across router, flash sizing and callbacks | Deploy and verify the exact bounded build |
 | F4 | Retry/backoff, simulation, confirmed writes, redacted health API and public status UI | New-generation always-on execution service, authenticated fresh heartbeat and real guard receipt |
-| F5 | Seven-component deployment/verification commands and exact source/compiler/component/link graph release gate | Successful new deployment and fully indexed verification of every component |
+| F5 | Seven-component deployment/verification commands and exact source/compiler/component/link graph release gate | Fully indexed verification of every completion-release component. FlashSizer and CoilPark have no top-level creation transaction |
 | F6 | Static app and public routes, deployment provenance and honest capability labels | Completion-factory public release and actual AKINDO live-URL field |
 | F7 | Owner-set 1–50 bps fee, 25 bps default, accepted-fee ceiling, gross debt sizing and fee preview | Funded new-factory open/increase fee receipts |
 | F8 | Usable wallet onboarding/faucet/errors and consented tester-proof tooling | Recruit 3–5 real users and record their actual chain-labelled receipts |
 | A9 | Flash close/sizer/open/guard oracle bounds, delivery adversaries and no-tip sandwich regression tests | Funded exact-build path measurements and matsnet acceptance before mainnet |
 | A10 | Unsafe empty-reserve guard returns false without a tip; keeper deduplicates and backs off | Observe new-factory production behavior under the relevant market conditions |
-| A11 | Validated factory/block pairs generated for web and keeper | Record the actual completion deployment pair after broadcast |
-| A12 | Chain-checked paused bootstrap, finite limits, full library linking and local-fork deployment/readback | Funded matsnet redeploy, full verification and explicit app/keeper rollout |
+| A11 | Validated factory/block pairs generated for web and keeper | Completion pair recorded: factory `0x339ef0116e17BA42987c1E2E380Af59B38f62064`, block 16708730. Public app/keeper rollout on that pair is still separate |
+| A12 | Chain-checked paused bootstrap, finite limits, full library linking and local-fork deployment/readback | Paused matsnet factory is deployed with finite limits. Full verification and explicit app/keeper rollout remain |
 | A13 | `/keeper`, authenticated chain evidence, optional service mode, stale/error handling | Configure a real public status endpoint and verify execution-mode freshness |
 | A14 | Existing OrangeKit/injected fallback preserved; no fabricated WalletConnect ID | Passport remains conditional on a compatible compiling package |
 | A15 | Existing asset-checked savings adapter preserved | Confirm real savings/gauge addresses before enabling a live integration |
