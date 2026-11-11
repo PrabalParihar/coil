@@ -33,7 +33,7 @@ export default function StatsPage() {
       setLoadedHistory(true);
       if (!page.incomplete) setCursor(previous => previous === null || page.fromBlock < previous ? page.fromBlock : previous);
       setError(page.incomplete ? "Some event reads failed. Counts cover successfully loaded logs only; retry this window before loading older history." : null);
-    } catch { if (mounted.current) setError("Could not refresh selected-factory counts/history. The retained snapshot may be outdated; retry to refresh."); }
+    } catch { if (mounted.current) setError("Could not refresh these counts. Try again."); }
     finally { running.current = false; if (mounted.current) setBusy(false); }
   }, [client]);
   useEffect(() => {
@@ -43,16 +43,25 @@ export default function StatsPage() {
   }, [load]);
   const counts = summarizeStatsEvents(events);
   const cards = base ? [
-    ["Accounts", String(base.accounts), loadedHistory ? `${counts.accountLogs} AccountCreated logs in loaded windows` : "Factory count available; recent history loading"],
-    ["Open positions", base.open === null ? "Reading…" : String(base.open), `of ${base.scanned} accounts read; ${base.unreadable} unreadable`],
-    ["Guard rescues", loadedHistory ? String(counts.rescues) : "Reading…", "Loaded windows. Account reads are capped."],
-    ["MEZO tips paid", loadedHistory ? `${formatUnits(counts.tips, 18)} MEZO` : "Reading…", "Guarded tips in loaded windows. Account reads are capped."],
-    ["Heartbeats", loadedHistory ? String(counts.heartbeats) : "Reading…", "Selected-factory events in loaded windows"],
+    ["Accounts", String(base.accounts), loadedHistory ? "Accounts opened with this factory" : "Account count is in. Recent activity is still loading."],
+    ["Open positions", base.open === null ? "Reading…" : String(base.open), "Open positions among the accounts that could be read."],
+    ["Protection runs", loadedHistory ? String(counts.rescues) : "Reading…", "Times protection made a position safer."],
+    ["MEZO tips paid", loadedHistory ? `${formatUnits(counts.tips, 18)} MEZO` : "Reading…", "MEZO paid when protection made a position safer."],
+    ["Keeper check-ins", loadedHistory ? String(counts.heartbeats) : "Reading…", "Times the keeper checked in."],
   ] : [];
   return <PublicPage eyebrow="Public stats" title="What the chain shows">
-      <p className="mt-3 text-sm text-muted-foreground">{selectedChain.name}, chain {selectedChain.id}, {deployment.status} deployment. Factory and position counts publish before event history. History starts with the latest 9,999-block window; older windows load only when requested.</p>
-      <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs"><span>Factory <a className="link" href={factoryAddress ? `${explorerUrl}/address/${factoryAddress}` : undefined}>{factoryAddress ? shorten(factoryAddress) : "pending"}</a></span><span>Deploy block {FACTORY_DEPLOY_BLOCK.toString()}</span>{base ? <span>Snapshot block {base.latest.toString()}</span> : null}</p>
-      <p className="mt-3 text-xs text-muted-foreground">Last successful base snapshot: {updated ?? "unavailable"}. Event counts cover loaded windows, not complete chain history. Position and rescue reads are capped. Public chain observations are not real-user recruitment evidence.</p>
+      <p className="mt-3 text-sm text-muted-foreground">Counts from this factory on {selectedChain.name}. Newer activity loads first. Older activity loads when you ask for it.</p>
+      <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs"><span>Factory <a className="link" href={factoryAddress ? `${explorerUrl}/address/${factoryAddress}` : undefined}>{factoryAddress ? shorten(factoryAddress) : "pending"}</a></span></p>
+      <details className="mt-4 text-xs text-muted-foreground">
+        <summary className="cursor-pointer text-sm">Technical details</summary>
+        <div className="mt-2 space-y-2 leading-relaxed">
+          <p>History starts with the latest 9,999-block window; older windows load only when requested.</p>
+          <p>Deploy block {FACTORY_DEPLOY_BLOCK.toString()}{base ? `. Snapshot block ${base.latest.toString()}.` : ""}</p>
+          <p>Last successful base snapshot: {updated ?? "unavailable"}. Event counts cover loaded windows, not the whole chain. Position and rescue reads are capped.</p>
+          <p>{loadedHistory ? `${counts.accountLogs} AccountCreated logs in loaded windows.` : "AccountCreated logs are still loading."} Keeper check-ins are Selected-factory events in loaded windows.</p>
+          <p>Public chain observations are not real-user recruitment evidence. Status on this deployment: {deployment.status}.</p>
+        </div>
+      </details>
       <button type="button" className="link mt-4 text-sm" disabled={busy || !factoryAddress} onClick={() => void load(error ? failedBefore : undefined)}>Retry / refresh stats</button>
       {error ? <p role="alert" className="mt-4 text-danger">{error}</p> : null}
       {base?.unreadable ? <p className="mt-3 text-sm text-warn" role="alert">Some positions are unreadable; the open count is incomplete.</p> : null}

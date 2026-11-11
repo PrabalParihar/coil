@@ -224,7 +224,7 @@ test('quote refresh clears fee consent while loading and publishes errors withou
   const states = [];
   positionQuotes.startPositionQuote('current', async () => { throw new Error('provider unavailable'); }, state => states.push(state));
   await Promise.resolve(); await Promise.resolve();
-  assert.deepEqual(states, [{ key: 'current', kind: 'loading' }, { key: 'current', kind: 'error', message: 'State-aware quote unavailable. Refresh or wait for the selected chain RPC to recover.' }]);
+  assert.deepEqual(states, [{ key: 'current', kind: 'loading' }, { key: 'current', kind: 'error', message: "We couldn't read the quote for your account. These numbers are a sample, so opening stays off." }]);
 });
 let keeperService = {}; try { keeperService = require('../src/lib/keeper-service.ts'); } catch {}
 const statusNow = 1_800_000_000_000;
@@ -549,7 +549,7 @@ test('a peg block says the pool price is off the oracle and that raising slippag
     feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage.',
   });
   assert.equal(view.pegMessage, productCopy.priceCheckStatus('6.64%', '2%'));
-  assert.match(view.pegMessage, /pool price is 6\.64% away from the oracle price/);
+  assert.match(view.pegMessage, /pool price is 6\.64% away from the BTC price feed/);
   assert.match(view.pegMessage, /within 2%/);
   assert.match(view.pegMessage, /Raising slippage will not help/);
   assert.equal(view.slippageMessage, null);
@@ -567,7 +567,7 @@ test('a deposit over the factory limit gets its own message', () => {
     limitBtc: '0.05',
     feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage.',
   });
-  assert.equal(view.overLimitMessage, 'The current limit is 0.05 BTC per position on this release.');
+  assert.equal(view.overLimitMessage, 'The most you can deposit is 0.05 BTC.');
   assert.equal(view.overLimitMessage, productCopy.depositLimitMessage('0.05'));
   assert.doesNotMatch(view.overLimitMessage, /slippage/i);
   const slipped = quoteCard.quoteCardView({
@@ -649,8 +649,158 @@ test('user-facing strings omit banned jargon, mainnet claims, and the em dash', 
   assert.equal(productCopy.HERO_SUBLINE, 'Coil borrows MUSD against your bitcoin, buys more BTC on Mezo Pools and posts it back, all in one transaction, inside an account only you control. A protection keeper can only make your position safer.');
   assert.equal(productCopy.heroEyebrow(31611), 'Mezo testnet · chain 31611 · not audited');
   assert.equal(productCopy.BLOCKED_CARD_LABEL, 'Sample preview');
-  assert.equal(productCopy.poolWarning(663, 200), 'Pool price is 6.6% away from the oracle. Opens need under 2%.');
+  assert.equal(productCopy.poolWarning(663, 200), 'Pool price is 6.6% away from the BTC price feed. Opens need under 2%.');
   assert.equal(productCopy.poolGapOneDecimal(665), '6.7%');
   assert.equal(productCopy.MOAT_CARDS.length, 4);
   assert.doesNotMatch(landing + productCopy.HERO_TITLE + productCopy.HERO_SUBLINE + productCopy.MOAT_CARDS.map(card => card.title + card.body).join('\n'), /Turn your BTC into more BTC/);
+});
+
+test('deposit field names each invalid amount and hides risk and results', () => {
+  const wei = 10n ** 18n;
+  assert.equal(quoteCard.classifyDeposit('abc').message, 'Enter a number, like 0.05.');
+  assert.equal(quoteCard.classifyDeposit('1.2.3').message, 'Enter a number, like 0.05.');
+  assert.equal(quoteCard.classifyDeposit('0').message, 'Enter an amount above 0.');
+  assert.equal(quoteCard.classifyDeposit('-1').message, 'Enter an amount above 0.');
+  assert.equal(quoteCard.classifyDeposit('0.0000000000000000001', { minWei: 1n }).message, 'The least you can deposit is 0.000000000000000001 BTC.');
+  assert.equal(quoteCard.classifyDeposit('0.01', { minWei: 5n * 10n ** 16n }).message, 'The least you can deposit is 0.05 BTC.');
+  assert.equal(quoteCard.classifyDeposit('5', { maxWei: wei }).message, 'The most you can deposit is 1 BTC.');
+  assert.equal(quoteCard.classifyDeposit('0.04', { maxWei: wei }).ok, true);
+  for (const message of ['Enter a number, like 0.05.', 'Enter an amount above 0.', 'The least you can deposit is 0.05 BTC.', 'The most you can deposit is 1 BTC.']) {
+    const view = quoteCard.quoteCardView({
+      paused: false,
+      pegBlocked: false,
+      overLimit: false,
+      inputError: message,
+      liquidationPrice: '$80,000',
+      dropPercent: 45,
+      feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage.',
+    });
+    assert.equal(view.inputError, message);
+    assert.equal(view.showRisk, false);
+    assert.equal(view.showResults, false);
+    assert.equal(view.liquidationPrice, null);
+    assert.equal(view.dropLine, null);
+    assert.equal(view.feeLine, null);
+  }
+});
+
+test('a display-only account quote is a sample preview, shows the reason, and cannot be submitted', () => {
+  const fresh = { kind: 'ok', quote: increasedQuote, illustrative: false };
+  const key = '31611:factory:account';
+  const reason = "We couldn't read the quote for your account. These numbers are a sample, so opening stays off.";
+  const failed = positionQuotes.presentPositionPreview(true, key, { key, kind: 'error', message: reason }, fresh);
+  assert.equal(failed.displayOnly, true);
+  assert.equal(failed.reason, reason);
+  assert.equal(positionQuotes.canSubmitPositionPreview(failed), false);
+  assert.equal(positionQuotes.openButtonReason(failed), reason);
+  const pending = positionQuotes.presentPositionPreview(true, key, { key, kind: 'loading' }, fresh);
+  assert.equal(pending.displayOnly, true);
+  assert.equal(positionQuotes.canSubmitPositionPreview(pending), false);
+  assert.match(pending.reason, /still loading/);
+  assert.equal(positionQuotes.openButtonReason(pending), pending.reason);
+  const view = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: false,
+    illustrative: false,
+    displayOnly: true,
+    overLimit: false,
+    sampleReason: failed.reason,
+    liquidationPrice: '$50,000',
+    dropPercent: 45,
+    feeLine: 'fees',
+  });
+  assert.equal(view.badge, 'Sample preview');
+  assert.equal(view.sampleReason, reason);
+  assert.equal(view.showResults, true);
+  assert.equal(view.showRisk, false);
+  const pendingView = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: false,
+    illustrative: false,
+    displayOnly: true,
+    overLimit: false,
+    sampleReason: pending.reason,
+    liquidationPrice: '$50,000',
+    dropPercent: 45,
+    feeLine: 'fees',
+  });
+  assert.equal(pendingView.showRisk, false);
+  assert.equal(quoteCard.quoteCardView({
+    paused: false, pegBlocked: false, illustrative: false, displayOnly: false, overLimit: false,
+    liquidationPrice: '$50,000', dropPercent: 45, feeLine: 'fees',
+  }).showRisk, true);
+  const ready = positionQuotes.presentPositionPreview(true, key, { key, kind: 'ok', quote: increasedQuote }, fresh);
+  assert.equal(ready.displayOnly, false);
+  assert.equal(positionQuotes.canSubmitPositionPreview(ready), true);
+  assert.equal(positionQuotes.openButtonReason(ready), null);
+});
+
+test('one percent formatter shows 5.43 as 5.4%', () => {
+  assert.equal(productCopy.formatOneDecimalPercent(5.43), '5.4%');
+  assert.equal(productCopy.formatBpsOneDecimal(543), '5.4%');
+  const warning = productCopy.poolWarning(543, 200);
+  assert.match(warning, /5\.4%/);
+  assert.doesNotMatch(warning, /5\.43/);
+  assert.equal(productCopy.priceCheckStatus(productCopy.formatBpsOneDecimal(543), productCopy.formatBpsOneDecimal(200)), 'Opening is paused by a safety check. The Mezo pool price is 5.4% away from the BTC price feed, and Coil only opens within 2%. Existing positions, protection and exits are not affected. Raising slippage will not help.');
+  assert.equal(productCopy.btcCanFallLine(45), 'BTC can fall 45%');
+});
+
+test('main UI copy has no em dash and none of the removed jargon', () => {
+  const root = path.join(__dirname, '../src');
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(tsx|ts)$/.test(entry.name) && (full.includes(`${path.sep}components${path.sep}`) || full.includes(`${path.sep}app${path.sep}`) || full.endsWith(`${path.sep}product-copy.ts`))) files.push(full);
+    }
+  };
+  walk(root);
+  const removed = [
+    'Coil fee (minted notional)',
+    'Gross MUSD minted',
+    'BorrowerOperations',
+    'State-aware contract quote includes existing collateral',
+    'State-aware quote unavailable',
+    'Writes stay off until this deployment is confirmed and explicitly enabled',
+    'MEZO tips ship with the Wave 2 factory',
+    'Historical legacy testnet receipts',
+    'recruited user evidence',
+    'AccountCreated logs',
+    'latest 9,999-block window',
+    'Last successful base snapshot',
+    'Snapshot block',
+    'Selected-factory events',
+    'service mode unavailable',
+    'Public service status: unconfigured',
+    'Chain evidence only',
+    'ready deployment',
+    'factory ready',
+    'Public chain observations are not real-user recruitment evidence',
+  ];
+  const hits = [];
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    let visible = source;
+    let previous;
+    do {
+      previous = visible;
+      visible = visible.replace(/<details\b[^>]*>[\s\S]*?<\/details>/g, '');
+    } while (visible !== previous);
+    const chunks = [];
+    for (const match of visible.matchAll(/`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g)) chunks.push(match[0].slice(1, -1));
+    for (const match of visible.matchAll(/>([^<>{}]+)</g)) chunks.push(match[1]);
+    const text = chunks.join('\n');
+    if (text.includes('\u2014')) hits.push(`${path.relative(root, file)}: em dash`);
+    if (/\boracle\b/i.test(text)) hits.push(`${path.relative(root, file)}: oracle`);
+    for (const phrase of removed) {
+      if (text.includes(phrase)) hits.push(`${path.relative(root, file)}: ${phrase}`);
+    }
+  }
+  assert.deepEqual(hits, []);
+  const landing = fs.readFileSync(path.join(root, 'components/landing.tsx'), 'utf8');
+  assert.match(landing, /Built by/);
+  assert.match(landing, /Prabal Pratap Singh/);
+  assert.equal(productCopy.HERO_TITLE, 'Leverage your BTC in one transaction.');
+  assert.equal(productCopy.TESTNET_NOTE, 'Coil runs on Mezo testnet and is not audited. Use test funds only.');
 });

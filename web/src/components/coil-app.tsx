@@ -70,9 +70,9 @@ import {
 import { canWrite, isUnsupportedPolicy, loopArguments, ownerActionState, ownerTransactions } from "@/lib/readiness";
 import { DEPLOYMENTS, RETAINED_DEPLOYMENTS } from "@/lib/deployment.generated";
 import { discoverOwnerAccounts, ownerDeploymentCatalog, ownerDiscoveryView, selectOwnerDeployment, type OwnerDiscovery } from "@/lib/owner-accounts";
-import { canSubmitPositionPreview, presentPositionPreview, readStateAwareQuote, startPositionQuote, type PositionQuoteState } from "@/lib/position-quote";
-import { EMPTY_DEPOSIT_HELPER, LEVERAGE_CHOICES, PRICE_CHECK_CTA, RECOVERY_STILL, bpsToPercent, feeCapLabel, feeChipLabel, leverageChoice, poolWarning } from "@/lib/product-copy";
-import { exceedsFactoryLimit, quoteCardView } from "@/lib/quote-card";
+import { canSubmitPositionPreview, openButtonReason, presentPositionPreview, readStateAwareQuote, startPositionQuote, type PositionQuoteState } from "@/lib/position-quote";
+import { ACCOUNT_QUOTE_READY, FRESH_ESTIMATE, LEVERAGE_CHOICES, OPEN_FEE_LOADING, OPEN_FEE_UNAVAILABLE, PRICE_CHECK_CTA, RECOVERY_STILL, TERM_LINE, debtLimitMessage, feeCapLabel, feeChipLabel, formatBpsOneDecimal, formatOneDecimalPercent, leverageChoice, poolWarning } from "@/lib/product-copy";
+import { classifyDeposit, exceedsFactoryLimit, formatLimitAmount, quoteCardView } from "@/lib/quote-card";
 import { QuoteCard } from "@/components/quote-card";
 import {
   Activity,
@@ -100,6 +100,7 @@ import {
 import { Footer, Hero, HowItWorks, Proof, Risks } from "@/components/landing";
 
 const WAD = 10n ** 18n;
+const MIN_DEPOSIT_WEI = 10n ** BigInt(18 - mezoTestnet.nativeCurrency.decimals);
 const PRESETS = ["0.01", "0.025", "0.04", "0.05"] as const;
 const SLIPPAGE = [50, 100, 150, 200] as const;
 const RESCUE_SLIPPAGE = [50, 100, 150, 200, 300] as const;
@@ -246,12 +247,8 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
   }, [publicClient]);
 
   const collateral = useMemo(() => {
-    try {
-      if (!btcText || Number(btcText) <= 0) return 0n;
-      return parseEther(btcText);
-    } catch {
-      return null;
-    }
+    const parsed = classifyDeposit(btcText, { minWei: MIN_DEPOSIT_WEI });
+    return parsed.ok ? parsed.wei : null;
   }, [btcText]);
 
   const { data: implementation } = useReadContract({
@@ -371,9 +368,9 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
     return () => { cancel?.(); clearInterval(timer); };
   }, [needsStateQuote, account, publicClient, collateral, newCapabilities, feeBpsLive, positionQuoteKey, targetPct, slippageBps, flashFactory]);
   const preview = useMemo(() => {
-    if (collateral === null || collateral <= 0n) return { kind: "error" as const, message: "Enter a positive BTC amount.", illustrative: false, displayOnly: false };
-    if (feePending) return freshPreview.kind === "ok" ? { ...freshPreview, displayOnly: true } : { kind: "loading" as const, illustrative: false, displayOnly: true };
-    if (feeUnavailable) return { kind: "error" as const, message: "Factory policy is unavailable. Fee-bearing opens are disabled.", illustrative: false, displayOnly: true };
+    if (collateral === null || collateral <= 0n) return { kind: "error" as const, message: "Enter an amount above 0.", illustrative: false, displayOnly: false, reason: null };
+    if (feePending) return freshPreview.kind === "ok" ? { ...freshPreview, displayOnly: true, reason: OPEN_FEE_LOADING } : { kind: "loading" as const, illustrative: false, displayOnly: true, reason: OPEN_FEE_LOADING };
+    if (feeUnavailable) return { kind: "error" as const, message: "Factory policy is unavailable. Fee-bearing opens are disabled.", illustrative: false, displayOnly: true, reason: OPEN_FEE_UNAVAILABLE };
     return presentPositionPreview(needsStateQuote, positionQuoteKey, positionQuote, freshPreview);
   }, [collateral, feePending, feeUnavailable, needsStateQuote, positionQuoteKey, positionQuote, freshPreview]);
 
@@ -737,7 +734,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
       }),
     )
       .then(() => {
-        const percent = bpsToPercent(bps);
+        const percent = formatBpsOneDecimal(bps);
         setStatus(bps === 0 ? "Peg trigger off." : `Peg trigger set to ${percent} under $1.`);
       })
       .catch(fail)
@@ -760,8 +757,8 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
       }),
     )
       .then(() => {
-        const percent = bpsToPercent(bps);
-        setStatus(`Allowed price gap set to ${percent}. A new open is refused when the pool is farther from the oracle than that. The maximum is 5%.`);
+        const percent = formatBpsOneDecimal(bps);
+        setStatus(`Allowed price gap set to ${percent}. A new open is refused when the pool is farther from the BTC price feed than that. The maximum is 5%.`);
       })
       .catch(fail)
       .finally(() => setBusy(false));
@@ -901,7 +898,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
           }),
         ),
       )
-      .then(() => setStatus("MEZO tip funded. A caller earns it only when guard() raises the ratio."))
+      .then(() => setStatus("MEZO tip funded. A caller earns it only when protection raises the ratio."))
       .catch(fail)
       .finally(() => setBusy(false));
   }
@@ -933,6 +930,11 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
   const pegBlocked = reserveFactory && poolGap > BigInt(openCap);
   const limitCollateral = policy?.maxCollateral ?? (feeSnapshot?.maxCollateral ? BigInt(feeSnapshot.maxCollateral) : null);
   const limitDebt = policy?.maxDebt ?? (feeSnapshot?.maxDebt ? BigInt(feeSnapshot.maxDebt) : null);
+  const depositCheck = classifyDeposit(btcText, { minWei: MIN_DEPOSIT_WEI, maxWei: limitCollateral });
+  const debtLimitError = preview.kind === "ok" && limitDebt !== null && limitDebt > 0n && preview.quote.debt > limitDebt
+    ? debtLimitMessage(formatLimitAmount(limitDebt))
+    : null;
+  const depositError = depositCheck.ok ? debtLimitError : depositCheck.message;
   const depositOverLimit = exceedsFactoryLimit(btcText, collateral, limitCollateral);
   const debtOverLimit = preview.kind === "ok" && limitDebt !== null && preview.quote.debt > limitDebt;
   const resultOverLimit = preview.kind === "ok" && limitCollateral !== null && preview.quote.collateral > limitCollateral;
@@ -951,9 +953,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
             ? "Checking whether factory opens are paused."
             : opensPausedLive
               ? "Factory opens are paused. Repay, claim, collateral top-up and permitted exits remain available."
-              : overLimit && limitCollateral !== null
-                ? `The current limit is ${formatBtc(limitCollateral)} BTC per position on this release.`
-                : marketError
+              : marketError
                   ? "Market data could not refresh. Wait for a fresh preview."
                   : null;
   const openFeeText = legacyFactory
@@ -963,18 +963,22 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
       : feeUnavailable
         ? coilOpenFeeUnavailableStatement()
         : coilOpenFeePendingStatement();
-  const outcome = preview.kind === "ok" ? preview.quote : null;
-  const illustrative = preview.kind === "ok" && preview.illustrative;
+  const outcome = preview.kind === "ok" && !depositError ? preview.quote : null;
+  const illustrative = preview.kind === "ok" && preview.illustrative === true;
+  const displayOnly = preview.displayOnly === true && !depositError;
   const slippageMiss = illustrative && !pegBlocked;
   const quoteView = quoteCardView({
     paused: opensPausedLive === true,
     pegBlocked: Boolean(pegBlocked),
     illustrative,
+    displayOnly,
+    inputError: depositError,
+    sampleReason: displayOnly ? preview.reason : null,
     overLimit,
-    limitBtc: limitCollateral !== null ? formatBtc(limitCollateral) : null,
-    gapPercent: bpsToPercent(Number(poolGap)),
-    withinPercent: bpsToPercent(openCap),
-    slippagePercent: formatOpenFeePercent(slippageBps),
+    limitBtc: limitCollateral !== null ? formatLimitAmount(limitCollateral) : null,
+    gapPercent: formatBpsOneDecimal(Number(poolGap)),
+    withinPercent: formatBpsOneDecimal(openCap),
+    slippagePercent: formatOneDecimalPercent(slippageBps / 100),
     slippageMiss,
     liquidationPrice: outcome ? formatUsd(outcome.liquidationPrice) : null,
     dropPercent: outcome ? dropToLiquidation(crToPercent(outcome.cr)) : null,
@@ -1009,6 +1013,8 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
     Boolean(factoryAddress) &&
     Boolean(account) &&
     canSubmitPositionPreview(preview) &&
+    depositCheck.ok &&
+    !debtLimitError &&
     collateral !== null &&
     collateral !== 0n;
   const primary: { label: string; onClick?: () => void; disabled: boolean; icon?: React.ReactNode } = pegBlocked
@@ -1030,6 +1036,9 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
             : openBlock
               ? { label: inRecovery ? "Recovery Mode: opens refused" : slippageMiss ? "Opening unavailable" : opensPausedLive ? "Opens are paused" : "Opening unavailable", disabled: true, icon: <Lock className="size-4" aria-hidden /> }
               : { label: busy ? "Working…" : `Open at ${leverageChoice(targetPct).multiple}`, onClick: doLoop, disabled: !loopReady, icon: <Lock className="size-4" aria-hidden /> };
+  const disabledOpenReason = primary.label.startsWith("Open at") && primary.disabled
+    ? depositError ?? openButtonReason(preview)
+    : null;
 
   const setup = [
     { label: "Wallet", done: connected },
@@ -1122,7 +1131,6 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
           <section id="app" aria-labelledby="app-title" className="scroll-mt-32 py-7 lg:scroll-mt-20">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <p className="mb-1 text-xs text-muted-foreground">Your open</p>
                 <h2 id="app-title" className="text-xl font-semibold tracking-tight">
                   Open a position
                 </h2>
@@ -1152,10 +1160,13 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
               {connected ? <div className="well space-y-2 p-4">
                 <Label htmlFor="owner-deployment">Your account generation / factory</Label>
                 <select id="owner-deployment" disabled={busy} className="w-full rounded border border-border bg-background p-2 text-sm" value={selectedChoice.key} onChange={event => setManualChoice({ ownerKey, key: event.target.value })}>
-                  {discoveredChoices.map(choice => <option key={choice.key} value={choice.key}>{choice.current ? "Current" : "Retained legacy"} · {shorten(choice.deployment.factory ?? undefined)} · block {choice.deployment.deploymentBlock ?? "pending"} · {choice.position?.active ? "funded position" : choice.account ? choice.readError ? "position unavailable" : "existing account" : choice.readError ? "lookup unavailable" : "no account"}</option>)}
+                  {discoveredChoices.map(choice => <option key={choice.key} value={choice.key}>{choice.current ? "Current" : "Older version"} · {choice.position?.active ? "open position" : choice.account ? choice.readError ? "position unavailable" : "account exists" : choice.readError ? "lookup unavailable" : "no account"}</option>)}
                 </select>
-                <p className="break-all font-mono text-xs">Selected factory {factoryAddress ?? "pending"} · deployment block {deployment.deploymentBlock ?? "pending"} · {hasPolicy ? "policy-enabled generation" : "older generation"}{account ? ` · account ${account}` : ""}</p>
-                <p className="text-xs text-muted-foreground">Funded older positions remain selectable when a new factory is configured. An existing account keeps its own implementation. The selected factory controls what this wallet can call.</p>
+                <p className="text-xs text-muted-foreground">Older positions stay in this list when a new factory is configured. An existing account keeps its own rules. The factory you pick controls what this wallet can call.</p>
+                <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">Technical details</summary>
+                  <p className="mt-2 break-all font-mono">Selected factory {factoryAddress ?? "pending"} · deployment block {deployment.deploymentBlock ?? "pending"} · {hasPolicy ? "fee and limits can be read" : "older factory"}{account ? ` · account ${account}` : ""}</p>
+                </details>
                 {discoveryPending ? <p className="text-sm">Checking current and retained accounts…</p> : discoveryView.refreshing ? <p className="text-xs text-muted-foreground">Refreshing account discovery…</p> : null}
                 {discoveredChoices.some(choice => choice.readError) ? <p className="text-sm text-warn" role="alert">Some account/position reads are unavailable. Older accounts are retained in the selector; unavailable reads do not mean funds are empty.</p> : null}
                 <button type="button" disabled={busy} className="link text-xs" onClick={() => setDiscoveryRound(value => value + 1)}>Retry account discovery</button>
@@ -1182,7 +1193,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                   Selected network: {mezoTestnet.name} (chain {mezoTestnet.id}). Bitcoin wallets use OrangeKit while Passport remains unavailable.
                 </Banner>
               ) : null}
-              <Banner tone="info" title={`${mezoTestnet.name} · ${deployment.status} · not audited`} detailsLabel="Deployment details">
+              <Banner tone="info" title={`${mezoTestnet.name} · not audited`} detailsLabel="Technical details">
                 Contracts on Mezo testnet are not audited. Pool liquidity is limited.
                 {deploymentFeeText}
                 {!writesEnabled ? " Transactions remain disabled until deployment and release gates are satisfied." : ""}
@@ -1215,14 +1226,14 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                             disabled={busy || openCap === bps || pegGuardRaw === undefined}
                             onClick={() => saveOpenCap(bps)}
                           >
-                            {bpsToPercent(bps)}
+                            {formatBpsOneDecimal(bps)}
                           </Button>
                         ))}
                       </div>
                     ) : null
                   }
                 >
-                  {quoteView.pegMessage ?? `${poolWarning(Number(poolGap), openCap)} ${belowPeg > 0n ? `MUSD is ${bpsToPercent(Number(belowPeg))} under $1 in this pool.` : "MUSD is not under $1 in this pool."}`}
+                  {quoteView.pegMessage ?? `${poolWarning(Number(poolGap), openCap)} ${belowPeg > 0n ? `MUSD is ${formatBpsOneDecimal(Number(belowPeg))} under $1 in this pool.` : "MUSD is not under $1 in this pool."}`}
                 </Banner>
               ) : null}
               {connectError && !isConnected ? (
@@ -1259,8 +1270,8 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                       spellCheck={false}
                       value={btcText}
                       onChange={(event) => setBtcText(event.target.value)}
-                      aria-describedby={quoteView.overLimitMessage ? "btc-usd btc-limit" : collateral === 0n ? "btc-usd btc-helper" : "btc-usd"}
-                      aria-invalid={Boolean(quoteView.overLimitMessage)}
+                      aria-describedby={depositError ? "btc-usd btc-limit" : "btc-usd"}
+                      aria-invalid={Boolean(depositError)}
                       className="h-12 min-w-0 flex-1 border-0 bg-transparent px-0 text-2xl font-medium tabular-nums tracking-tight shadow-none focus-visible:ring-0 sm:text-[32px] dark:bg-transparent"
                     />
                     <span className="flex shrink-0 items-center gap-2 rounded-full border border-border bg-foreground/5 py-1.5 pr-3 pl-1.5 text-sm font-semibold">
@@ -1273,13 +1284,11 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <ChipGroup label="Deposit presets" options={PRESETS} value={btcText as (typeof PRESETS)[number]} onChange={setBtcText} render={(v) => `${v}`} />
                     <p id="btc-usd" className="font-mono text-[11px] text-muted-foreground">
-                      {market && collateral ? `≈ ${formatUsd((collateral * market.price) / WAD)}` : "\u00a0"}
+                      {market && depositCheck.ok ? `≈ ${formatUsd((depositCheck.wei * market.price) / WAD)}` : "\u00a0"}
                     </p>
                   </div>
-                  {quoteView.overLimitMessage ? (
-                    <p id="btc-limit" role="alert" className="text-sm leading-relaxed text-warn">{quoteView.overLimitMessage}</p>
-                  ) : collateral === 0n ? (
-                    <p id="btc-helper" className="text-sm leading-relaxed text-muted-foreground">{EMPTY_DEPOSIT_HELPER}</p>
+                  {depositError ? (
+                    <p id="btc-limit" role="alert" className="text-sm leading-relaxed text-warn">{depositError}</p>
                   ) : null}
                 </div>
 
@@ -1314,20 +1323,21 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                     })}
                   </div>
                   <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                    <RiskPill percent={targetPct} /> Liquidation starts at 110% collateral. A lower collateral ratio is redeemed first.
+                    {quoteView.showRisk ? <RiskPill percent={targetPct} /> : null} Liquidation starts at 110% collateral. A lower collateral ratio is repaid first.
                   </p>
+                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{TERM_LINE}</p>
                 </div>
 
                 <details className="group/execution mt-6 border-t border-border">
                   <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 text-xs text-muted-foreground hover:text-foreground">
-                    <span>Execution &amp; liquidity</span><span className="flex items-center gap-2">Slippage {(slippageBps / 100).toFixed(2)}%<ChevronDown className="size-3.5 transition-transform group-open/execution:rotate-180" aria-hidden /></span>
+                    <span>Execution &amp; liquidity</span><span className="flex items-center gap-2">Slippage {formatOneDecimalPercent(slippageBps / 100)}<ChevronDown className="size-3.5 transition-transform group-open/execution:rotate-180" aria-hidden /></span>
                   </summary>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="eyebrow">Open slippage</p>
                     <p className="mt-1 text-xs text-muted-foreground">Rescue and close use a separate cap.</p>
                   </div>
-                  <ChipGroup label="Open slippage" options={SLIPPAGE} value={slippageBps as (typeof SLIPPAGE)[number]} onChange={setSlippageBps} render={(v) => `${(v / 100).toFixed(2)}%`} />
+                  <ChipGroup label="Open slippage" options={SLIPPAGE} value={slippageBps as (typeof SLIPPAGE)[number]} onChange={setSlippageBps} render={(v) => formatOneDecimalPercent(v / 100)} />
                 </div>
                 <PoolDepth testnet={market} quote={sensible} />
 
@@ -1335,7 +1345,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                   {[
                     ["01", "Borrow MUSD", "against your BTC"],
                     ["02", "Buy BTC", "on Mezo Pools"],
-                    ["03", "Post it back", flashFactory ? "one flash swap" : "stop at your ratio"],
+                    ["03", "Post it back", flashFactory ? "one swap" : "stop at your ratio"],
                   ].map(([n, t, s]) => (
                     <div key={n} className="flex items-start gap-3">
                       <span className="font-mono text-[11px] text-filament">{n}</span>
@@ -1353,7 +1363,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
               <section className="panel quote-panel p-4 sm:p-5 xl:sticky xl:top-20" aria-labelledby="review-title">
                 <div className="flex items-center justify-between gap-3">
                   <h2 id="review-title" className="flex items-center gap-2 text-sm font-medium"><span className="flex size-5 items-center justify-center rounded-md border border-border text-[10px] text-muted-foreground" aria-hidden>2</span>Review before you sign</h2>
-                  {preview.kind === "ok" ? <RiskPill percent={crToPercent(preview.quote.cr)} /> : null}
+                  {preview.kind === "ok" && quoteView.showRisk ? <RiskPill percent={crToPercent(preview.quote.cr)} /> : null}
                 </div>
                 <ReviewCard preview={preview} existing={needsStateQuote && position?.active ? position : undefined} deposit={collateral} currentPrice={currentPrice} redemption={redemption} zone={zone} flash={flashFactory} outcome={quoteView} />
 
@@ -1378,7 +1388,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                   </ol>
                 </div>
 
-                {needsStateQuote ? <button type="button" className="link mt-4 text-xs" disabled={busy} onClick={() => setQuoteRetry(value => value + 1)}>Refresh state-aware fee quote</button> : null}
+                {needsStateQuote ? <button type="button" className="link mt-4 text-xs" disabled={busy} onClick={() => setQuoteRetry(value => value + 1)}>Refresh account quote</button> : null}
                 <Button
                   type="button"
                   className={cn("mt-5 hidden min-h-11 w-full rounded-lg text-sm font-medium", isConnected && "lg:inline-flex", primary.disabled ? "" : "btn-btc")}
@@ -1389,9 +1399,12 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                   {primary.icon}
                   {primary.label}
                 </Button>
-                <p className="mt-3 text-center text-[11px] text-muted-foreground">
-                  {needsStateQuote ? "State-aware contract quote includes existing collateral, total debt and refinancing. " : position?.active ? "Legacy fresh-position estimate: actual increase totals may differ. " : "Fresh-position estimate. "}Contract limits apply. Review the exact call in your wallet before signing.
-                </p>
+                {disabledOpenReason ? <p className="mt-2 hidden text-center text-sm leading-relaxed text-muted-foreground lg:block">{disabledOpenReason}</p> : null}
+                {quoteView.sampleReason || depositError ? null : (
+                  <p className="mt-3 text-center text-[11px] text-muted-foreground">
+                    {needsStateQuote ? `${ACCOUNT_QUOTE_READY} ` : position?.active ? "This estimate does not include an older account's existing loan. " : `${FRESH_ESTIMATE} `}Contract limits apply. Review the exact call in your wallet before signing.
+                  </p>
+                )}
 
                 {scope === "compose" ? (
                   <Activity
@@ -1415,7 +1428,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                   <p className="mt-1 text-sm text-muted-foreground">
                     {account ? (
                       <>
-                        Clone{" "}
+                        Account{" "}
                         <a className="link font-mono text-foreground" href={`${EXPLORER_ADDRESS}${account}`} target="_blank" rel="noreferrer noopener">
                           {shorten(account)}
                         </a>{" "}
@@ -1605,6 +1618,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
           {primary.icon}
           {primary.label}
         </Button>
+        {disabledOpenReason ? <p className="mt-2 text-center text-sm leading-relaxed text-muted-foreground">{disabledOpenReason}</p> : null}
       </div>
     </div>
   );
@@ -1638,11 +1652,12 @@ function ReviewCard({
   outcome: ReturnType<typeof quoteCardView>;
 }) {
   const blockedCopy = outcome.pegMessage || outcome.overLimitMessage;
+  if (!outcome.showResults) return <QuoteCard view={outcome} />;
   if (preview.kind === "loading") {
     return (
       <div className="mt-5 space-y-3" aria-busy="true">
         <QuoteCard view={outcome} />
-        <p className="text-sm text-muted-foreground">Reading the Mezo oracle and the MUSD/BTC pool…</p>
+        <p className="text-sm text-muted-foreground">Reading the BTC price feed and the MUSD/BTC pool…</p>
       </div>
     );
   }
@@ -1666,15 +1681,15 @@ function ReviewCard({
   const drop = dropToLiquidation(ratio);
   return (
     <div>
-      <QuoteCard view={{ ...outcome, liquidationPrice: formatUsd(q.liquidationPrice), dropLine: `BTC can fall ${drop.toFixed(1)}%` }} />
+      <QuoteCard view={{ ...outcome, liquidationPrice: formatUsd(q.liquidationPrice), dropLine: `BTC can fall ${formatOneDecimalPercent(drop)}` }} />
       <dl className="mt-3 divide-y divide-border">
         <ReviewRow label="Total collateral" before={existing ? `${formatBtc(existing.collateral)} BTC` : deposit ? `${formatBtc(deposit)}` : "0"} after={`${formatBtc(q.collateral)} BTC`} />
-        <ReviewRow label="Coil fee (minted notional)" after={`${formatMusd(q.coilFeeMusd)} MUSD`} />
-        <ReviewRow label="Gross MUSD minted" after={`${formatMusd(q.musdMinted)} MUSD`} />
+        <ReviewRow label="Coil fee" after={`${formatMusd(q.coilFeeMusd)} MUSD`} />
+        <ReviewRow label="Total MUSD borrowed" after={`${formatMusd(q.musdMinted)} MUSD`} />
         <ReviewRow label="Total debt (includes protocol fees)" before={existing ? `${formatMusd(existing.debt)} MUSD` : "0"} after={<><TweenValue canonical={formatMusd(q.debt)} numeric={wad(q.debt, 2)} digits={2} /> MUSD</>} />
         <ReviewRow
           label="Collateral ratio"
-          after={<TweenValue canonical={formatPercent(q.cr)} numeric={ratio} digits={2} suffix="%" />}
+          after={<TweenValue canonical={formatOneDecimalPercent(ratio)} numeric={ratio} digits={formatOneDecimalPercent(ratio).includes(".") ? 1 : 0} suffix="%" />}
           emphasis
           tone={risk.tone}
         />
@@ -1687,22 +1702,15 @@ function ReviewCard({
             </span>
           }
         />
-        <ReviewRow label="BTC can fall" after={`${drop.toFixed(1)}% before liquidation`} tone={risk.tone} />
+        <ReviewRow label="BTC can fall" after={`${formatOneDecimalPercent(drop)} before liquidation`} tone={risk.tone} />
         <ReviewRow
-          label="Route"
+          label="How the trade runs"
           after={
             flash
-              ? `${formatMusd(q.musdMinted, 0)} MUSD · flash ${formatBtc(q.flashBtc ?? 0n)} BTC · pool fee ${formatMusd(q.poolFeeMusd ?? 0n)} MUSD`
-              : `${formatMusd(q.musdMinted, 0)} MUSD → BTC · ${q.iterations} ${q.iterations === 1 ? "swap" : "swaps"}`
+              ? `Borrow ${formatMusd(q.musdMinted, 0)} MUSD, buy ${formatBtc(q.flashBtc ?? 0n)} BTC, and post it back. The pool charges ${formatMusd(q.poolFeeMusd ?? 0n)} MUSD.`
+              : `Borrow ${formatMusd(q.musdMinted, 0)} MUSD and buy BTC in ${q.iterations} ${q.iterations === 1 ? "swap" : "swaps"}.`
           }
         />
-        {redemption ? (
-          <ReviewRow
-            label="Redemption rank"
-            after={redemption.rank > 32 ? "Outside 32" : `#${redemption.rank}`}
-            tone={redemption.inside ? "text-danger" : undefined}
-          />
-        ) : null}
       </dl>
       <div className="mt-4">
         <HealthBar percent={ratio} />
@@ -1711,12 +1719,12 @@ function ReviewCard({
         Liquidation risk: <span className={risk.tone}>{risk.word.toLowerCase()}</span>.{" "}
         {redemption?.inside ? (
           <span className="text-danger">
-            This quote sits inside redemption zone {zone}
-            {redemption.suggested ? ` (rank #${redemption.rank}). A ratio near ${redemption.suggested.toFixed(0)}% sits just outside that zone.` : "."}
+            This quote is within the first {zone} places on the repayment line
+            {redemption.suggested ? `. A collateral ratio near ${formatOneDecimalPercent(redemption.suggested)} sits just outside it.` : "."}
           </span>
         ) : (
           <>
-            Redemption risk {ratio < 150 ? <span className="text-danger">is higher at this ratio</span> : "falls as the ratio rises"}: MUSD redemptions repay the lowest-ratio positions first.
+            If someone redeems MUSD, the lowest collateral ratios are repaid first. {ratio < 150 ? <span className="text-danger">That risk is higher at this ratio.</span> : "That risk falls as the ratio rises."}
           </>
         )}
       </p>
@@ -1786,10 +1794,10 @@ function OpenPosition({
         <Stat label="BTC can fall" sub="before 110%">
           <span className={risk.tone}>{drop.toFixed(1)}%</span>
         </Stat>
-        <Stat label="Redemption rank" sub={rankRisk(position.redemptionRank)}>
-          {rankLabel(position.redemptionRank)}
+        <Stat label="Repayment line" sub="If someone redeems MUSD, lower collateral ratios are repaid first.">
+          {rankRisk(position.redemptionRank)}
         </Stat>
-        <Stat label="Keeper guard" sub={position.guardTargetCR ? `zone ${position.redemptionZone}` : "keeper cannot act"}>
+        <Stat label="Keeper guard" sub={position.guardTargetCR ? `front of the line ${position.redemptionZone}` : "keeper cannot act"}>
           {position.guardTargetCR ? `${formatPercent(position.floorCR)} → ${formatPercent(position.guardTargetCR)}` : "Off"}
         </Stat>
         <p className="col-span-2 text-xs leading-relaxed text-muted-foreground">
@@ -1889,9 +1897,9 @@ function describeSensible(quote: ReturnType<typeof sensibleOpen> | null) {
   if (!quote) return "Enter a BTC amount to see the largest leverage that stays under 1% price impact.";
   if (quote.targetCR === 0n) return "This deposit cannot open. Mezo requires at least 1,800 MUSD of debt.";
   if (!quote.capped) {
-    return `No leverage stays under 1% impact. The gentlest open is ${quote.leverage} at ${bpsToPercent(Number(quote.impact))}.`;
+    return `No leverage stays under 1% impact. The gentlest open is ${quote.leverage} at ${formatBpsOneDecimal(Number(quote.impact))}.`;
   }
-  return `Max sensible leverage now: ${quote.leverage}, at ${bpsToPercent(Number(quote.impact))} of pool impact.`;
+  return `Max sensible leverage now: ${quote.leverage}, at ${formatBpsOneDecimal(Number(quote.impact))} of pool impact.`;
 }
 
 function PoolDepth({
@@ -1981,14 +1989,14 @@ function ReserveBlock({
         <div className="space-y-2">
           <p className="eyebrow">Peg trigger</p>
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            When MUSD is this far under $1 and the position is near the front of the redemption queue, the guard acts. Off leaves the trigger disabled. Current setting {pegGuardBps === 0 ? "off" : bpsToPercent(pegGuardBps)}.
+            When MUSD is this far under $1 and the position is near the front of the repayment line, protection runs. Off leaves the trigger disabled. Current setting {pegGuardBps === 0 ? "off" : formatBpsOneDecimal(pegGuardBps)}.
           </p>
           <ChipGroup
             label="Peg trigger"
             options={PEG_GUARD}
             value={(PEG_GUARD as readonly number[]).includes(pegGuardBps) ? (pegGuardBps as (typeof PEG_GUARD)[number]) : 0}
             onChange={onSavePeg}
-            render={(v) => (v === 0 ? "Off" : `${(v / 100).toFixed(2)}%`)}
+            render={(v) => (v === 0 ? "Off" : formatOneDecimalPercent(v / 100))}
           />
         </div>
       ) : null}
@@ -2071,9 +2079,9 @@ function GuardPanel({
         </div>
       ) : null}
       <p className="text-xs leading-relaxed text-muted-foreground">
-        If the ratio drops under the floor, or the position enters the redemption zone, anyone may call <span className="font-mono text-foreground/90">guard()</span>.
-        It can only raise the ratio. It cannot loop, unwind, or withdraw. {flash ? "The caller earns MEZO only when the ratio rises." : "MEZO tips ship with the Wave 2 factory."}
-        {" "}A rescue spends parked MUSD first and sells BTC only for the remainder.
+        If your collateral ratio drops under the floor, or your position moves to the front of the repayment line, anyone can run protection for you.
+        It can only raise the ratio. It cannot open leverage, unwind, or withdraw.{flash ? " The caller earns MEZO only when the ratio rises." : ""}
+        {" "}Protection spends MUSD you set aside first and sells BTC only for the rest.
       </p>
       <ReserveBlock
         available={reserveAvailable}
@@ -2100,7 +2108,7 @@ function GuardPanel({
       <div className="mt-2 grid grid-cols-3 gap-2">
         <NumberField id={bare ? "floor" : "floor-closed"} label="Floor" value={floorPct} onChange={setFloorPct} suffix="%" />
         <NumberField id={bare ? "guard-target" : "guard-target-closed"} label="De-lever to" value={guardPct} onChange={setGuardPct} suffix="%" />
-        <NumberField id={bare ? "zone" : "zone-closed"} label="Zone" value={zone} onChange={setZone} />
+        <NumberField id={bare ? "zone" : "zone-closed"} label="Front of the line" value={zone} onChange={setZone} />
       </div>
       {flash && setTipText ? (
         <div className="mt-3 space-y-2">
@@ -2125,15 +2133,15 @@ function GuardPanel({
           <p className="eyebrow">Rescue and close slippage</p>
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             {separateRescue
-              ? "Separate from the open. Default 2%, hard cap 3%. The keeper cannot change it. A rescue reverts if the pool is worse than this against the oracle."
-              : "This account uses one cap for open, rescue, and close. Raise it when the pool sits under the oracle. Hard cap 3%. The keeper cannot change it."}
+              ? "Separate from the open. Default 2%, hard cap 3%. The keeper cannot change it. Protection does not run if the pool is worse than this against the BTC price feed."
+              : "This account uses one cap for open, protection, and close. Raise it when the pool sits under the BTC price feed. Hard cap 3%. The keeper cannot change it."}
           </p>
           <ChipGroup
             label="Rescue and close slippage"
             options={RESCUE_SLIPPAGE}
             value={rescueBps as (typeof RESCUE_SLIPPAGE)[number]}
             onChange={onRescueBps}
-            render={(v) => `${(v / 100).toFixed(2)}%`}
+            render={(v) => formatOneDecimalPercent(v / 100)}
           />
           <Button type="button" variant="outline" className="h-10 w-full rounded-2xl" disabled={busy || disabled} onClick={onSaveRescue}>
             Save slippage
@@ -2147,7 +2155,7 @@ function GuardPanel({
         <p className="mt-3 flex flex-wrap gap-2 text-xs">
           <span className="chip">Floor {formatPercent(position.floorCR)}</span>
           <span className="chip">Target {formatPercent(position.guardTargetCR)}</span>
-          <span className="chip">Zone {position.redemptionZone}</span>
+          <span className="chip">Front of the line {position.redemptionZone}</span>
         </p>
       ) : (
         <p className="mt-3 text-xs text-muted-foreground">Unset, the keeper cannot touch the position. Owner exits remain subject to pool bounds and Mezo protocol rules.</p>
@@ -2175,12 +2183,6 @@ function leverageNumber(cr: bigint) {
   const one = 10n ** 18n;
   if (cr <= one) return 0;
   return Number((cr * 100n) / (cr - one)) / 100;
-}
-
-function rankLabel(rank: bigint) {
-  if (rank === 0n) return "-";
-  if (rank > 32n) return "Outside 32";
-  return `#${rank.toString()}`;
 }
 
 function rankRisk(rank: bigint) {
