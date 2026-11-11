@@ -1,5 +1,6 @@
 import type { Address, PublicClient } from "viem";
 import { coilAccountAbi } from "./mezo";
+import { ACCOUNT_QUOTE_FAILED, ACCOUNT_QUOTE_PENDING } from "./product-copy";
 import { leverageLabel, type FlashPreview } from "./quote";
 
 export type PositionPreview =
@@ -34,14 +35,21 @@ export function selectPositionPreview(required: boolean, key: string, state: Pos
  * A required state-aware quote is the only result that can be submitted.
  * Pending, failed, and mismatched reads may still show the fresh estimate, but only as a sample.
  */
-export function presentPositionPreview(required: boolean, key: string, state: PositionQuoteState | null, freshPreview: PositionPreview): PositionPreview & { displayOnly: boolean } {
+export function presentPositionPreview(required: boolean, key: string, state: PositionQuoteState | null, freshPreview: PositionPreview): PositionPreview & { displayOnly: boolean; reason: string | null } {
   const selected = selectPositionPreview(required, key, state, freshPreview);
   if (required && selected.kind === "ok" && state?.key === key && state.kind === "ok") {
-    return { kind: "ok", quote: selected.quote, illustrative: false, displayOnly: false };
+    return { kind: "ok", quote: selected.quote, illustrative: false, displayOnly: false, reason: null };
   }
-  if (freshPreview.kind === "ok") return { ...freshPreview, displayOnly: required };
-  if (selected.kind === "error") return { ...selected, displayOnly: true };
-  return { kind: "loading", illustrative: false, displayOnly: true };
+  const reason = !required ? null : selected.kind === "error" ? selected.message : ACCOUNT_QUOTE_PENDING;
+  if (freshPreview.kind === "ok") return { ...freshPreview, displayOnly: required, reason };
+  if (selected.kind === "error") return { ...selected, displayOnly: true, reason };
+  return { kind: "loading", illustrative: false, displayOnly: true, reason };
+}
+
+/** One line under a disabled Open button when the numbers cannot be submitted. */
+export function openButtonReason(preview: { displayOnly?: boolean; reason?: string | null }): string | null {
+  if (preview.displayOnly !== true) return null;
+  return preview.reason ?? ACCOUNT_QUOTE_PENDING;
 }
 
 export function canSubmitPositionPreview(preview: { kind: string; illustrative?: boolean; displayOnly?: boolean }): boolean {
@@ -57,7 +65,7 @@ export function startPositionQuote(key: string, read: () => Promise<FlashPreview
       const quote = await read();
       if (current) publish({ key, kind: "ok", quote });
     } catch {
-      if (current) publish({ key, kind: "error", message: "State-aware quote unavailable. Refresh or wait for the selected chain RPC to recover." });
+      if (current) publish({ key, kind: "error", message: ACCOUNT_QUOTE_FAILED });
     }
   })();
   return () => { current = false; };

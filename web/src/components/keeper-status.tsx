@@ -70,27 +70,35 @@ export function KeeperStatus({ liveChip = false }: { liveChip?: boolean }) {
   const serviceRead = selectServiceRead(serviceKey, serviceEvidence);
   const service = serviceRead.kind === "ok" ? serviceStatusView(serviceRead.data, now === null ? Date.now() : now * 1000) : null;
   const age = (milliseconds: number | null) => milliseconds === null ? "unavailable" : `${Math.floor(milliseconds / 1000)} seconds ago`;
+  const plainState = state === "fresh" ? "checked in recently" : state === "stale" ? "the last check-in is old" : state === "unconfigured" ? "not set up on this chain" : "checking";
   if (liveChip) {
     if (state !== "fresh") return null;
-    return <Link href="/keeper" className="chip">Keeper heartbeat: live</Link>;
+    return <Link href="/keeper" className="chip">Keeper: live</Link>;
   }
   return <section className="well mt-6 p-5" aria-label="Keeper health">
-    <h2 className="text-xl font-semibold">Chain heartbeat evidence: {state}</h2>
-    <p className="mt-2 text-sm text-muted-foreground">{selectedChain.name} · factory {deployment.status} · chain {selectedChain.id}</p>
-    <p className="mt-2 text-sm">Latest authenticated heartbeat: {health?.age !== null && health?.age !== undefined && health.age >= 0 ? `${health.age} seconds ago` : "unavailable"}. Freshness expires after 180 seconds.</p>
-    {evidence?.keeper ? <p className="mt-2 break-all font-mono text-xs">Expected keeper <a className="link" href={`${explorerUrl}/address/${evidence.keeper}`}>{evidence.keeper}</a></p> : null}
-    <p className="mt-2 text-xs text-muted-foreground">Legacy permissionless heartbeats do not prove keeper health. A fresh authenticated heartbeat proves recent configured-keeper activity; it does not guarantee a rescue or replace monitoring of confirmed transactions. No authenticated heartbeat is configured for a legacy factory.</p>
-    {error ? <p role="alert" className="mt-2 text-sm text-danger">{error} Retained evidence is stale.</p> : null}
-    <div className="mt-5 border-t border-border pt-4" aria-label="Public keeper service status">
-      <h3 className="font-semibold">Public service status: {!statusUrl ? "unconfigured" : service?.status ?? (serviceRead.kind === "error" ? "unavailable" : "loading")}</h3>
-      {!statusUrl ? <p className="mt-2 text-sm text-muted-foreground">Chain evidence only / service mode unavailable. No public keeper status URL is configured.</p>
-        : service && serviceRead.kind === "ok" ? <>
-          <p className="mt-2 text-sm">{service.mode === "read-only" ? "Mode: read-only monitoring. This service does not submit guard transactions." : "Mode: execution enabled. This is the service report; confirmed chain actions remain separate evidence."}</p>
-          <p className="mt-2 text-sm">Last successful scan: {age(service.scanAgeMs)}. Last service-confirmed heartbeat: {age(service.heartbeatAgeMs)}. Scan freshness expires after 60 seconds.</p>
-          <p className="mt-2 text-xs text-muted-foreground">Self-reported counters: {serviceRead.data.counters.scans} scans · {serviceRead.data.counters.confirmedGuards} confirmed guards · {serviceRead.data.counters.scanFailures} scan failures. Fresh scanning or execution mode does not guarantee a rescue.</p>
-        </> : serviceRead.kind === "error" ? <p className="mt-2 text-sm text-danger" role="alert">{serviceRead.message} Service mode and scan freshness are unavailable.</p>
-          : <p className="mt-2 text-sm text-muted-foreground">Reading the configured public service. Service mode and scan freshness are not confirmed yet.</p>}
-    </div>
+    <h2 className="text-xl font-semibold">Keeper: {plainState}</h2>
+    <p className="mt-2 text-sm text-muted-foreground">A keeper can only make a position safer. It cannot open a loan, withdraw, or close for you.</p>
+    <p className="mt-2 text-sm">{state === "fresh" ? "A keeper check-in was confirmed recently." : "No recent keeper check-in is confirmed."}</p>
+    {error ? <p role="alert" className="mt-2 text-sm text-danger">{error} The last check-in on screen may be old.</p> : null}
+    <details className="mt-4 text-xs text-muted-foreground">
+      <summary className="cursor-pointer text-sm">Technical details</summary>
+      <div className="mt-2 space-y-2 leading-relaxed">
+        <p>Chain heartbeat evidence: {state}. {selectedChain.name} · chain {selectedChain.id}.</p>
+        <p>Latest authenticated heartbeat: {health?.age !== null && health?.age !== undefined && health.age >= 0 ? `${health.age} seconds ago` : "unavailable"}. Freshness expires after 180 seconds.</p>
+        {evidence?.keeper ? <p className="break-all font-mono">Expected keeper <a className="link" href={`${explorerUrl}/address/${evidence.keeper}`}>{evidence.keeper}</a></p> : null}
+        <p>Legacy permissionless heartbeats do not prove keeper health. A fresh authenticated heartbeat proves recent configured-keeper activity; it does not guarantee a rescue or replace monitoring of confirmed transactions. No authenticated heartbeat is configured for a legacy factory.</p>
+        <div aria-label="Public keeper service status">
+          <p className="font-medium text-foreground">Public service status: {!statusUrl ? "unconfigured" : service?.status ?? (serviceRead.kind === "error" ? "unavailable" : "loading")}</p>
+          {!statusUrl ? <p>Chain evidence only / service mode unavailable. No public keeper status URL is configured.</p>
+            : service && serviceRead.kind === "ok" ? <>
+              <p>{service.mode === "read-only" ? "Mode: read-only monitoring. This service does not submit guard transactions." : "Mode: execution enabled. This is the service report; confirmed chain actions remain separate evidence."}</p>
+              <p>Last successful scan: {age(service.scanAgeMs)}. Last service-confirmed heartbeat: {age(service.heartbeatAgeMs)}. Scan freshness expires after 60 seconds.</p>
+              <p>Self-reported counters: {serviceRead.data.counters.scans} scans · {serviceRead.data.counters.confirmedGuards} confirmed guards · {serviceRead.data.counters.scanFailures} scan failures. Fresh scanning or execution mode does not guarantee a rescue.</p>
+            </> : serviceRead.kind === "error" ? <p role="alert">{serviceRead.message} Service mode and scan freshness are unavailable.</p>
+              : <p>Reading the configured public service. Service mode and scan freshness are not confirmed yet.</p>}
+        </div>
+      </div>
+    </details>
     <button type="button" className="link mt-3 text-sm" onClick={() => { void load(); setServiceRetry(value => value + 1); }}>Refresh keeper evidence</button>
   </section>;
 }

@@ -135,7 +135,7 @@ export function quoteLoop(
     }
     if (quoted < received) {
       throw new QuoteError(
-        "The pool quote is outside the oracle slippage bound. Coil will not swap with a zero minimum.",
+        "The pool price is too far from the BTC price feed. Coil will not swap.",
       );
     }
     const afterFee = swapAmount - (swapAmount * market.feeBps) / BPS;

@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { formatUsd, type Market } from "@/lib/quote";
 import { factoryAddress } from "@/lib/mezo";
-import { deployment, selectedChain } from "@/lib/network";
+import { selectedChain } from "@/lib/network";
 import { DEPLOYMENTS } from "@/lib/deployment.generated";
 import {
   HERO_PRIMARY,
@@ -29,6 +29,7 @@ import {
   MOAT_TITLE,
   PROOF_EXIT_FEE,
   PROOF_OPEN,
+  TESTNET_NOTE,
   heroEyebrow,
 } from "@/lib/product-copy";
 import { KeeperStatus } from "@/components/keeper-status";
@@ -88,8 +89,7 @@ export function Hero({ market, marketError }: { market: Market | null; marketErr
             </a>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
-            {market ? `BTC ${formatUsd(market.price)}` : marketError ? "Market data unavailable" : "Reading the oracle"}
-            {` · ${deployment.status}`}
+            {market ? `BTC ${formatUsd(market.price)}` : marketError ? "Market data unavailable" : "Reading the BTC price feed"}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <span className="chip">{PROOF_OPEN}</span>
@@ -123,12 +123,12 @@ export function Hero({ market, marketError }: { market: Market | null; marketErr
 /* ------------------------------------------------------------------ */
 
 const TICKER = [
-  "0.0475 BTC looped to 200.09% in one transaction",
-  "deleverTo(300%) → 288.04%",
-  "Flash unwind and de-lever each fit in one transaction",
+  "0.0475 BTC opened to 200.09% in one transaction",
+  "Lowered leverage, landing at 288.04%",
+  "Closing and lowering leverage each fit in one transaction",
   "Liquidation 110% · Coil floor 115%",
   "Keeper earns MEZO only when the ratio rises",
-  "MUSD BorrowerOperations + Mezo Pools",
+  "MUSD borrowing and Mezo Pools",
   `Factory ${shorten(factoryAddress)}`,
 ];
 
@@ -159,7 +159,7 @@ const HOW = [
     icon: Bitcoin,
     title: "Post BTC, mint MUSD",
     body: "Your BTC opens or tops up a MUSD position in an account you own. The protocol mints MUSD against it.",
-    tag: "BorrowerOperations",
+    tag: "Borrow MUSD",
   },
   {
     icon: ArrowLeftRight,
@@ -213,46 +213,46 @@ export function HowItWorks() {
 /* Proof                                                               */
 /* ------------------------------------------------------------------ */
 
-type Receipt = { label: string; hash: `0x${string}` };
+type Receipt = { title: string; call?: string; hash: `0x${string}` };
 
-const PROOF: { kicker: string; big: string; title: string; body: string; receipts: Receipt[] }[] = [
+const PROOF: { call?: string; big: string; title: string; body: string; receipts: Receipt[] }[] = [
   {
-    kicker: "Earlier testnet open",
     big: "4.00×",
-    title: "0.015 BTC to 133.33% in one transaction",
+    title: "Opened 4x leverage",
+    call: "loop",
     body: "An earlier factory opened 0.05183 BTC of collateral against 3,100.8 MUSD. A keeper then raised 133.30% to 150.00% for 1 MEZO, and one close returned the position. Those receipts are not this factory.",
     receipts: [
-      { label: "Open", hash: "0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef" },
-      { label: "guard", hash: "0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a" },
-      { label: "flashUnwind", hash: "0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2" },
+      { title: "Opened 4x leverage", call: "loop", hash: "0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef" },
+      { title: "Protection triggered", call: "guard", hash: "0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a" },
+      { title: "Closed position", call: "flashUnwind", hash: "0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2" },
     ],
   },
   {
-    kicker: "Wave 1 · loop(200%, 1%)",
     big: "200.09%",
-    title: "0.0475 BTC looped in one transaction",
+    title: "Opened 2x leverage",
+    call: "loop(200%, 1%)",
     body: "Collateral went from 0.0475 to 0.0939 BTC with 3,859.73 MUSD of debt, landing just above the 200% target.",
-    receipts: [{ label: "Loop", hash: "0xfb9af4255b2317ea89feb36c530c29bfeace97b0098a3c6074fec015f52d7f85" }],
+    receipts: [{ title: "Opened 2x leverage", call: "loop(200%, 1%)", hash: "0xfb9af4255b2317ea89feb36c530c29bfeace97b0098a3c6074fec015f52d7f85" }],
   },
   {
-    kicker: "Wave 1 · deleverTo(300%)",
     big: "288.04%",
-    title: "De-lever raised the ratio",
+    title: "Lowered leverage to 3x",
+    call: "deleverTo(300%)",
     body: "One sale repaid the debt to exactly 2,000 MUSD, Mezo's floor for that position. A second call succeeded without selling.",
     receipts: [
-      { label: "Sale 1", hash: "0x8e742936951d59555c236f9c03dfd20d7d3d28d3a91b74e29f7863c18a6885a8" },
-      { label: "Call 2", hash: "0xbafe5283fbcb373b167591cec8015b80606e5b970742bb17aa76ea70f47ff060" },
+      { title: "Lowered leverage to 3x", call: "deleverTo(300%)", hash: "0x8e742936951d59555c236f9c03dfd20d7d3d28d3a91b74e29f7863c18a6885a8" },
+      { title: "Lowered leverage to 3x", call: "deleverTo(300%)", hash: "0xbafe5283fbcb373b167591cec8015b80606e5b970742bb17aa76ea70f47ff060" },
     ],
   },
   {
-    kicker: "Wave 1 · unwind(100%)",
     big: "2 txs",
-    title: "A fresh 200% position, fully closed",
-    body: "A new 0.046 BTC open at 200.09% unwound in two transactions: repay to the floor at 281.99%, then close the position.",
+    title: "Closed position",
+    call: "unwind(100%)",
+    body: "A new 0.046 BTC open at 200.09% closed in two transactions: repay to the floor at 281.99%, then close the position.",
     receipts: [
-      { label: "Loop", hash: "0xd72758f1114ac3add69ed08a519603d1059c41c2fa959b9e225fc88769d9fd89" },
-      { label: "Unwind 1", hash: "0x3ff34e57f63d0278bf5932442f786bd346e08028f40bae0cbb5dc1f5d2efc2fd" },
-      { label: "Unwind 2", hash: "0xd55cdf5fb1d882f36f7c6cc66ff62960eeab30b8a4122240aa09329bcc8defdc" },
+      { title: "Opened 2x leverage", call: "loop(200%, 1%)", hash: "0xd72758f1114ac3add69ed08a519603d1059c41c2fa959b9e225fc88769d9fd89" },
+      { title: "Closed position", call: "unwind(100%)", hash: "0x3ff34e57f63d0278bf5932442f786bd346e08028f40bae0cbb5dc1f5d2efc2fd" },
+      { title: "Closed position", call: "unwind(100%)", hash: "0xd55cdf5fb1d882f36f7c6cc66ff62960eeab30b8a4122240aa09329bcc8defdc" },
     ],
   },
 ];
@@ -268,22 +268,25 @@ export function Proof() {
           </h2>
         </div>
         <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-          Historical legacy testnet receipts: the first card is the earlier Wave 2 factory; the other three are Wave 1. They do not prove the new fee/owner-action release or recruited user evidence.
+          Earlier testnet transactions from previous Coil versions.
         </p>
       </div>
             <div className="mt-10 grid gap-4 lg:grid-cols-2">
         {PROOF.map((item) => (
           <article key={item.title} className="panel flex flex-col p-6">
-            <p className="font-mono text-xs text-filament">{item.kicker}</p>
+            <h3 className="text-lg font-semibold tracking-tight">{item.title}</h3>
+            {item.call ? <p className="mt-1 text-xs text-muted-foreground">{item.call}</p> : null}
             <p className="num mt-3 text-2xl font-semibold tracking-tight">{item.big}</p>
-            <h3 className="mt-3 text-lg font-semibold tracking-tight">{item.title}</h3>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.body}</p>
             <ul className="mt-auto space-y-2 border-t border-border pt-4">
               {item.receipts.map((r) => (
                 <li key={r.hash} className="flex items-center justify-between gap-3 text-xs">
-                  <span className="flex items-center gap-2 text-muted-foreground">
-                    <span className="size-1.5 rounded-full bg-safe" aria-hidden />
-                    {r.label}
+                  <span className="min-w-0 text-muted-foreground">
+                    <span className="flex items-center gap-2">
+                      <span className="size-1.5 rounded-full bg-safe" aria-hidden />
+                      {r.title}
+                    </span>
+                    {r.call ? <span className="mt-0.5 block pl-3.5 text-[11px]">{r.call}</span> : null}
                   </span>
                   <a
                     href={`${DEPLOYMENTS["31611"].explorerUrl}/tx/${r.hash}`}
@@ -293,7 +296,7 @@ export function Proof() {
                   >
                     {r.hash.slice(0, 10)}…{r.hash.slice(-6)}
                     <ArrowUpRight className="size-3" aria-hidden />
-                    <span className="sr-only">{item.kicker} {r.label} on the Mezo explorer</span>
+                    <span className="sr-only">{r.title} on the Mezo explorer</span>
                   </a>
                 </li>
               ))}
@@ -339,7 +342,7 @@ const RISKS = [
   {
     icon: TimerReset,
     title: "Exits can take a few txs",
-    body: "Pool exits require the oracle price bound and Mezo permission. Full close is blocked in Recovery Mode; owner MUSD repayment can reduce debt safely without selling collateral.",
+    body: "Pool exits require the BTC price feed bound and Mezo permission. Full close is blocked in Recovery Mode; owner MUSD repayment can reduce debt safely without selling collateral.",
   },
 ];
 
@@ -363,7 +366,7 @@ export function Risks() {
           </div>
         ))}
       </div>
-      <p className="mt-5 text-xs text-muted-foreground">Testnet prototype. The contracts are not audited. Writes stay off until this deployment is confirmed and explicitly enabled.</p>
+      <p className="mt-5 text-xs text-muted-foreground">{TESTNET_NOTE}</p>
     </section>
   );
 }
