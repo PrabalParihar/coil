@@ -22,11 +22,15 @@ export function QuoteCard({ view }: { view: QuoteCardView }) {
       {view.sampleReason ? (
         <p className="mt-3 text-sm leading-relaxed text-warn" role="status">{view.sampleReason}</p>
       ) : null}
-      <p className="mt-3 text-[11px] text-muted-foreground">Liquidation price</p>
-      <p className="num mt-1 text-4xl font-semibold tracking-tight sm:text-5xl">
-        {view.liquidationPrice ?? "Not available for this amount"}
-      </p>
-      <p className="mt-3 text-sm font-medium">{view.dropLine ?? "BTC can fall: not available for this amount"}</p>
+      {view.showOutcome ? (
+        <>
+          <p className="mt-3 text-[11px] text-muted-foreground">Liquidation price</p>
+          <p className="num mt-1 text-4xl font-semibold tracking-tight sm:text-5xl">
+            {view.liquidationPrice ?? "Not available for this amount"}
+          </p>
+          <p className="mt-3 text-sm font-medium">{view.dropLine ?? "BTC can fall: not available for this amount"}</p>
+        </>
+      ) : null}
       <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{view.feeLine ?? "Fees appear after the BTC price feed and the pool are read."}</p>
       {view.feeCapLabel ? <p className="mt-1 text-xs text-muted-foreground">{view.feeCapLabel}</p> : null}
       {view.pegMessage ? (

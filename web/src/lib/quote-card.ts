@@ -100,6 +100,8 @@ export type QuoteCardInput = {
   slippagePercent?: string | null;
   /** Strict quote missed the user's slippage while the open bound still allows it. */
   slippageMiss?: boolean;
+  /** Deposit is under Mezo's minimum, so the card should not show a missing liquidation price. */
+  belowMinimum?: boolean;
   /** Liquidation price already formatted from a quote, or null when no quote exists. */
   liquidationPrice: string | null;
   /** Percent BTC can fall before 110% collateral, from the same quote. */
@@ -115,6 +117,8 @@ export type QuoteCardView = {
   blocked: boolean;
   showRisk: boolean;
   showResults: boolean;
+  /** False when the deposit is under the minimum and the yellow line already explains why. */
+  showOutcome: boolean;
   inputError: string | null;
   sampleReason: string | null;
   liquidationPrice: string | null;
@@ -142,6 +146,7 @@ export function quoteCardView(input: QuoteCardInput): QuoteCardView {
     blocked,
     showRisk: !invalid && input.displayOnly !== true,
     showResults: !invalid,
+    showOutcome: !invalid && input.belowMinimum !== true,
     inputError: input.inputError ?? null,
     sampleReason,
     liquidationPrice: invalid ? null : input.liquidationPrice,

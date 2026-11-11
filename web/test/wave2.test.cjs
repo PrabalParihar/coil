@@ -841,25 +841,31 @@ test('no wallet under the minimum debt shows the deposit line, not a pending acc
   for (const [multiple, crPercent] of levers) {
     const target = quote.percentToCr(crPercent);
     const minWei = quote.minimumDepositWei(sample, target);
+    const shownWei = quote.ceilBtcWei(minWei);
     const shown = quote.formatBtcCeil(minWei);
     const message = productCopy.minDebtDepositMessage(quote.formatMusd(sample.minNetDebt, 0), multiple, shown);
     assert.equal(message, `Mezo needs at least 1,800 MUSD of debt. At ${multiple}, deposit at least ${shown} BTC.`);
+    assert.match(shown, /^\d+\.\d{1,4}$/);
     const parsed = quoteCard.classifyDeposit(shown);
     assert.equal(parsed.ok, true);
+    assert.equal(parsed.wei, shownWei);
     assert.ok(parsed.wei >= minWei);
-    assert.ok(parsed.wei < minWei + 10n ** 12n);
+    assert.ok(parsed.wei < minWei + 10n ** 14n);
     const opened = quote.quoteFlashLoop(parsed.wei, target, 50n, sample, true);
     assert.ok(opened.debt >= sample.minNetDebt);
     assert.throws(() => quote.quoteFlashLoop(W / 1000000n, target, 50n, sample, true));
-    const presets = quote.depositPresets(minWei, W);
+    const presets = quote.depositPresets(shownWei, W);
     assert.ok(presets.length > 0);
     for (const preset of presets) {
       const row = quoteCard.classifyDeposit(preset);
       assert.equal(row.ok, true);
-      assert.ok(row.wei >= minWei, `${multiple} preset ${preset} is below ${minWei}`);
+      assert.ok(row.wei >= shownWei, `${multiple} preset ${preset} is below the rounded minimum ${shown}`);
       assert.ok(row.wei <= W);
     }
   }
+  assert.equal(quote.formatBtcCeil(38003000000000000n), '0.0381');
+  assert.equal(quote.ceilBtcWei(38003000000000000n), 38100000000000000n);
+  assert.equal(quote.formatBtcCeil(38100000000000000n), '0.0381');
   const target = quote.percentToCr(200);
   const minWei = quote.minimumDepositWei(sample, target);
   const message = productCopy.minDebtDepositMessage('1,800', '2x', quote.formatBtcCeil(minWei));
@@ -887,6 +893,27 @@ test('no wallet under the minimum debt shows the deposit line, not a pending acc
   assert.match(view.pegMessage, /within 2\.0%/);
   assert.doesNotMatch(`${view.sampleReason} ${view.badge}`, /still loading|account quote/i);
   assert.equal(view.feeCapLabel, 'Max 0.5%, set on-chain');
+  const hidden = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: true,
+    belowMinimum: true,
+    overLimit: false,
+    sampleReason: message,
+    gapPercent: '5.8%',
+    withinPercent: '2.0%',
+    liquidationPrice: null,
+    dropPercent: null,
+    feeLine: 'fees',
+  });
+  assert.equal(hidden.showOutcome, false);
+  assert.equal(hidden.showResults, true);
+  assert.equal(hidden.sampleReason, message);
+  assert.equal(hidden.liquidationPrice, null);
+  assert.equal(hidden.dropLine, null);
+  assert.match(hidden.pegMessage, /5\.8%/);
+  assert.equal(quoteCard.quoteCardView({
+    paused: false, pegBlocked: false, overLimit: false, liquidationPrice: '$1', dropPercent: 45, feeLine: 'fees',
+  }).showOutcome, true);
   const pending = positionQuotes.presentPositionPreview(false, 'nowallet', null, { kind: 'error', message: 'Fresh deposit is below minimum debt' });
   assert.equal(pending.displayOnly, false);
   assert.equal(quoteCard.quoteCardView({

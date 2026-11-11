@@ -41,6 +41,7 @@ import {
   QuoteError,
   crToPercent,
   deviationBps,
+  ceilBtcWei,
   depositPresets,
   formatBtc,
   formatBtcCeil,
@@ -393,7 +394,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
 
   useEffect(() => {
     if (depositEdited || !effectiveMarket) return;
-    const least = minimumDepositWei(effectiveMarket, percentToCr(targetPct));
+    const least = ceilBtcWei(minimumDepositWei(effectiveMarket, percentToCr(targetPct)));
     const parsed = classifyDeposit(btcText, { minWei: MIN_DEPOSIT_WEI });
     if (parsed.ok && parsed.wei >= least) return;
     const next = depositPresets(least)[0];
@@ -959,7 +960,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
   const depositCheck = classifyDeposit(btcText, { minWei: MIN_DEPOSIT_WEI, maxWei: limitCollateral });
   const presetCap = limitCollateral && limitCollateral > 0n && limitCollateral < ONE_BTC ? limitCollateral : ONE_BTC;
   const presets = effectiveMarket
-    ? depositPresets(minimumDepositWei(effectiveMarket, percentToCr(targetPct)), presetCap)
+    ? depositPresets(ceilBtcWei(minimumDepositWei(effectiveMarket, percentToCr(targetPct))), presetCap)
     : ["0.04", "0.05", "0.1", "0.2"];
   const minDebtMusd = market ? formatMusd(market.minNetDebt, 0) : null;
   const debtLimitError = preview.kind === "ok" && limitDebt !== null && limitDebt > 0n && preview.quote.debt > limitDebt
@@ -1004,6 +1005,7 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
     illustrative,
     displayOnly,
     inputError: depositError,
+    belowMinimum: preview.kind === "error" && preview.message.startsWith("Mezo needs at least"),
     sampleReason: displayOnly ? preview.reason : preview.kind === "error" && !depositError ? preview.message : null,
     overLimit,
     limitBtc: limitCollateral !== null ? formatLimitAmount(limitCollateral) : null,

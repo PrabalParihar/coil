@@ -392,12 +392,17 @@ export function minimumDepositWei(market: Market, targetCR: bigint): bigint {
   return analytic > 0n ? analytic : cap;
 }
 
-/** Round a BTC amount up to `digits` decimals so the shown figure is enough. */
-export function formatBtcCeil(wei: bigint, digits = 6): string {
-  if (wei <= 0n) return "0";
+/** Round a BTC amount up to `digits` decimals so the shown figure is still enough. */
+export function ceilBtcWei(wei: bigint, digits = 4): bigint {
+  if (wei <= 0n) return 0n;
   const scale = 10n ** BigInt(18 - digits);
-  const ceiled = ((wei + scale - 1n) / scale) * scale;
-  return trim(ceiled, 18, digits);
+  return ((wei + scale - 1n) / scale) * scale;
+}
+
+/** Round a BTC amount up to `digits` decimals so the shown figure is still enough. */
+export function formatBtcCeil(wei: bigint, digits = 4): string {
+  if (wei <= 0n) return "0";
+  return trim(ceilBtcWei(wei, digits), 18, digits);
 }
 
 const MAX_PRESET_WEI = WAD;

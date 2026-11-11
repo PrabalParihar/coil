@@ -33,7 +33,7 @@ export const MOAT_CARDS = [
   },
   {
     title: "Rescues are free. Tips only when it worked.",
-    body: "Coil charges 0% on protection, repay, de-lever, unwind and close. A keeper earns your MEZO tip only if your ratio actually rose, at most once per block. MEZO is the token at Mezo's MEZO precompile. You fund the tip from your balance, and your account pays the caller from that balance, up to the amount you set, only when protection raises the ratio.",
+    body: "Coil charges 0% on protection, repay, de-lever, unwind and close. A keeper earns your MEZO tip only if your ratio actually rose, at most once per block. MEZO is Mezo's network token. You add MEZO to your account for tips. Your account pays whoever runs protection, usually the keeper, from it, up to the amount you set, only when protection raises your ratio.",
   },
   {
     title: "Every fill checked against the BTC price feed.",

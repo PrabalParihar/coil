@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import {
   ArrowLeftRight,
   ArrowUpRight,
@@ -14,7 +15,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { formatUsd, type Market } from "@/lib/quote";
-import { formatOneDecimalPercent } from "@/lib/product-copy";
+import { formatActivityTime, formatOneDecimalPercent } from "@/lib/product-copy";
 import { factoryAddress } from "@/lib/mezo";
 import { selectedChain } from "@/lib/network";
 import { DEPLOYMENTS } from "@/lib/deployment.generated";
@@ -158,8 +159,8 @@ export function Ticker() {
 const HOW = [
   {
     icon: Bitcoin,
-    title: "Post BTC, mint MUSD",
-    body: "Your BTC opens or tops up a MUSD position in an account you own. The protocol mints MUSD against it.",
+    title: "Post BTC, borrow MUSD",
+    body: "Your BTC opens or tops up a MUSD position in an account you own. The protocol borrows MUSD against it.",
     tag: "Borrow MUSD",
   },
   {
@@ -171,7 +172,7 @@ const HOW = [
   {
     icon: Layers,
     title: "Post it back, stop at your ratio",
-    body: "The borrowed BTC is posted as collateral. Your account mints the MUSD the pool is owed and repays it in the same transaction, landing on or above your target.",
+    body: "The borrowed BTC is posted as collateral. Your account borrows the MUSD the pool is owed and repays it in the same transaction, landing on or above your target.",
     tag: "one transaction",
   },
 ];
@@ -217,45 +218,57 @@ export function HowItWorks() {
 /* Proof                                                               */
 /* ------------------------------------------------------------------ */
 
-type Receipt = { title: string; call: string; hash: `0x${string}`; time: string; amounts: string };
+type Receipt = { title: string; call: string; hash: `0x${string}`; time: number; amounts: string };
 
 const PROOF: { title: string; big: string; body: string; receipts: Receipt[] }[] = [
   {
-    big: "4.00×",
+    big: formatOneDecimalPercent(133.3),
     title: "Opened 4x leverage",
-    body: `An earlier factory opened 0.05183 BTC of collateral against 3,100.8 MUSD. A keeper then raised ${formatOneDecimalPercent(133.3)} to ${formatOneDecimalPercent(150)} for 1 MEZO, and one close returned the position. Those receipts are not this factory.`,
+    body: `An earlier factory opened 0.05183 BTC of collateral against 3,100.8 MUSD. A keeper then raised ${formatOneDecimalPercent(133.3)} to ${formatOneDecimalPercent(150)} for 1 MEZO, and one close returned the position. From an earlier Coil version on testnet.`,
     receipts: [
-      { title: "Opened 4x leverage", call: "loop", time: "27 Oct 2026, 12:11 UTC", amounts: "0.015 BTC in, 0.05183 BTC collateral, 3,100.8 MUSD", hash: "0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef" },
-      { title: "Protection triggered", call: "guard", time: "27 Oct 2026, 12:13 UTC", amounts: `${formatOneDecimalPercent(133.3)} to ${formatOneDecimalPercent(150)}, 1 MEZO`, hash: "0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a" },
-      { title: "Closed position", call: "flashUnwind", time: "27 Oct 2026, 12:14 UTC", amounts: "Full close", hash: "0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2" },
+      { title: "Opened 4x leverage", call: "loop", time: 1793103069, amounts: "0.015 BTC in, 0.05183 BTC collateral, 3,100.8 MUSD", hash: "0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef" },
+      { title: "Protection triggered", call: "guard", time: 1793103221, amounts: `${formatOneDecimalPercent(133.3)} to ${formatOneDecimalPercent(150)}, 1 MEZO`, hash: "0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a" },
+      { title: "Closed position", call: "flashUnwind", time: 1793103297, amounts: "Full close", hash: "0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2" },
     ],
   },
   {
     big: formatOneDecimalPercent(200.09),
     title: "Opened 2x leverage",
     body: `Collateral went from 0.0475 to 0.0939 BTC with 3,859.73 MUSD of debt, landing just above the ${formatOneDecimalPercent(200)} target.`,
-    receipts: [{ title: "Opened 2x leverage", call: "loop(200%, 1%)", time: "19 Oct 2026, 12:02 UTC", amounts: "0.0475 to 0.0939 BTC, 3,859.73 MUSD", hash: "0xfb9af4255b2317ea89feb36c530c29bfeace97b0098a3c6074fec015f52d7f85" }],
+    receipts: [{ title: "Opened 2x leverage", call: "loop(200%, 1%)", time: 1792411362, amounts: "0.0475 to 0.0939 BTC, 3,859.73 MUSD", hash: "0xfb9af4255b2317ea89feb36c530c29bfeace97b0098a3c6074fec015f52d7f85" }],
   },
   {
     big: formatOneDecimalPercent(288.04),
     title: "Lowered leverage to 3x",
     body: "One sale repaid the debt to exactly 2,000 MUSD, Mezo's floor for that position. A second call succeeded without selling.",
     receipts: [
-      { title: "Lowered leverage to 3x", call: "deleverTo(300%)", time: "19 Oct 2026, 12:03 UTC", amounts: "Debt 2,000 MUSD", hash: "0x8e742936951d59555c236f9c03dfd20d7d3d28d3a91b74e29f7863c18a6885a8" },
-      { title: "Lowered leverage to 3x", call: "deleverTo(300%)", time: "19 Oct 2026, 12:03 UTC", amounts: "No further sale", hash: "0xbafe5283fbcb373b167591cec8015b80606e5b970742bb17aa76ea70f47ff060" },
+      { title: "Lowered leverage to 3x", call: "deleverTo(300%)", time: 1792411380, amounts: "Debt 2,000 MUSD", hash: "0x8e742936951d59555c236f9c03dfd20d7d3d28d3a91b74e29f7863c18a6885a8" },
+      { title: "Lowered leverage to 3x", call: "deleverTo(300%)", time: 1792411396, amounts: "No further sale", hash: "0xbafe5283fbcb373b167591cec8015b80606e5b970742bb17aa76ea70f47ff060" },
     ],
   },
   {
-    big: "2 transactions",
+    big: formatOneDecimalPercent(281.99),
     title: "Closed position",
     body: `A new 0.046 BTC open at ${formatOneDecimalPercent(200.09)} closed in two transactions: repay to the floor at ${formatOneDecimalPercent(281.99)}, then close the position.`,
     receipts: [
-      { title: "Opened 2x leverage", call: "loop(200%, 1%)", time: "19 Oct 2026, 12:04 UTC", amounts: "0.046 BTC, 3,732.34 MUSD", hash: "0xd72758f1114ac3add69ed08a519603d1059c41c2fa959b9e225fc88769d9fd89" },
-      { title: "Closed position", call: "unwind(100%)", time: "19 Oct 2026, 12:04 UTC", amounts: "Debt 2,000 MUSD", hash: "0x3ff34e57f63d0278bf5932442f786bd346e08028f40bae0cbb5dc1f5d2efc2fd" },
-      { title: "Closed position", call: "unwind(100%)", time: "19 Oct 2026, 12:04 UTC", amounts: "Position closed", hash: "0xd55cdf5fb1d882f36f7c6cc66ff62960eeab30b8a4122240aa09329bcc8defdc" },
+      { title: "Opened 2x leverage", call: "loop(200%, 1%)", time: 1792411456, amounts: "0.046 BTC, 3,732.34 MUSD", hash: "0xd72758f1114ac3add69ed08a519603d1059c41c2fa959b9e225fc88769d9fd89" },
+      { title: "Closed position", call: "unwind(100%)", time: 1792411463, amounts: "Debt 2,000 MUSD", hash: "0x3ff34e57f63d0278bf5932442f786bd346e08028f40bae0cbb5dc1f5d2efc2fd" },
+      { title: "Closed position", call: "unwind(100%)", time: 1792411478, amounts: "Position closed", hash: "0xd55cdf5fb1d882f36f7c6cc66ff62960eeab30b8a4122240aa09329bcc8defdc" },
     ],
   },
 ];
+
+function ReceiptWhen({ unix }: { unix: number }) {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    const tick = () => setNow(Math.floor(Date.now() / 1000));
+    tick();
+    const timer = setInterval(tick, 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  if (now === null) return null;
+  return <>{formatActivityTime(unix, now)}</>;
+}
 
 export function Proof() {
   return (
@@ -284,7 +297,7 @@ export function Proof() {
                     <span className="size-1.5 rounded-full bg-safe" aria-hidden />
                     {r.title}
                   </span>
-                  <span className="mt-1 block pl-3.5">{r.time}</span>
+                  <span className="mt-1 block pl-3.5"><ReceiptWhen unix={r.time} /></span>
                   <span className="mt-0.5 block pl-3.5">{r.amounts}</span>
                 </li>
               ))}
