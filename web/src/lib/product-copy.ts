@@ -58,7 +58,7 @@ export function feeCapLabel(capPercent: string): string {
   return `Max ${capPercent}, set on-chain`;
 }
 
-export const BLOCKED_CARD_LABEL = "Preview (Sample, cannot open right now)";
+export const BLOCKED_CARD_LABEL = "Sample preview";
 export const LIVE_CARD_LABEL = "Quote";
 export const PRICE_CHECK_CTA = "Opening paused by price check";
 
@@ -96,10 +96,23 @@ export function btcCanFallLine(dropPercent: number): string {
   return `BTC can fall ${text}%`;
 }
 
-/** 664 bps -> 6.64%, 200 bps -> 2%. */
+/** 664 -> 6.64%, 200 -> 2%. Input is basis points from a chain read. */
 export function bpsToPercent(bps: number): string {
   if (!Number.isFinite(bps)) return "0%";
   const rounded = Math.round(bps) / 100;
   const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
   return `${text}%`;
+}
+
+/** One decimal for the pool gap: 663 -> 6.6%. */
+export function poolGapOneDecimal(bps: number): string {
+  if (!Number.isFinite(bps)) return "0.0%";
+  const tenths = Math.round(bps / 10);
+  const sign = tenths < 0 ? "-" : "";
+  const abs = Math.abs(tenths);
+  return `${sign}${Math.trunc(abs / 10)}.${abs % 10}%`;
+}
+
+export function poolWarning(gapBps: number, withinBps: number): string {
+  return `Pool price is ${poolGapOneDecimal(gapBps)} away from the oracle. Opens need under ${bpsToPercent(withinBps)}.`;
 }

@@ -13,7 +13,6 @@ import {
   TimerReset,
   TriangleAlert,
 } from "lucide-react";
-import { cn } from "cn";
 import { formatUsd, type Market } from "@/lib/quote";
 import { factoryAddress } from "@/lib/mezo";
 import { deployment, selectedChain } from "@/lib/network";
@@ -35,129 +34,36 @@ import {
 import { KeeperStatus } from "@/components/keeper-status";
 import { shorten, useMotionOk } from "@/components/shell";
 
-const RING = "M240 70 a170 170 0 1 1 0 340 a170 170 0 1 1 0 -340";
-
-/* ------------------------------------------------------------------ */
-/* Animated loop                                                       */
-/* ------------------------------------------------------------------ */
-
-function chevron(angle: number) {
-  const rad = (angle * Math.PI) / 180;
-  const x = 240 + 170 * Math.cos(rad);
-  const y = 240 + 170 * Math.sin(rad);
-  return { x, y, rot: angle + 90 };
-}
+const FLOW = [
+  { icon: Bitcoin, title: "BTC in", body: "You deposit bitcoin." },
+  { icon: Landmark, title: "Borrow MUSD", body: "Borrowed against that bitcoin." },
+  { icon: ArrowLeftRight, title: "Swap on Mezo Pools", body: "MUSD buys more BTC." },
+  { icon: Layers, title: "Post the BTC back", body: "It returns to your account." },
+] as const;
 
 export function LoopViz() {
   const motionOk = useMotionOk();
-  const stations = [
-    { x: 240, y: 70, label: "Borrow", sub: "Post BTC · mint MUSD", n: "01", pos: "left-[61%] top-[7%] text-left" },
-    { x: 387.2, y: 325, label: "Mezo Pools", sub: "Swap MUSD → BTC", n: "02", pos: "right-[-2%] top-[74%] sm:right-[-6%]" },
-    { x: 92.8, y: 325, label: "Collateral", sub: "Post the BTC back", n: "03", pos: "left-[-2%] top-[74%] sm:left-[-6%]" },
-  ];
   return (
-    <div className="relative mx-auto aspect-square w-full max-w-[520px]" aria-hidden>
-      <div className="absolute inset-[22%] rounded-full bg-filament/20 blur-3xl" />
-      <svg viewBox="0 0 480 480" className="absolute inset-0 h-full w-full overflow-visible">
-        <defs>
-          <radialGradient id="core" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#f7931a" stopOpacity="0.35" />
-            <stop offset="70%" stopColor="#f7931a" stopOpacity="0.04" />
-            <stop offset="100%" stopColor="#f7931a" stopOpacity="0" />
-          </radialGradient>
-          <linearGradient id="ring-btc" x1="0" y1="0" x2="480" y2="480" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#ffd9a3" />
-            <stop offset="50%" stopColor="#f7931a" />
-            <stop offset="100%" stopColor="#e2640c" />
-          </linearGradient>
-          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="3" result="b" />
-            <feMerge>
-              <feMergeNode in="b" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-        </defs>
-        <circle cx="240" cy="240" r="128" fill="url(#core)" />
-        <g className="spin-slow">
-          <circle cx="240" cy="240" r="208" fill="none" stroke="currentColor" strokeOpacity="0.09" strokeDasharray="2 7" />
-        </g>
-        <g className="spin-rev">
-          <circle cx="240" cy="240" r="118" fill="none" stroke="#f7931a" strokeOpacity="0.28" strokeDasharray="1 5" strokeWidth="2" />
-        </g>
-        <circle cx="240" cy="240" r="92" fill="none" stroke="currentColor" strokeOpacity="0.07" />
-        {/* the loop */}
-        <path d={RING} fill="none" stroke="currentColor" strokeOpacity="0.1" strokeWidth="18" />
-        <path d={RING} pathLength={1} className="coil-draw" fill="none" stroke="url(#ring-btc)" strokeWidth="2.5" strokeLinecap="round" />
-        <path d={RING} fill="none" stroke="#f7931a" strokeOpacity="0.55" strokeWidth="2" className="flow-dash" />
-        {[-30, 90, 210].map((angle) => {
-          const c = chevron(angle);
-          return (
-            <path
-              key={angle}
-              d="M-6 -7 L4 0 L-6 7"
-              transform={`translate(${c.x.toFixed(1)} ${c.y.toFixed(1)}) rotate(${c.rot})`}
-              fill="none"
-              stroke="#ffd9a3"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          );
-        })}
-        {/* travelling value: MUSD out, BTC back from the pool */}
-        {motionOk
-          ? [0, 1, 2].map((i) => (
-              <g key={`m${i}`}>
-                <circle r="5" fill="#f4ede1" filter="url(#glow)">
-                  <animateMotion dur="2.4s" begin={`${i * 0.8}s`} repeatCount="indefinite" keyPoints="0;0.3333" keyTimes="0;1" calcMode="linear" path={RING} />
-                </circle>
-              </g>
-            ))
-          : null}
-        {motionOk
-          ? [0, 1, 2, 3].map((i) => (
-              <circle key={`b${i}`} r="6" fill="#f7931a" filter="url(#glow)">
-                <animateMotion dur="4.2s" begin={`${i * 1.05}s`} repeatCount="indefinite" keyPoints="0.3333;1" keyTimes="0;1" calcMode="linear" path={RING} />
-              </circle>
-            ))
-          : null}
-        {stations.map((s, i) => (
-          <g key={s.label}>
-            <circle cx={s.x} cy={s.y} r="44" fill="#f7931a" className={cn("station-pulse", i === 1 && "station-pulse-2", i === 2 && "station-pulse-3")} opacity="0.2" />
-            <circle cx={s.x} cy={s.y} r="34" fill="#15120f" stroke="#f7931a" strokeOpacity="0.7" strokeWidth="1.5" />
-          </g>
+    <figure aria-label="One open, in order" className="panel relative w-full p-3">
+      <figcaption className="text-xs text-muted-foreground">One transaction</figcaption>
+      <ol className="relative mt-2 space-y-2">
+        <span className="absolute top-4 bottom-4 left-[15px] w-px bg-filament/35" aria-hidden>
+          {motionOk ? <span className="flow-step" /> : null}
+        </span>
+        {FLOW.map((step, index) => (
+          <li key={step.title} className="relative flex items-center gap-3">
+            <span className="relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border border-filament/40 bg-background text-filament">
+              <step.icon className="size-3.5" aria-hidden />
+            </span>
+            <span className="min-w-0">
+              <span className="font-mono text-[10px] text-filament">0{index + 1}</span>
+              <span className="ml-2 text-sm font-semibold">{step.title}</span>
+              <span className="block text-xs leading-snug text-muted-foreground">{step.body}</span>
+            </span>
+          </li>
         ))}
-      </svg>
-      {/* station icons */}
-      {stations.map((s, i) => {
-        const Icon = i === 0 ? Landmark : i === 1 ? ArrowLeftRight : Layers;
-        return (
-          <div
-            key={s.label}
-            className="absolute flex size-[13%] -translate-x-1/2 -translate-y-1/2 items-center justify-center text-filament"
-            style={{ left: `${(s.x / 480) * 100}%`, top: `${(s.y / 480) * 100}%` }}
-          >
-            <Icon className="size-[46%]" strokeWidth={1.75} />
-          </div>
-        );
-      })}
-      {stations.map((s) => (
-        <div key={`${s.label}-l`} className={cn("absolute w-max", s.n === "01" ? "text-left" : "text-center", s.pos)}>
-          <p className="font-mono text-[10px] tracking-[0.16em] text-filament">{s.n}</p>
-          <p className="text-sm font-semibold sm:text-base">{s.label}</p>
-          <p className="text-[11px] text-muted-foreground sm:text-xs">{s.sub}</p>
-        </div>
-      ))}
-      <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-        <p className="font-mono text-[9px] tracking-[0.2em] text-muted-foreground uppercase sm:text-[10px]">at 200% collateral</p>
-        <p className="btc-text num mt-1 text-5xl font-semibold tracking-tighter sm:text-7xl">2.00×</p>
-        <p className="mt-1 text-xs text-muted-foreground">BTC exposure target</p>
-        <p className="mt-3 hidden chip border-filament/30 font-mono text-[10px] text-foreground/80 sm:inline-flex">
-          <Repeat2 className="size-3 text-filament" />1 flash swap · 1 transaction
-        </p>
-      </div>
-    </div>
+      </ol>
+    </figure>
   );
 }
 
@@ -168,25 +74,30 @@ export function LoopViz() {
 export function Hero({ market, marketError }: { market: Market | null; marketError: string | null }) {
   return (
     <section aria-label="Coil overview" className="border-b border-border py-8 sm:py-12">
-      <span className="chip border-filament/40 text-foreground">{heroEyebrow(selectedChain.id)}</span>
-      <h1 className="mt-5 max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">{HERO_TITLE}</h1>
-      <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">{HERO_SUBLINE}</p>
-      <div className="mt-6 flex flex-wrap items-center gap-3">
-        <a href="#app" className="btn-btc inline-flex min-h-11 items-center rounded-lg px-4 text-sm font-medium">
-          {HERO_PRIMARY}
-        </a>
-        <a href="#protection" className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-medium hover:bg-foreground/5">
-          {HERO_SECONDARY}
-        </a>
-      </div>
-      <p className="mt-3 text-xs text-muted-foreground">
-        {market ? `BTC ${formatUsd(market.price)}` : marketError ? "Market data unavailable" : "Reading the oracle"}
-        {` · ${deployment.status}`}
-      </p>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <span className="chip">{PROOF_OPEN}</span>
-        <span className="chip">{PROOF_EXIT_FEE}</span>
-        <KeeperStatus liveChip />
+      <div className="grid items-center gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(280px,0.95fr)] lg:gap-12">
+        <div>
+          <span className="chip border-filament/40 text-foreground">{heroEyebrow(selectedChain.id)}</span>
+          <h1 className="mt-5 max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">{HERO_TITLE}</h1>
+          <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">{HERO_SUBLINE}</p>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <a href="#app" className="btn-btc inline-flex min-h-11 items-center rounded-lg px-4 text-sm font-medium">
+              {HERO_PRIMARY}
+            </a>
+            <a href="#protection" className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-medium hover:bg-foreground/5">
+              {HERO_SECONDARY}
+            </a>
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            {market ? `BTC ${formatUsd(market.price)}` : marketError ? "Market data unavailable" : "Reading the oracle"}
+            {` · ${deployment.status}`}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <span className="chip">{PROOF_OPEN}</span>
+            <span className="chip">{PROOF_EXIT_FEE}</span>
+            <KeeperStatus liveChip />
+          </div>
+        </div>
+        <LoopViz />
       </div>
       <section id="protection" aria-labelledby="why-title" className="mt-10 scroll-mt-28">
         <p className="text-xs text-muted-foreground">{MOAT_TITLE}</p>

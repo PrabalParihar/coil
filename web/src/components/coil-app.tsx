@@ -71,7 +71,7 @@ import { canWrite, isUnsupportedPolicy, loopArguments, ownerActionState, ownerTr
 import { DEPLOYMENTS, RETAINED_DEPLOYMENTS } from "@/lib/deployment.generated";
 import { discoverOwnerAccounts, ownerDeploymentCatalog, ownerDiscoveryView, selectOwnerDeployment, type OwnerDiscovery } from "@/lib/owner-accounts";
 import { readStateAwareQuote, selectPositionPreview, startPositionQuote, type PositionQuoteState } from "@/lib/position-quote";
-import { EMPTY_DEPOSIT_HELPER, LEVERAGE_CHOICES, PRICE_CHECK_CTA, RECOVERY_STILL, bpsToPercent, feeCapLabel, feeChipLabel, leverageChoice } from "@/lib/product-copy";
+import { EMPTY_DEPOSIT_HELPER, LEVERAGE_CHOICES, PRICE_CHECK_CTA, RECOVERY_STILL, bpsToPercent, feeCapLabel, feeChipLabel, leverageChoice, poolWarning } from "@/lib/product-copy";
 import { exceedsFactoryLimit, quoteCardView } from "@/lib/quote-card";
 import { QuoteCard } from "@/components/quote-card";
 import {
@@ -738,7 +738,10 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
         gas: 200_000n,
       }),
     )
-      .then(() => setStatus(bps === 0 ? "Peg trigger off." : `Peg trigger set to ${bps} bps under $1.`))
+      .then(() => {
+        const percent = bpsToPercent(bps);
+        setStatus(bps === 0 ? "Peg trigger off." : `Peg trigger set to ${percent} under $1.`);
+      })
       .catch(fail)
       .finally(() => setBusy(false));
   }
@@ -758,9 +761,10 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
         gas: 200_000n,
       }),
     )
-      .then(() =>
-        setStatus(`Allowed price gap set to ${bps} bps. A new open is refused when the pool is farther from the oracle than that. The maximum is 500.`),
-      )
+      .then(() => {
+        const percent = bpsToPercent(bps);
+        setStatus(`Allowed price gap set to ${percent}. A new open is refused when the pool is farther from the oracle than that. The maximum is 5%.`);
+      })
       .catch(fail)
       .finally(() => setBusy(false));
   }
@@ -1192,9 +1196,9 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
               {market && (poolGap > 0n || reserveFactory) ? (
                 <Banner
                   tone={pegBlocked ? "warn" : "info"}
-                  title={pegBlocked ? "Pool price is off the oracle" : "Pool versus oracle"}
+                  title={poolWarning(Number(poolGap), openCap)}
                   detailsLabel="Price gap"
-                  summaryText={`The pool is ${poolGap.toString()} bps from the oracle${reserveFactory ? `. Opens stop past ${openCap} bps.` : "."}`}
+                  summaryText={pegBlocked ? "A new open stays blocked until the prices are closer." : "The pool is inside the open bound."}
                   action={
                     account && reserveFactory ? (
                       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Allowed price gap">
@@ -1210,14 +1214,14 @@ export function CoilApp({ initialPolicy = null }: { initialPolicy?: OpenFeeSnaps
                             disabled={busy || openCap === bps || pegGuardRaw === undefined}
                             onClick={() => saveOpenCap(bps)}
                           >
-                            {bps} bps
+                            {bpsToPercent(bps)}
                           </Button>
                         ))}
                       </div>
                     ) : null
                   }
                 >
-                  {quoteView.pegMessage ?? `The MUSD/BTC pool is ${poolGap.toString()} bps off the oracle${poolGap > 0n ? ` (${bpsToPercent(Number(poolGap))})` : ""}. ${belowPeg > 0n ? `MUSD is ${belowPeg.toString()} bps under $1 in this pool.` : "MUSD is not under $1 in this pool."}${reserveFactory ? ` A new open is refused past ${bpsToPercent(openCap)}.` : ""}`}
+                  {quoteView.pegMessage ?? `${poolWarning(Number(poolGap), openCap)} ${belowPeg > 0n ? `MUSD is ${bpsToPercent(Number(belowPeg))} under $1 in this pool.` : "MUSD is not under $1 in this pool."}`}
                 </Banner>
               ) : null}
               {connectError && !isConnected ? (
@@ -1884,9 +1888,9 @@ function describeSensible(quote: ReturnType<typeof sensibleOpen> | null) {
   if (!quote) return "Enter a BTC amount to see the largest leverage that stays under 1% price impact.";
   if (quote.targetCR === 0n) return "This deposit cannot open. Mezo requires at least 1,800 MUSD of debt.";
   if (!quote.capped) {
-    return `No leverage stays under 1% impact. The gentlest open is ${quote.leverage} at ${quote.impact.toString()} bps.`;
+    return `No leverage stays under 1% impact. The gentlest open is ${quote.leverage} at ${bpsToPercent(Number(quote.impact))}.`;
   }
-  return `Max sensible leverage now: ${quote.leverage}, at ${quote.impact.toString()} bps of pool impact.`;
+  return `Max sensible leverage now: ${quote.leverage}, at ${bpsToPercent(Number(quote.impact))} of pool impact.`;
 }
 
 function PoolDepth({
@@ -1976,7 +1980,7 @@ function ReserveBlock({
         <div className="space-y-2">
           <p className="eyebrow">Peg trigger</p>
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            When MUSD is this far under $1 and the position is near the front of the redemption queue, the guard acts. Off leaves the trigger disabled. Current setting {pegGuardBps} bps.
+            When MUSD is this far under $1 and the position is near the front of the redemption queue, the guard acts. Off leaves the trigger disabled. Current setting {pegGuardBps === 0 ? "off" : bpsToPercent(pegGuardBps)}.
           </p>
           <ChipGroup
             label="Peg trigger"

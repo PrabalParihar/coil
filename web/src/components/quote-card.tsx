@@ -6,7 +6,7 @@ export function QuoteCard({ view }: { view: QuoteCardView }) {
     <div className="mt-5" data-quote-badge={view.blocked ? "Sample" : "Quote"}>
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs text-muted-foreground">If you opened this amount</p>
-        <span className={cn("chip max-w-[16rem] whitespace-normal text-left leading-snug", view.blocked ? "border-warn/50 text-warn" : "border-safe/40 text-safe")}>
+        <span className={cn("chip shrink-0", view.blocked ? "border-warn/50 text-warn" : "border-safe/40 text-safe")}>
           {view.badge}
         </span>
       </div>

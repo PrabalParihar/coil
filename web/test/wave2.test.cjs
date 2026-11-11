@@ -459,7 +459,7 @@ test('an off-oracle pool still yields a sample liquidation price', () => {
     dropPercent: 45,
     feeLine: 'fees',
   });
-  assert.equal(view.badge, 'Preview (Sample, cannot open right now)');
+  assert.equal(view.badge, 'Sample preview');
   assert.equal(view.liquidationPrice, '$1');
   assert.equal(view.dropLine, 'BTC can fall 45%');
   assert.match(view.pegMessage, /6\.64%/);
@@ -496,7 +496,7 @@ test('paused or peg-blocked opens are labelled Sample and still show the outcome
       withinPercent: '2%',
       feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage.',
     });
-    assert.equal(view.badge, 'Preview (Sample, cannot open right now)');
+    assert.equal(view.badge, 'Sample preview');
     assert.equal(view.liquidationPrice, '$40,000');
     assert.equal(view.dropLine, 'BTC can fall 26.7%');
     assert.match(view.feeLine, /0\.25%/);
@@ -520,7 +520,7 @@ test('a peg block says the pool price is off the oracle and that raising slippag
   assert.match(view.pegMessage, /Raising slippage will not help/);
   assert.equal(view.slippageMessage, null);
   assert.equal(view.overLimitMessage, null);
-  assert.equal(view.badge, 'Preview (Sample, cannot open right now)');
+  assert.equal(view.badge, 'Sample preview');
 });
 
 test('a deposit over the factory limit gets its own message', () => {
@@ -574,7 +574,7 @@ test('user-facing strings omit banned jargon, mainnet claims, and the em dash', 
     }
   };
   walk(root);
-  const allow = new Set(['flashLoop', 'setPegBounds', 'loop', 'flashUnwind', 'unwind']);
+  const allow = new Set(['flashLoop', 'setPegBounds', 'loop', 'flashUnwind', 'unwind', 'bps']);
   const banned = [
     { name: 'PegOff', re: /PegOff/ },
     { name: 'setPegBounds', re: /setPegBounds/ },
@@ -588,6 +588,7 @@ test('user-facing strings omit banned jargon, mainnet claims, and the em dash', 
     { name: 'Mainnet depth', re: /Mainnet depth|Mainnet starts at 200%/ },
     { name: 'guaranteed protection', re: /guaranteed protection/i },
     { name: 'unaudited', re: /unaudited/i },
+    { name: 'bps', re: /\bbps\b/i },
   ];
   const hits = [];
   for (const file of files) {
@@ -601,6 +602,7 @@ test('user-facing strings omit banned jargon, mainnet claims, and the em dash', 
       const text = chunk.trim();
       if (!text || allow.has(text)) continue;
       for (const rule of banned) {
+        if (rule.name === 'bps' && !/\.(tsx|css)$/.test(file) && !file.endsWith('product-copy.ts')) continue;
         if (rule.re.test(text)) hits.push(`${path.relative(root, file)}: ${rule.name}: ${text.slice(0, 180)}`);
       }
       if (/\baudited\b/i.test(text.replace(/not audited/ig, ''))) hits.push(`${path.relative(root, file)}: audited: ${text.slice(0, 180)}`);
@@ -612,6 +614,9 @@ test('user-facing strings omit banned jargon, mainnet claims, and the em dash', 
   assert.equal(productCopy.HERO_TITLE, 'Leverage your BTC in one transaction.');
   assert.equal(productCopy.HERO_SUBLINE, 'Coil borrows MUSD against your bitcoin, buys more BTC on Mezo Pools and posts it back, all in one transaction, inside an account only you control. A protection keeper can only make your position safer.');
   assert.equal(productCopy.heroEyebrow(31611), 'Mezo testnet · chain 31611 · not audited');
+  assert.equal(productCopy.BLOCKED_CARD_LABEL, 'Sample preview');
+  assert.equal(productCopy.poolWarning(663, 200), 'Pool price is 6.6% away from the oracle. Opens need under 2%.');
+  assert.equal(productCopy.poolGapOneDecimal(665), '6.7%');
   assert.equal(productCopy.MOAT_CARDS.length, 4);
   assert.doesNotMatch(landing + productCopy.HERO_TITLE + productCopy.HERO_SUBLINE + productCopy.MOAT_CARDS.map(card => card.title + card.body).join('\n'), /Turn your BTC into more BTC/);
 });
