@@ -11,20 +11,20 @@ const geist = Geist({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://coil.up.railway.app"),
-  title: "Coil Labs — BTC leverage on Mezo",
+  title: "Coil Labs: Leverage your BTC in one transaction.",
   description:
-    "One-transaction BTC leverage on MUSD. Coil Labs borrows with a Mezo Pools flash swap and posts the BTC back at the ratio you pick. A keeper can only make the position safer, and earns MEZO when it does.",
+    "Coil borrows MUSD against your bitcoin, buys more BTC on Mezo Pools and posts it back, all in one transaction, inside an account only you control. Mezo testnet. The contracts are not audited.",
   openGraph: {
-    title: "Coil Labs — BTC leverage on Mezo",
-    description: `Flash-swap leverage on MUSD. Risk-reducing keeper actions, paid in MEZO. ${selectedChain.name}: ${deployment.status} deployment.`,
+    title: "Coil Labs: Leverage your BTC in one transaction.",
+    description: `One-transaction BTC leverage on MUSD. A keeper can only reduce risk. ${selectedChain.name}: ${deployment.status} deployment. Not audited.`,
     url: "https://coil.up.railway.app",
     siteName: "Coil Labs",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Coil Labs — BTC leverage on Mezo",
-    description: `Flash-swap leverage on MUSD. Risk-reducing keeper actions, paid in MEZO. ${selectedChain.name}: ${deployment.status} deployment.`,
+    title: "Coil Labs: Leverage your BTC in one transaction.",
+    description: `One-transaction BTC leverage on MUSD. A keeper can only reduce risk. ${selectedChain.name}: ${deployment.status} deployment. Not audited.`,
   },
 };
 

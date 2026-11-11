@@ -145,7 +145,7 @@ export function riskOf(percent: number): { level: RiskLevel; word: string; tone:
   return { level: "safe", word: "Comfortable", tone: "text-safe", bg: "bg-safe", border: "border-safe/40" };
 }
 
-/** Share of BTC price that can fall before the trove reaches the 110% liquidation ratio. */
+/** Share of BTC price that can fall before the position reaches the 110% liquidation ratio. */
 export function dropToLiquidation(percent: number) {
   if (!Number.isFinite(percent) || percent <= 110) return 0;
   return (1 - 110 / percent) * 100;
@@ -387,7 +387,7 @@ export function CrGauge({
   const [nx, ny] = polar(120, 120, 82, needle);
   return (
     <div className="relative mx-auto w-full max-w-[300px]">
-      <svg viewBox="0 0 240 140" className="w-full overflow-visible" role="img" aria-label={empty ? "No open trove" : `Collateral ratio gauge at ${percent.toFixed(2)} percent`}>
+      <svg viewBox="0 0 240 140" className="w-full overflow-visible" role="img" aria-label={empty ? "No open position" : `Collateral ratio gauge at ${percent.toFixed(2)} percent`}>
         <path d={arc(120, 120, 100, 0, 180)} fill="none" stroke="currentColor" strokeOpacity="0.08" strokeWidth="16" strokeLinecap="round" />
         {!empty ? (
           <>
@@ -543,8 +543,8 @@ export function activityScope(
     Boolean(status?.startsWith("Unwind")) ||
     Boolean(status?.startsWith("Ratio is now")) ||
     Boolean(status?.startsWith("Debt is now")) ||
-    Boolean(status?.startsWith("Trove closed")) ||
-    Boolean(status?.startsWith("The trove is closed"));
+    Boolean(status?.startsWith("Position closed")) ||
+    Boolean(status?.startsWith("The position is closed"));
   return position ? "position" : "compose";
 }
 
@@ -766,7 +766,7 @@ function StepRail({
       kind === "delever"
         ? `De-lever ${n} of the way to ${deleverPct}%`
         : unwindPct === 100
-          ? `Unwind ${n}: closing the trove`
+          ? `Unwind ${n}: closing the position`
           : `Unwind ${n}: repaying debt`;
     return { n, state, title: kind === "delever" ? `Sale ${n}` : `Repay ${n}`, label: tx?.label ?? fallback, hash: tx };
   });

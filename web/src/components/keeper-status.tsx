@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { usePublicClient } from "wagmi";
 import { coilFactoryAbi, factoryAddress, FACTORY_DEPLOY_BLOCK, ZERO } from "@/lib/mezo";
@@ -9,7 +10,7 @@ import { fetchPublicStatus, selectServiceRead, serviceStatusView, startPublicSta
 import { chainEvidenceFresh, heartbeatState, isUnsupportedPolicy, recentRange } from "@/lib/readiness";
 
 type Evidence = { timestamp?: number; sender?: string; keeper?: string; authenticated: boolean; blockTime: number };
-export function KeeperStatus() {
+export function KeeperStatus({ liveChip = false }: { liveChip?: boolean }) {
   const client = usePublicClient({ chainId: selectedChain.id });
   const [evidence, setEvidence] = useState<Evidence | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +70,10 @@ export function KeeperStatus() {
   const serviceRead = selectServiceRead(serviceKey, serviceEvidence);
   const service = serviceRead.kind === "ok" ? serviceStatusView(serviceRead.data, now === null ? Date.now() : now * 1000) : null;
   const age = (milliseconds: number | null) => milliseconds === null ? "unavailable" : `${Math.floor(milliseconds / 1000)} seconds ago`;
+  if (liveChip) {
+    if (state !== "fresh") return null;
+    return <Link href="/keeper" className="chip">Keeper heartbeat: live</Link>;
+  }
   return <section className="well mt-6 p-5" aria-label="Keeper health">
     <h2 className="text-xl font-semibold">Chain heartbeat evidence: {state}</h2>
     <p className="mt-2 text-sm text-muted-foreground">{selectedChain.name} · factory {deployment.status} · chain {selectedChain.id}</p>

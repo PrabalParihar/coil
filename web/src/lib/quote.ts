@@ -222,12 +222,13 @@ function flashFits(
   return { ok: true, owed, minted };
 }
 
-/** One-transaction flash loop. Matches `FlashSizer` for a fresh trove. */
+/** One-transaction open. Matches `FlashSizer` for a fresh position. */
 export function quoteFlashLoop(
   collateralIn: bigint,
   targetCR: bigint,
   slippageBps: bigint,
   market: Market,
+  sample = false,
 ): FlashPreview {
   if (collateralIn <= 0n) throw new QuoteError("Enter an amount of BTC.");
   if (market.price <= 0n) throw new QuoteError("The Mezo price feed returned zero.");
@@ -266,11 +267,11 @@ export function quoteFlashLoop(
       "This deposit cannot open at that ratio. Mezo requires at least 1,800 MUSD of debt, and borrowing that much would land under your target. Add BTC or choose a lower collateral ratio.",
     );
   }
-  if (flash > 0n) {
+  if (flash > 0n && !sample) {
     const fair = (flash * market.price) / WAD;
     if (fair === 0n || flash < (chosen.owed * WAD * (BPS - slippageBps)) / (market.price * BPS)) {
       throw new QuoteError(
-        "The pool quote is outside your slippage. Raise the slippage limit or choose a higher collateral ratio.",
+        "This open does not fit the current pool price.",
       );
     }
   }

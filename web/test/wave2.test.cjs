@@ -174,6 +174,40 @@ test('active fee consent fails closed on unavailable or input-stale on-chain quo
   assert.deepEqual(positionQuotes.selectPositionPreview(true, 'active', { key: 'active', kind: 'error', message: 'Quote RPC failed' }, { kind: 'ok', quote: increasedQuote }), { kind: 'error', message: 'Quote RPC failed' });
   assert.equal(positionQuotes.selectPositionPreview(false, 'fresh', null, freshEstimate), freshEstimate);
 });
+test('a policy account cannot submit a fresh estimate while the state-aware quote is pending, failed, or mismatched', () => {
+  const fresh = { kind: 'ok', quote: increasedQuote, illustrative: false };
+  const key = '31611:factory:account';
+  const blocked = [
+    null,
+    { key: 'other', kind: 'ok', quote: increasedQuote },
+    { key, kind: 'error', message: 'State-aware quote unavailable.' },
+    { key, kind: 'loading' },
+  ];
+  for (const state of blocked) {
+    const shown = positionQuotes.presentPositionPreview(true, key, state, fresh);
+    assert.equal(shown.displayOnly, true);
+    assert.equal(positionQuotes.canSubmitPositionPreview(shown), false);
+    if (shown.kind === 'ok') assert.equal(shown.quote, increasedQuote);
+  }
+  const ready = positionQuotes.presentPositionPreview(true, key, { key, kind: 'ok', quote: increasedQuote }, fresh);
+  assert.equal(ready.displayOnly, false);
+  assert.equal(ready.illustrative, false);
+  assert.equal(ready.kind, 'ok');
+  assert.equal(positionQuotes.canSubmitPositionPreview(ready), true);
+});
+test('a fresh sample stays illustrative and cannot be submitted for a retained legacy account', () => {
+  const sample = { kind: 'ok', quote: increasedQuote, illustrative: true };
+  const kept = positionQuotes.selectPositionPreview(false, 'legacy', null, sample);
+  assert.equal(kept, sample);
+  assert.equal(kept.illustrative, true);
+  const shown = positionQuotes.presentPositionPreview(false, 'legacy', null, sample);
+  assert.equal(shown.illustrative, true);
+  assert.equal(shown.displayOnly, false);
+  assert.equal(positionQuotes.canSubmitPositionPreview(shown), false);
+  const live = positionQuotes.selectPositionPreview(true, 'active', { key: 'active', kind: 'ok', quote: increasedQuote }, sample);
+  assert.equal(live.kind, 'ok');
+  assert.equal(live.illustrative, false);
+});
 test('cancelled quote read cannot publish a previous account or chain result', async () => {
   assert.equal(typeof positionQuotes.startPositionQuote, 'function');
   let finish;
@@ -379,7 +413,9 @@ test('open fee copy formats coilFeeBps as a percent and states the hard 50 bps c
   assert.equal(fee.readFeeBps(25n), 25);
   assert.equal(fee.readFeeBps(10_001), null);
   const statement = fee.coilOpenFeeStatement(25);
-  assert.equal(statement, 'Coil open fee: 0.25% of newly minted MUSD (owner-capped at 0.5%). Rescue and exit: 0 (guard, owner exit, repay, unwind).');
+  assert.equal(statement, 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage. The contract caps it at 0.5%. Protection, rescue, repay, de-lever, unwind and close: 0%. Mezo\'s borrowing fee, pool swap fee and gas are separate.');
+  assert.equal(statement.includes('0.25%'), true);
+  assert.equal(statement.includes('0.5%'), true);
   for (const text of [statement, fee.coilOpenFeePendingStatement(), fee.coilOpenFeeUnavailableStatement(), fee.coilOpenFeeLegacyStatement()]) {
     assert.equal(text.includes('\u2014'), false);
     assert.equal(text.includes('WitLabs'), false);
@@ -434,4 +470,187 @@ test('same-owner discovery refresh preserves the funded view while changed-owner
   const changedOwner = ownerAccounts.ownerDiscoveryView('31611:owner-b', '31611:owner-b:0', state, catalog);
   assert.equal(changedOwner.pending, true);
   assert.equal(changedOwner.choices, catalog);
+});
+
+const quoteCard = require('../src/lib/quote-card.ts');
+const productCopy = require('../src/lib/product-copy.ts');
+const path = require('node:path');
+
+test('an off-oracle pool still yields a sample liquidation price', () => {
+  const skewed = { ...market, reserveBtc: 1000n * W };
+  assert.throws(() => quote.quoteFlashLoop(W / 10n, 2n * W, 50n, skewed));
+  const sample = quote.quoteFlashLoop(W / 10n, 2n * W, 50n, skewed, true);
+  assert.ok(sample.liquidationPrice > 0n);
+  assert.ok(sample.collateral > 0n);
+  const view = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: true,
+    illustrative: true,
+    overLimit: false,
+    gapPercent: '6.64%',
+    withinPercent: '2%',
+    liquidationPrice: '$1',
+    dropPercent: 45,
+    feeLine: 'fees',
+  });
+  assert.equal(view.badge, 'Sample preview');
+  assert.equal(view.liquidationPrice, '$1');
+  assert.equal(view.dropLine, 'BTC can fall 45%');
+  assert.match(view.pegMessage, /6\.64%/);
+  assert.match(view.pegMessage, /within 2%/);
+  assert.match(view.pegMessage, /Raising slippage will not help/);
+});
+test('quote card shows liquidation price, how far BTC can fall, and fees', () => {
+  const view = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: false,
+    overLimit: false,
+    liquidationPrice: '$50,000',
+    dropPercent: 45,
+    feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage. The contract caps it at 0.5%. Protection, rescue, repay, de-lever, unwind and close: 0%.',
+    feeCapLabel: 'Max 0.5%, set on-chain',
+  });
+  assert.equal(view.badge, 'Quote');
+  assert.equal(view.liquidationPrice, '$50,000');
+  assert.equal(view.dropLine, 'BTC can fall 45%');
+  assert.match(view.feeLine, /0\.25%/);
+  assert.equal(view.feeCapLabel, 'Max 0.5%, set on-chain');
+  assert.equal(view.pegMessage, null);
+  assert.equal(view.overLimitMessage, null);
+});
+
+test('paused or peg-blocked opens are labelled Sample and still show the outcome', () => {
+  for (const flags of [{ paused: true, pegBlocked: false }, { paused: false, pegBlocked: true }]) {
+    const view = quoteCard.quoteCardView({
+      ...flags,
+      overLimit: false,
+      liquidationPrice: '$40,000',
+      dropPercent: 26.7,
+      gapPercent: '6.64%',
+      withinPercent: '2%',
+      feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage.',
+    });
+    assert.equal(view.badge, 'Sample preview');
+    assert.equal(view.liquidationPrice, '$40,000');
+    assert.equal(view.dropLine, 'BTC can fall 26.7%');
+    assert.match(view.feeLine, /0\.25%/);
+  }
+});
+
+test('a peg block says the pool price is off the oracle and that raising slippage will not help', () => {
+  const view = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: true,
+    overLimit: false,
+    liquidationPrice: '$40,000',
+    dropPercent: 26.7,
+    gapPercent: '6.64%',
+    withinPercent: '2%',
+    feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage.',
+  });
+  assert.equal(view.pegMessage, productCopy.priceCheckStatus('6.64%', '2%'));
+  assert.match(view.pegMessage, /pool price is 6\.64% away from the oracle price/);
+  assert.match(view.pegMessage, /within 2%/);
+  assert.match(view.pegMessage, /Raising slippage will not help/);
+  assert.equal(view.slippageMessage, null);
+  assert.equal(view.overLimitMessage, null);
+  assert.equal(view.badge, 'Sample preview');
+});
+
+test('a deposit over the factory limit gets its own message', () => {
+  const view = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: false,
+    overLimit: true,
+    liquidationPrice: '$80,000',
+    dropPercent: 45,
+    limitBtc: '0.05',
+    feeLine: 'Coil fee: 0.25% of the MUSD you borrow when opening or adding leverage.',
+  });
+  assert.equal(view.overLimitMessage, 'The current limit is 0.05 BTC per position on this release.');
+  assert.equal(view.overLimitMessage, productCopy.depositLimitMessage('0.05'));
+  assert.doesNotMatch(view.overLimitMessage, /slippage/i);
+  const slipped = quoteCard.quoteCardView({
+    paused: false, pegBlocked: false, slippageMiss: true, slippagePercent: '0.5%', overLimit: false,
+    liquidationPrice: '$1', dropPercent: 10, feeLine: 'fees',
+  });
+  assert.equal(slipped.slippageMessage, 'The pool would fill worse than your 0.5% limit. Try a higher limit or a lower leverage.');
+  assert.equal(slipped.pegMessage, null);
+  assert.doesNotMatch(view.overLimitMessage, /slippage/i);
+  assert.equal(view.pegMessage, null);
+  assert.equal(view.badge, 'Quote');
+  assert.equal(view.liquidationPrice, '$80,000');
+  const wad = 10n ** 18n;
+  assert.equal(quoteCard.exceedsFactoryLimit('1.5', 15n * wad / 10n, wad), true);
+  assert.equal(quoteCard.exceedsFactoryLimit('0.01', wad / 100n, wad), false);
+  assert.equal(quoteCard.exceedsFactoryLimit('5', null, wad), true);
+});
+
+test('leverage choices are 2x then 3x then 4x, with LTV next to CR', () => {
+  assert.deepEqual(productCopy.LEVERAGE_CHOICES.map(choice => choice.multiple), ['2x', '3x', '4x']);
+  for (const choice of productCopy.LEVERAGE_CHOICES) {
+    assert.match(choice.crLabel, /% CR$/);
+    assert.match(choice.ltvLabel, /% LTV$/);
+  }
+  assert.equal(productCopy.HERO_TITLE, 'Leverage your BTC in one transaction.');
+  assert.notEqual(productCopy.HERO_TITLE, 'Turn your BTC into more BTC.');
+  assert.equal(productCopy.btcCanFallLine(45), 'BTC can fall 45%');
+});
+
+test('user-facing strings omit banned jargon, mainnet claims, and the em dash', () => {
+  const root = path.join(__dirname, '../src');
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(tsx|ts)$/.test(entry.name)) files.push(full);
+    }
+  };
+  walk(root);
+  const allow = new Set(['flashLoop', 'setPegBounds', 'loop', 'flashUnwind', 'unwind', 'bps']);
+  const banned = [
+    { name: 'PegOff', re: /PegOff/ },
+    { name: 'setPegBounds', re: /setPegBounds/ },
+    { name: 'flashLoop', re: /flashLoop/ },
+    { name: 'clone', re: /\bclone\b/i },
+    { name: 'trove', re: /\btrove\b/i },
+    { name: 'first 40 accounts', re: /first 40 accounts/i },
+    { name: 'em dash', re: /\u2014/ },
+    { name: 'WitLabs', re: /WitLabs/i },
+    { name: 'mainnet claim', re: /\bmainnet\b/i },
+    { name: 'Mainnet depth', re: /Mainnet depth|Mainnet starts at 200%/ },
+    { name: 'guaranteed protection', re: /guaranteed protection/i },
+    { name: 'unaudited', re: /unaudited/i },
+    { name: 'bps', re: /\bbps\b/i },
+  ];
+  const hits = [];
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const lines = source.split('\n').filter(line => !line.trim().startsWith('//')).join('\n');
+    const chunks = [];
+    const quoted = /`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g;
+    for (const match of lines.matchAll(quoted)) chunks.push(match[0].slice(1, -1));
+    for (const match of lines.matchAll(/>([^<>{}]+)</g)) chunks.push(match[1]);
+    for (const chunk of chunks) {
+      const text = chunk.trim();
+      if (!text || allow.has(text)) continue;
+      for (const rule of banned) {
+        if (rule.name === 'bps' && !/\.(tsx|css)$/.test(file) && !file.endsWith('product-copy.ts')) continue;
+        if (rule.re.test(text)) hits.push(`${path.relative(root, file)}: ${rule.name}: ${text.slice(0, 180)}`);
+      }
+      if (/\baudited\b/i.test(text.replace(/not audited/ig, ''))) hits.push(`${path.relative(root, file)}: audited: ${text.slice(0, 180)}`);
+    }
+  }
+  assert.deepEqual(hits, []);
+  const landing = fs.readFileSync(path.join(root, 'components/landing.tsx'), 'utf8');
+  assert.match(landing, /<h1[^>]*>\{HERO_TITLE\}<\/h1>/);
+  assert.equal(productCopy.HERO_TITLE, 'Leverage your BTC in one transaction.');
+  assert.equal(productCopy.HERO_SUBLINE, 'Coil borrows MUSD against your bitcoin, buys more BTC on Mezo Pools and posts it back, all in one transaction, inside an account only you control. A protection keeper can only make your position safer.');
+  assert.equal(productCopy.heroEyebrow(31611), 'Mezo testnet · chain 31611 · not audited');
+  assert.equal(productCopy.BLOCKED_CARD_LABEL, 'Sample preview');
+  assert.equal(productCopy.poolWarning(663, 200), 'Pool price is 6.6% away from the oracle. Opens need under 2%.');
+  assert.equal(productCopy.poolGapOneDecimal(665), '6.7%');
+  assert.equal(productCopy.MOAT_CARDS.length, 4);
+  assert.doesNotMatch(landing + productCopy.HERO_TITLE + productCopy.HERO_SUBLINE + productCopy.MOAT_CARDS.map(card => card.title + card.body).join('\n'), /Turn your BTC into more BTC/);
 });
