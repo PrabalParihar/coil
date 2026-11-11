@@ -33,7 +33,7 @@ export const MOAT_CARDS = [
   },
   {
     title: "Rescues are free. Tips only when it worked.",
-    body: "Coil charges 0% on protection, repay, de-lever, unwind and close. A keeper earns your MEZO tip only if your ratio actually rose, at most once per block.",
+    body: "Coil charges 0% on protection, repay, de-lever, unwind and close. A keeper earns your MEZO tip only if your ratio actually rose, at most once per block. MEZO is Mezo's network token. You add MEZO to your account for tips. Your account pays whoever runs protection, usually the keeper, from it, up to the amount you set, only when protection raises your ratio.",
   },
   {
     title: "Every fill checked against the BTC price feed.",
@@ -92,47 +92,70 @@ export function slippageMessage(limitPercent: string): string {
 
 export const RECOVERY_STILL = "What you can still do: repay MUSD, add BTC.";
 
+/**
+ * One percent formatter for the screen. Always one decimal: 5.43 -> 5.4%, 200 -> 200.0%.
+ */
+export function formatOneDecimalPercent(percent: number): string {
+  if (!Number.isFinite(percent)) return "0.0%";
+  const sign = percent < 0 ? "-" : "";
+  const tenths = Math.round(Math.abs(percent) * 10);
+  const whole = Math.trunc(tenths / 10);
+  const frac = tenths % 10;
+  return `${sign}${whole}.${frac}%`;
+}
+
+/** Basis points through the same formatter. 543 -> 5.4%, 200 -> 2.0%. */
+export function formatBpsOneDecimal(bps: number): string {
+  if (!Number.isFinite(bps)) return "0.0%";
+  return formatOneDecimalPercent(bps / 100);
+}
+
 export const LEVERAGE_CHOICES = [
-  { multiple: "2x", crPercent: 200, crLabel: "200% CR", ltvLabel: "50% LTV" },
-  { multiple: "3x", crPercent: 150, crLabel: "150% CR", ltvLabel: "66.7% LTV" },
-  { multiple: "4x", crPercent: 133.33, crLabel: "133.33% CR", ltvLabel: "75% LTV" },
+  { multiple: "2x", crPercent: 200, crLabel: `${formatOneDecimalPercent(200)} CR`, ltvLabel: `${formatOneDecimalPercent(50)} LTV` },
+  { multiple: "3x", crPercent: 150, crLabel: `${formatOneDecimalPercent(150)} CR`, ltvLabel: `${formatOneDecimalPercent(200 / 3)} LTV` },
+  { multiple: "4x", crPercent: 133.33, crLabel: `${formatOneDecimalPercent(133.33)} CR`, ltvLabel: `${formatOneDecimalPercent(75)} LTV` },
 ] as const;
 
 export function leverageChoice(crPercent: number) {
   return LEVERAGE_CHOICES.find((choice) => Math.abs(choice.crPercent - crPercent) < 0.2) ?? LEVERAGE_CHOICES[0];
 }
 
-/**
- * One percent formatter for a screen. 5.43 -> 5.4%, 2 -> 2%.
- * Trailing .0 is omitted so an exact percent stays exact.
- */
-export function formatOneDecimalPercent(percent: number): string {
-  if (!Number.isFinite(percent)) return "0%";
-  const sign = percent < 0 ? "-" : "";
-  const tenths = Math.round(Math.abs(percent) * 10);
-  const whole = Math.trunc(tenths / 10);
-  const frac = tenths % 10;
-  return frac === 0 ? `${sign}${whole}%` : `${sign}${whole}.${frac}%`;
-}
-
-/** Basis points through the same formatter. 543 -> 5.4%. */
-export function formatBpsOneDecimal(bps: number): string {
-  if (!Number.isFinite(bps)) return "0%";
-  return formatOneDecimalPercent(bps / 100);
-}
-
-/** "BTC can fall 45%" from a collateral ratio already computed by the quote. */
+/** "BTC can fall 45.0%" from a collateral ratio already computed by the quote. */
 export function btcCanFallLine(dropPercent: number): string {
   if (!Number.isFinite(dropPercent) || dropPercent <= 0) return "BTC can fall 0%";
   return `BTC can fall ${formatOneDecimalPercent(dropPercent)}`;
 }
 
-/** 664 -> 6.64%, 200 -> 2%. Input is basis points from a chain read. */
+/** Basis points through the same one-decimal formatter. */
 export function bpsToPercent(bps: number): string {
-  if (!Number.isFinite(bps)) return "0%";
-  const rounded = Math.round(bps) / 100;
-  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
-  return `${text}%`;
+  return formatBpsOneDecimal(bps);
+}
+
+/** Local calendar time plus a short relative age. Never an ISO timestamp. */
+export function formatActivityTime(unixSeconds: number, nowSeconds: number): string {
+  if (!Number.isFinite(unixSeconds) || unixSeconds <= 0) return "Time unavailable";
+  const date = new Date(unixSeconds * 1000);
+  const local = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+  const delta = Math.max(0, Math.floor(nowSeconds - unixSeconds));
+  const relative = delta < 60
+    ? `${delta} sec ago`
+    : delta < 3600
+      ? `${Math.floor(delta / 60)} min ago`
+      : delta < 86400
+        ? `${Math.floor(delta / 3600)} hr ago`
+        : `${Math.floor(delta / 86400)} days ago`;
+  return `${local} · ${relative}`;
+}
+
+/** Minimum debt copy. The amounts are passed in from chain data and the live price. */
+export function minDebtDepositMessage(minDebtMusd: string, leverage: string, depositBtc: string): string {
+  return `Mezo needs at least ${minDebtMusd} MUSD of debt. At ${leverage}, deposit at least ${depositBtc} BTC.`;
 }
 
 /** One decimal for the pool gap: 663 -> 6.6%. Same formatter as every other percent on the screen. */

@@ -29,7 +29,7 @@ export function WorkspaceHeader({ children, className }: { children: ReactNode; 
 const destinations = [
   { href: "/#how", label: "How it works" },
   { href: "/#app", label: "App" },
-  { href: "/guard", label: "Guard log" },
+  { href: "/guard", label: "Protection log" },
   { href: "/stats", label: "Stats" },
   { href: "/keeper", label: "Keeper" },
   { href: "/#proof", label: "Receipts" },
@@ -47,8 +47,8 @@ function useDestinations() {
 
 export function SiteNavigation() {
   const links = useDestinations();
-  const primary = ["App", "Guard log", "Stats", "Keeper"];
-  const icons = { App: LayoutDashboard, "Guard log": ShieldCheck, Stats: ChartNoAxesCombined, Keeper: Activity, "How it works": BookOpen, Receipts: ReceiptText, Risks: CircleHelp };
+  const primary = ["App", "Protection log", "Stats", "Keeper"];
+  const icons = { App: LayoutDashboard, "Protection log": ShieldCheck, Stats: ChartNoAxesCombined, Keeper: Activity, "How it works": BookOpen, Receipts: ReceiptText, Risks: CircleHelp };
   return <aside className="workspace-rail fixed inset-y-0 left-0 z-40 hidden w-52 flex-col overflow-y-auto border-r border-border bg-background p-4 lg:flex">
     <Link href="/" className="flex min-h-11 shrink-0 items-center gap-2.5 px-2" aria-label="Coil Labs home"><CoilMark className="size-7" /><span className="text-base font-semibold tracking-tight">Coil Labs</span></Link>
     <p className="mt-8 mb-2 px-3 text-[11px] text-muted-foreground">Workspace</p>
@@ -71,7 +71,7 @@ export function SiteNavigation() {
 }
 
 export function WorkspaceNavigation() {
-  const links = useDestinations().filter(item => ["App", "Guard log", "Stats", "Keeper"].includes(item.label));
+  const links = useDestinations().filter(item => ["App", "Protection log", "Stats", "Keeper"].includes(item.label));
   return <nav aria-label="Workspace" className="flex border-b border-border bg-background lg:hidden">
     {links.map(item => <Link key={item.label} href={item.href} aria-current={item.current ? "page" : undefined} className={cn("flex min-h-11 flex-1 items-center justify-center border-b-2 border-transparent px-2 text-xs text-muted-foreground", item.current && "border-filament font-medium text-foreground")}>{item.label}</Link>)}
   </nav>;

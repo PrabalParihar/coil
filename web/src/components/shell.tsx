@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, ArrowUpRight, Check, ChevronDown, X } from "lucide-react";
 import { animate, AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { cn } from "cn";
+import { formatOneDecimalPercent } from "@/lib/product-copy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -387,7 +388,7 @@ export function CrGauge({
   const [nx, ny] = polar(120, 120, 82, needle);
   return (
     <div className="relative mx-auto w-full max-w-[300px]">
-      <svg viewBox="0 0 240 140" className="w-full overflow-visible" role="img" aria-label={empty ? "No open position" : `Collateral ratio gauge at ${percent.toFixed(2)} percent`}>
+      <svg viewBox="0 0 240 140" className="w-full overflow-visible" role="img" aria-label={empty ? "No open position" : `Collateral ratio gauge at ${formatOneDecimalPercent(percent).replace("%", "")} percent`}>
         <path d={arc(120, 120, 100, 0, 180)} fill="none" stroke="currentColor" strokeOpacity="0.08" strokeWidth="16" strokeLinecap="round" />
         {!empty ? (
           <>

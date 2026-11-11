@@ -51,6 +51,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const passport = config !== fallbackConfig;
 
   useEffect(() => {
+    if (!walletConnectProjectId) console.warn("WalletConnect is unavailable: no project ID configured.");
     const projectId = walletConnectProjectId ?? "";
     const next = getDefaultConfig({
       appName: "Coil Labs",

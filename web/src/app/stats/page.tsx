@@ -6,7 +6,8 @@ import { formatUnits } from "viem";
 import { usePublicClient } from "wagmi";
 import { shorten } from "@/components/shell";
 import { FACTORY_DEPLOY_BLOCK, factoryAddress, selectedChain } from "@/lib/mezo";
-import { deployment, explorerUrl } from "@/lib/network";
+import { explorerUrl } from "@/lib/network";
+import { formatActivityTime } from "@/lib/product-copy";
 import { loadPublicStats, mergeStatsEvents, summarizeStatsEvents, type StatsBase, type StatsEvent } from "@/lib/stats-reader";
 
 export default function StatsPage() {
@@ -18,7 +19,8 @@ export default function StatsPage() {
   const [error, setError] = useState<string | null>(null);
   const [failedBefore, setFailedBefore] = useState<bigint | undefined>();
   const [busy, setBusy] = useState(false);
-  const [updated, setUpdated] = useState<string | null>(null);
+  const [updated, setUpdated] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const mounted = useRef(false);
   const running = useRef(false);
   const load = useCallback(async (before?: bigint) => {
@@ -26,7 +28,7 @@ export default function StatsPage() {
     running.current = true; setBusy(true); setFailedBefore(before);
     try {
       const page = await loadPublicStats(client, { factory: factoryAddress, deploymentBlock: FACTORY_DEPLOY_BLOCK, before }, snapshot => {
-        if (mounted.current) { setBase(snapshot); setUpdated(new Date().toISOString()); }
+        if (mounted.current) { setBase(snapshot); setUpdated(Math.floor(Date.now() / 1000)); }
       });
       if (!mounted.current) return;
       setEvents(previous => mergeStatsEvents(previous, page.events));
@@ -39,7 +41,8 @@ export default function StatsPage() {
   useEffect(() => {
     mounted.current = true; void load();
     const timer = setInterval(() => void load(), 30_000);
-    return () => { mounted.current = false; clearInterval(timer); };
+    const clock = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 30_000);
+    return () => { mounted.current = false; clearInterval(timer); clearInterval(clock); };
   }, [load]);
   const counts = summarizeStatsEvents(events);
   const cards = base ? [
@@ -55,19 +58,19 @@ export default function StatsPage() {
       <details className="mt-4 text-xs text-muted-foreground">
         <summary className="cursor-pointer text-sm">Technical details</summary>
         <div className="mt-2 space-y-2 leading-relaxed">
-          <p>History starts with the latest 9,999-block window; older windows load only when requested.</p>
-          <p>Deploy block {FACTORY_DEPLOY_BLOCK.toString()}{base ? `. Snapshot block ${base.latest.toString()}.` : ""}</p>
-          <p>Last successful base snapshot: {updated ?? "unavailable"}. Event counts cover loaded windows, not the whole chain. Position and rescue reads are capped.</p>
-          <p>{loadedHistory ? `${counts.accountLogs} AccountCreated logs in loaded windows.` : "AccountCreated logs are still loading."} Keeper check-ins are Selected-factory events in loaded windows.</p>
-          <p>Public chain observations are not real-user recruitment evidence. Status on this deployment: {deployment.status}.</p>
+          <p>History starts with the latest block window. Older windows load only when requested.</p>
+          <p>Deploy block {FACTORY_DEPLOY_BLOCK.toString()}{base ? `. Latest read block ${base.latest.toString()}.` : ""}</p>
+          <p>Last successful read: {updated ? formatActivityTime(updated, now) : "unavailable"}. Event counts cover loaded windows, not the whole chain. Position and protection reads are capped.</p>
+          <p>{loadedHistory ? `${counts.accountLogs} account-open logs in loaded windows.` : "Account-open logs are still loading."} Keeper check-ins are events from the selected factory in loaded windows.</p>
+          <p>Refreshing does not count the same event twice. Older pages stop before the earliest block already loaded.{cursor !== null ? ` The next older page starts at block ${cursor.toString()}.` : ""}</p>
         </div>
       </details>
-      <button type="button" className="link mt-4 text-sm" disabled={busy || !factoryAddress} onClick={() => void load(error ? failedBefore : undefined)}>Retry / refresh stats</button>
+      <button type="button" className="link mt-4 text-sm" disabled={busy || !factoryAddress} aria-label="Refresh stats" onClick={() => void load(error ? failedBefore : undefined)}>Refresh</button>
       {error ? <p role="alert" className="mt-4 text-danger">{error}</p> : null}
       {base?.unreadable ? <p className="mt-3 text-sm text-warn" role="alert">Some positions are unreadable; the open count is incomplete.</p> : null}
       {!factoryAddress ? <p className="mt-5">No confirmed Coil factory configured on this chain.</p> : !base && !error ? <p className="mt-5">Reading factory counts…</p> : null}
       {base ? <dl className="mt-8 grid gap-3 sm:grid-cols-2">{cards.map(([label, value, detail]) => <div key={label} className="well p-5"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="num mt-1 text-3xl font-medium">{value}</dd><p className="mt-1 text-xs text-muted-foreground">{detail}</p></div>)}</dl> : null}
-      {cursor !== null ? <p className="mt-5 text-xs text-muted-foreground">Loaded history begins at block {cursor.toString()}. Refreshes deduplicate event identities; older pages end strictly before the earliest loaded block.</p> : null}
-      {cursor !== null && cursor > FACTORY_DEPLOY_BLOCK ? <button type="button" className="link mt-4" disabled={busy || Boolean(error)} onClick={() => void load(cursor)}>{busy ? "Loading…" : `Load older history before block ${cursor}`}</button> : null}
+      {cursor !== null ? <p className="mt-5 text-xs text-muted-foreground">Older activity is available.</p> : null}
+      {cursor !== null && cursor > FACTORY_DEPLOY_BLOCK ? <button type="button" className="link mt-4" disabled={busy || Boolean(error)} onClick={() => void load(cursor)}>{busy ? "Loading…" : "Load older history"}</button> : null}
   </PublicPage>;
 }

@@ -1,4 +1,5 @@
 import { addr } from "./mezo";
+import { formatOneDecimalPercent } from "./product-copy";
 
 const WAD = 10n ** 18n;
 const MCR = 11n * 10n ** 17n;
@@ -151,7 +152,7 @@ export function quoteLoop(
 
   if (debt === 0n) {
     throw new QuoteError(
-      "This deposit cannot open at that ratio. Mezo requires at least 1,800 MUSD of debt, and borrowing that much would land under your target. Add BTC or choose a lower collateral ratio.",
+      "This deposit cannot open at that ratio. Borrowing Mezo's minimum debt would land under your target. Add BTC or choose a lower collateral ratio.",
     );
   }
 
@@ -264,7 +265,7 @@ export function quoteFlashLoop(
   }
   if (!chosen.ok || chosen.minted === 0n) {
     throw new QuoteError(
-      "This deposit cannot open at that ratio. Mezo requires at least 1,800 MUSD of debt, and borrowing that much would land under your target. Add BTC or choose a lower collateral ratio.",
+      "This deposit cannot open at that ratio. Borrowing Mezo's minimum debt would land under your target. Add BTC or choose a lower collateral ratio.",
     );
   }
   if (flash > 0n && !sample) {
@@ -335,10 +336,86 @@ export function formatUsd(value: bigint, digits = 0) {
 }
 
 export function formatPercent(cr: bigint) {
-  const hundredths = (cr * 10000n) / WAD;
-  const whole = hundredths / 100n;
-  const frac = (hundredths % 100n).toString().padStart(2, "0");
-  return `${whole}.${frac}%`;
+  return formatOneDecimalPercent(crToPercent(cr));
+}
+
+/** Smallest mint that leaves at least `minNetDebt` after the borrowing fee. */
+export function minimumBorrowAmount(minNetDebt: bigint, borrowRate: bigint): bigint {
+  return (minNetDebt * WAD + (WAD + borrowRate) - 1n) / (WAD + borrowRate);
+}
+
+/** Protocol debt of a fresh open that borrows only the minimum. Includes gas compensation. */
+export function minimumPositionDebt(minNetDebt: bigint, borrowRate: bigint): bigint {
+  const amount = minimumBorrowAmount(minNetDebt, borrowRate);
+  return GAS + amount + (amount * borrowRate) / WAD;
+}
+
+/**
+ * Deposit that can carry Mezo's minimum debt at `targetCR`.
+ * Borrowed MUSD is valued at the BTC price feed after the pool fee and the Coil fee.
+ * The result is the smallest wei amount the fresh quote will accept, rounded up.
+ */
+export function minimumDepositWei(market: Market, targetCR: bigint): bigint {
+  if (market.price <= 0n || market.minNetDebt <= 0n || targetCR <= WAD) return 0n;
+  const amount = minimumBorrowAmount(market.minNetDebt, market.borrowRate);
+  const debt = minimumPositionDebt(market.minNetDebt, market.borrowRate);
+  const charged = coilFee(amount, market.coilFeeBps ?? 0n);
+  const spend = amount > charged ? amount - charged : 0n;
+  const poolFee = (spend * market.feeBps) / BPS;
+  const boughtMusd = spend > poolFee ? spend - poolFee : 0n;
+  const needMusd = (targetCR * debt + WAD - 1n) / WAD;
+  const depositMusd = needMusd > boughtMusd ? needMusd - boughtMusd : 0n;
+  const analytic = (depositMusd * WAD + market.price - 1n) / market.price;
+  const cap = WAD;
+  const fits = (deposit: bigint) => {
+    if (deposit <= 0n) return false;
+    try {
+      quoteFlashLoop(deposit, targetCR, 50n, market, true);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const search = (loStart: bigint, hiStart: bigint) => {
+    let lo = loStart;
+    let hi = hiStart;
+    if (!fits(hi)) return hi;
+    while (lo + 1n < hi) {
+      const mid = (lo + hi) / 2n;
+      if (fits(mid)) hi = mid;
+      else lo = mid;
+    }
+    return hi;
+  };
+  if (analytic > 0n && fits(analytic)) return search(0n, analytic);
+  if (fits(cap)) return search(analytic, cap);
+  return analytic > 0n ? analytic : cap;
+}
+
+/** Round a BTC amount up to `digits` decimals so the shown figure is still enough. */
+export function ceilBtcWei(wei: bigint, digits = 4): bigint {
+  if (wei <= 0n) return 0n;
+  const scale = 10n ** BigInt(18 - digits);
+  return ((wei + scale - 1n) / scale) * scale;
+}
+
+/** Round a BTC amount up to `digits` decimals so the shown figure is still enough. */
+export function formatBtcCeil(wei: bigint, digits = 4): string {
+  if (wei <= 0n) return "0";
+  return trim(ceilBtcWei(wei, digits), 18, digits);
+}
+
+const MAX_PRESET_WEI = WAD;
+
+/** Round-number deposits at or above `minWei`, capped by 1 BTC or a tighter factory limit. */
+export function depositPresets(minWei: bigint, maxWei: bigint = MAX_PRESET_WEI): string[] {
+  const cap = maxWei > 0n && maxWei < MAX_PRESET_WEI ? maxWei : MAX_PRESET_WEI;
+  if (minWei > cap) return [];
+  const step = minWei <= 10n ** 17n ? 10n ** 16n : minWei <= 5n * 10n ** 17n ? 5n * 10n ** 16n : 10n ** 17n;
+  const first = minWei <= 0n ? step : ((minWei + step - 1n) / step) * step;
+  const out: string[] = [];
+  for (let value = first; value <= cap && out.length < 4; value += step) out.push(trim(value, 18, 8));
+  return out;
 }
 
 function trim(value: bigint, decimals: number, digits: number) {

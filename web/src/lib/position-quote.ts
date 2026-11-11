@@ -37,11 +37,17 @@ export function selectPositionPreview(required: boolean, key: string, state: Pos
  */
 export function presentPositionPreview(required: boolean, key: string, state: PositionQuoteState | null, freshPreview: PositionPreview): PositionPreview & { displayOnly: boolean; reason: string | null } {
   const selected = selectPositionPreview(required, key, state, freshPreview);
-  if (required && selected.kind === "ok" && state?.key === key && state.kind === "ok") {
+  // No account exists, so a fresh estimate is the quote. Its error is about the deposit, not a loading account.
+  if (!required) {
+    if (freshPreview.kind === "ok") return { ...freshPreview, displayOnly: false, reason: null };
+    if (freshPreview.kind === "error") return { ...freshPreview, displayOnly: false, reason: null };
+    return { kind: "loading", illustrative: false, displayOnly: false, reason: null };
+  }
+  if (selected.kind === "ok" && state?.key === key && state.kind === "ok") {
     return { kind: "ok", quote: selected.quote, illustrative: false, displayOnly: false, reason: null };
   }
-  const reason = !required ? null : selected.kind === "error" ? selected.message : ACCOUNT_QUOTE_PENDING;
-  if (freshPreview.kind === "ok") return { ...freshPreview, displayOnly: required, reason };
+  const reason = selected.kind === "error" ? selected.message : ACCOUNT_QUOTE_PENDING;
+  if (freshPreview.kind === "ok") return { ...freshPreview, displayOnly: true, reason };
   if (selected.kind === "error") return { ...selected, displayOnly: true, reason };
   return { kind: "loading", illustrative: false, displayOnly: true, reason };
 }
