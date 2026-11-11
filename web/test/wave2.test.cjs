@@ -352,6 +352,23 @@ test('stats refresh deduplicates overlapping events and does not double count re
   const merged = statsReader.mergeStatsEvents([rescue], [{ ...rescue }, heartbeat]);
   assert.deepEqual(statsReader.summarizeStatsEvents(merged), { accountLogs: 0, heartbeats: 1, rescues: 1, tips: 5n * W });
 });
+test('generated testnet deployment is the paused completion factory and keeps the previous factory retained', () => {
+  const generated = require('../src/lib/deployment.generated.ts');
+  const active = generated.DEPLOYMENTS['31611'];
+  assert.equal(active.status, 'ready');
+  assert.equal(active.factory, '0x339ef0116e17BA42987c1E2E380Af59B38f62064');
+  assert.equal(active.deploymentBlock, '16708730');
+  assert.equal(active.keeper, '0x1D2621480011C44693a47801C1158E70b25b4B4F');
+  assert.deepEqual(active.capabilities, { policy: true, coilFee: true, ownerActions: true });
+  assert.equal(generated.DEPLOYMENTS['31612'].status, 'pending');
+  assert.equal(generated.DEPLOYMENTS['31612'].factory, null);
+  const previous = generated.RETAINED_DEPLOYMENTS['31611'].find(entry => entry.factory.toLowerCase() === '0xff3335576f998ee872596d4eb7abecb71a0d5bc8');
+  assert.equal(previous.deploymentBlock, '16408315');
+  assert.equal(previous.status, 'legacy');
+  assert.equal(previous.capabilities.policy, false);
+  const selected = readiness.resolveDeployment(active, active.factory, active.deploymentBlock, generated.DEPLOYMENTS);
+  assert.equal(selected.keeper, '0x1D2621480011C44693a47801C1158E70b25b4B4F');
+});
 test('same-owner discovery refresh preserves the funded view while changed-owner refresh discards old consent', () => {
   assert.equal(typeof ownerAccounts.ownerDiscoveryView, 'function');
   const catalog = ownerAccounts.ownerDeploymentCatalog(newFactory, [oldFactory]);

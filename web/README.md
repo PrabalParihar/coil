@@ -95,9 +95,11 @@ The dev server listens on [http://127.0.0.1:43123](http://127.0.0.1:43123).
 [coil.up.railway.app](https://coil.up.railway.app) serves that export.
 The public source of truth is `deployments/manifest.json`, copied by the root
 `node scripts/deployments.cjs --generate` command into the web build context.
-Do not edit `src/lib/deployment.generated.ts` manually. The current production
-pair is `0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`, block `16408315`,
-explicitly labelled legacy. Existing clones retain their deployed capabilities.
+Do not edit `src/lib/deployment.generated.ts` manually. The active testnet
+pair is `0x339ef0116e17BA42987c1E2E380Af59B38f62064`, block `16708730`,
+status `ready`, with opening still paused. The previous factory
+`0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`, block `16408315`, stays
+retained and legacy. Existing clones retain their deployed capabilities.
 
 Set `NEXT_PUBLIC_COIL_CHAIN_ID=31612` for mainnet market reads and matching
 wallet/RPC/explorer selection. Mainnet transactions require a real `ready`

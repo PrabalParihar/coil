@@ -2,7 +2,11 @@
 
 ## Wave 2 completion release candidate (unreleased)
 
-Source implementation, local verification, public deployment proof and submission publication are distinct states. No new on-chain address, recruited tester or audit is established by this changelog. Existing clones are not upgraded.
+Source implementation, local verification, public deployment proof and submission publication are distinct states. The paused matsnet completion factory is now the active manifest entry. Recruited testers, indexed full verification and an audit are not established by this changelog. Existing clones are not upgraded.
+
+## Matsnet completion factory recorded
+
+Active chain 31611 factory `0x339ef0116e17BA42987c1E2E380Af59B38f62064`, block 16708730, from main `7fd588a`. Opening is paused. Owner, guardian and park governor are deployer `0xf74E746a8d7A46A8b0f745C6d5944Ee672c1a3AF`. Keeper is `0x1D2621480011C44693a47801C1158E70b25b4B4F`. Limits are 1 BTC collateral and 100,000 MUSD debt. FlashSizer `0xdfab302Ee41dFD1BA3732F23B8b5f7eDe40E7699` and CoilPark `0x9FfA606C93dCF30D3E34159020f6A1667C21f50b` were created inside the implementation constructor and have no top-level creation transaction. The previous factory `0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`, block 16408315, is retained. Mainnet is unchanged. See [DEPLOYMENTS.md](DEPLOYMENTS.md).
 
 - Add owner surplus claim, funded MUSD repayment, protocol-permitted funded close and direct collateral top-up.
 - Use the approved Recovery Mode flow: block new leverage; allow safe pure debt repayment; keep full close subject to Mezo's actual restrictions, with no automatic queued transaction.

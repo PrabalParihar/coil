@@ -2,7 +2,7 @@
 
 BTC leverage on Mezo through MUSD borrowing and Mezo Pools. An owner-controlled account holds the trove; permissionless `guard()` can reduce risk and earn a funded MEZO tip after a real ratio improvement.
 
-**Release candidate, unaudited.** Source changes are separate from a verified public release. The last production pair established by the 5 November 2026 PRD gap review is legacy matsnet factory [`0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`](https://explorer.test.mezo.org/address/0xff3335576f998EE872596d4EB7ABECb71a0D5BC8), block **16408315**, chain **31611**. This does not deploy or upgrade its clones. Current Wave 2 completion addresses, funded feature receipts and recruited-tester evidence remain pending. Mainnet go-live is gated.
+**Release candidate, unaudited.** Source changes are separate from an activated public release. The active matsnet factory is the paused Wave 2 completion release [`0x339ef0116e17BA42987c1E2E380Af59B38f62064`](https://explorer.test.mezo.org/address/0x339ef0116e17BA42987c1E2E380Af59B38f62064), block **16708730**, chain **31611**, from main `7fd588a`. Opening is paused. The previous production factory [`0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`](https://explorer.test.mezo.org/address/0xff3335576f998EE872596d4EB7ABECb71a0D5BC8), block **16408315**, stays retained; its clones are not upgraded. Indexed full verification, funded feature receipts and recruited-tester evidence remain pending. Mainnet go-live is gated.
 
 - Public app: https://coil.up.railway.app
 - Public history: https://coil.up.railway.app/guard and https://coil.up.railway.app/stats
@@ -69,7 +69,7 @@ node scripts/deployments.cjs --generate
 node scripts/deployments.cjs --check
 ```
 
-Manifest fields include `chainId`, `status` (`legacy`, `pending`, `ready`), `factory`, decimal-string `deploymentBlock`, `implementation`, expected `keeper`, the `contracts` inventory and `capabilities` (`policy`, `coilFee`, `ownerActions`). The `retainedDeployments` catalog preserves old generations for owner selection and separately pinned keeper services. A ready release needs all seven components, including linked `CoilOwner`, plus its actual `parkGovernor`. The present matsnet entry is legacy; mainnet is pending.
+Manifest fields include `chainId`, `status` (`legacy`, `pending`, `ready`), `factory`, decimal-string `deploymentBlock`, `implementation`, expected `keeper`, the `contracts` inventory and `capabilities` (`policy`, `coilFee`, `ownerActions`). The `retainedDeployments` catalog preserves old generations for owner selection and separately pinned keeper services. A ready release needs all seven components, including linked `CoilOwner`, plus its actual `parkGovernor`. The active matsnet entry is that paused completion release; mainnet is pending.
 
 Keeper configuration uses `COIL_CHAIN_ID`, and paired `COIL_FACTORY` / `COIL_FACTORY_DEPLOY_BLOCK` overrides. The web uses `NEXT_PUBLIC_COIL_CHAIN_ID` and paired `NEXT_PUBLIC_COIL_FACTORY` / `NEXT_PUBLIC_COIL_FACTORY_DEPLOY_BLOCK`. Mainnet keeper execution additionally needs a ready known manifest deployment and `COIL_MAINNET_ENABLED=true`; web writes need `NEXT_PUBLIC_COIL_ENABLE_MAINNET_WRITES=true` with the configured ready deployment. These flags do not grant go-live approval.
 
@@ -86,7 +86,7 @@ node scripts/release-evidence.cjs --collect --evidence docs/evidence/tester-proo
 node scripts/release-evidence.cjs --online --web-url https://coil.up.railway.app
 ```
 
-An offline pass reports `onlineVerified: false`. `--collect` does not certify a ready release. Current null deployment fields/empty tester records intentionally fail the readiness gate. See [DEPLOYMENTS.md](DEPLOYMENTS.md) for exact deploy/verification inputs and the [evidence guide](docs/evidence/README.md) for decimal-string blocks and relative receipt paths.
+An offline pass reports `onlineVerified: false`. `--collect` does not certify a ready release. The empty tester ledger still fails the readiness gate, and a paused factory fails online activation. See [DEPLOYMENTS.md](DEPLOYMENTS.md) for exact deploy/verification inputs and the [evidence guide](docs/evidence/README.md) for decimal-string blocks and relative receipt paths.
 
 See the [19-requirement completion matrix](docs/WAVE2_STATUS.md) for implemented behavior and remaining public acceptance.
 

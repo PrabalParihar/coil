@@ -132,11 +132,27 @@ test('retained factories cannot silently change chain, creation block or identit
 test('shipped factory generations stay reachable after future active replacement', () => {
   const {loadManifest} = require('./deployments.cjs');
   const m = loadManifest(path.resolve(__dirname, '..'));
+  const active = m.deployments['31611'];
+  assert.equal(active.status, 'ready');
+  assert.equal(active.factory, '0x339ef0116e17BA42987c1E2E380Af59B38f62064');
+  assert.equal(active.deploymentBlock, '16708730');
+  assert.equal(active.implementation, '0xf61CEf72Fc0CA52dBFC86C0eDE7F7a3fC8C64b45');
+  assert.equal(active.keeper, '0x1D2621480011C44693a47801C1158E70b25b4B4F');
+  assert.equal(active.parkGovernor, '0xf74E746a8d7A46A8b0f745C6d5944Ee672c1a3AF');
+  assert.deepEqual(active.capabilities, { policy: true, coilFee: true, ownerActions: true });
+  for (const role of ['CoilFactory', 'CoilAccount', 'CoilLegacy', 'CoilExit', 'FlashSizer', 'CoilPark', 'CoilOwner']) assert.equal(typeof active.contracts[role], 'string');
+  assert.equal(active.contracts.CoilFactory, active.factory);
+  assert.equal(active.contracts.CoilAccount, active.implementation);
+  assert.equal(m.deployments['31612'].status, 'pending');
+  assert.equal(m.deployments['31612'].factory, null);
   const retained = m.retainedDeployments['31611'];
   for (const [factory, block] of [
     ['0xff3335576f998EE872596d4EB7ABECb71a0D5BC8', '16408315'],
     ['0x2218D33d2f9279A4266b49dB572F5b1343d09De5', '16407578'],
     ['0x6A38f560cF8612cc81cF966831890DBb310e31F7', '16400160'],
     ['0xE29fAf17ed44B43c94D2Ff0e43E289aE49D98a3e', '16243828'],
-  ]) assert.ok(retained.some(d => d.factory.toLowerCase() === factory.toLowerCase() && d.deploymentBlock === block), `Missing retained factory ${factory}`);
+  ]) assert.ok(retained.some(d => d.factory.toLowerCase() === factory.toLowerCase() && d.deploymentBlock === block && d.status === 'legacy'), `Missing retained factory ${factory}`);
+  const previous = retained.find(d => d.factory.toLowerCase() === '0xff3335576f998ee872596d4eb7abecb71a0d5bc8');
+  assert.equal(previous.deploymentBlock, '16408315');
+  assert.deepEqual(previous.capabilities, { policy: false, coilFee: false, ownerActions: false });
 });

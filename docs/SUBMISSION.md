@@ -44,13 +44,13 @@ Every runtime must remain below EIP-170's 24,576-byte limit and changed executio
 
 ## Chain and current evidence
 
-**Matsnet: chain 31611.** The 5 November 2026 PRD gap review established legacy production factory [`0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`](https://explorer.test.mezo.org/address/0xff3335576f998EE872596d4EB7ABECb71a0D5BC8), deployment block **16408315**, implementation `0xd4495f969995b3e48998573b5adc6f3106672b80`. The older `0x2218…9De5` / 16407578 pair is historical, not current production configuration.
+**Matsnet: chain 31611.** The active factory is the paused completion release [`0x339ef0116e17BA42987c1E2E380Af59B38f62064`](https://explorer.test.mezo.org/address/0x339ef0116e17BA42987c1E2E380Af59B38f62064), deployment block **16708730**, implementation `0xf61CEf72Fc0CA52dBFC86C0eDE7F7a3fC8C64b45`, from main `7fd588a`. Opening is paused. Keeper `0x1D2621480011C44693a47801C1158E70b25b4B4F`. The 5 November 2026 PRD gap review's legacy production factory [`0xff3335576f998EE872596d4EB7ABECb71a0D5BC8`](https://explorer.test.mezo.org/address/0xff3335576f998EE872596d4EB7ABECb71a0D5BC8), block **16408315**, implementation `0xd4495f969995b3e48998573b5adc6f3106672b80`, is retained. The older `0x2218…9De5` / 16407578 pair is historical.
 
-The PRD gap review observed the public app and chain heartbeats for that legacy build. It found partial source verification: five components reported verified, Legacy was unverified and implementation full verification was false. This materials update does not refresh those dated live observations. It does not claim every contract unverified, or full verification complete.
+The PRD gap review observed the public app and chain heartbeats for that retained legacy build. It found partial source verification of that build: five components reported verified, Legacy was unverified and implementation full verification was false. Those dated observations are not verification of the completion factory. Full indexed verification of the new components is not claimed. FlashSizer and CoilPark have no top-level creation transaction.
 
 A separate October run on an older matsnet factory recorded flash open, a guard with a 1 MEZO tip, and close. Its receipts are in [DEPLOYMENTS.md](../DEPLOYMENTS.md). They do not prove the completion release's fee, claim or Recovery Mode behavior. The original media is Wave 1; redesigned static captures contain illustrative UI states and placeholder hashes. They are labelled as illustrations in the new materials.
 
-**Pending:** exact completion-release deployment receipts, full indexed source verification, funded new-feature e2e receipts, public app/keeper readback on the same release and 3–5 recruited testers. The [proof ledger](evidence/tester-proofs.json) is intentionally empty. Local/fork fixtures and generated wallets are not real-user or public transaction evidence.
+**Recorded, still paused:** the completion-release factory, implementation, libraries, limits and keeper above. **Pending:** full indexed source verification, owner unpause, funded new-feature e2e receipts, public app/keeper readback on this factory and 3–5 recruited testers. The [proof ledger](evidence/tester-proofs.json) is intentionally empty. Local/fork fixtures and generated wallets are not real-user or public transaction evidence.
 
 **Mainnet: Mezo chain 31612. Not released.** Go-live remains separately gated behind security/matsnet verification, measured depth, explicit finite caps, chain-correct configuration, a separate keeper identity, rollback drill and explicit approval. Initial mainnet UI targeting is around 200% CR / 2×, subject to depth. Read-only protocol market data is not a Coil deployment or write enablement. **Unaudited.** No independent review claim is made.
 
@@ -83,7 +83,7 @@ New factories start paused. Finite nonzero collateral/debt limits are required b
 Public app: https://coil.up.railway.app
 Code: https://github.com/PrabalParihar/coil
 
-The 5 November PRD gap review's production baseline is legacy matsnet chain 31611, factory 0xff3335576f998EE872596d4EB7ABECb71a0D5BC8 at block 16408315. It is not the completion release. New deployment receipts, full source verification, funded feature proofs, matching public app/keeper readback and 3-5 recruited testers remain pending. Historical receipts are labelled by build; the proof ledger is empty until actual inputs arrive.
+The active matsnet factory is the paused completion release 0x339ef0116e17BA42987c1E2E380Af59B38f62064 at block 16708730, chain 31611. Opening is paused. The 5 November legacy factory 0xff3335576f998EE872596d4EB7ABECb71a0D5BC8 at block 16408315 is retained and is not upgraded. Full source verification, owner unpause, funded feature proofs, matching public app/keeper readback and 3-5 recruited testers remain pending. Historical receipts are labelled by build; the proof ledger is empty until actual inputs arrive.
 
 Deck PDF/PPTX and source plus a 112-second text-guided illustrative product pitch are in docs/pitch. The pitch is not new on-chain transaction proof.
 
