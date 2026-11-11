@@ -44,15 +44,15 @@ export default function StatsPage() {
   const counts = summarizeStatsEvents(events);
   const cards = base ? [
     ["Accounts", String(base.accounts), loadedHistory ? `${counts.accountLogs} AccountCreated logs in loaded windows` : "Factory count available; recent history loading"],
-    ["Open troves", base.open === null ? "Reading…" : String(base.open), `of first ${base.scanned} accounts; ${base.unreadable} unreadable`],
-    ["Guard rescues", loadedHistory ? String(counts.rescues) : "Reading…", "Loaded windows; first 40 accounts only"],
-    ["MEZO tips paid", loadedHistory ? `${formatUnits(counts.tips, 18)} MEZO` : "Reading…", "Guarded tips in loaded windows; first 40 accounts"],
+    ["Open positions", base.open === null ? "Reading…" : String(base.open), `of ${base.scanned} accounts read; ${base.unreadable} unreadable`],
+    ["Guard rescues", loadedHistory ? String(counts.rescues) : "Reading…", "Loaded windows. Account reads are capped."],
+    ["MEZO tips paid", loadedHistory ? `${formatUnits(counts.tips, 18)} MEZO` : "Reading…", "Guarded tips in loaded windows. Account reads are capped."],
     ["Heartbeats", loadedHistory ? String(counts.heartbeats) : "Reading…", "Selected-factory events in loaded windows"],
   ] : [];
   return <PublicPage eyebrow="Public stats" title="What the chain shows">
       <p className="mt-3 text-sm text-muted-foreground">{selectedChain.name}, chain {selectedChain.id}, {deployment.status} deployment. Factory and position counts publish before event history. History starts with the latest 9,999-block window; older windows load only when requested.</p>
       <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs"><span>Factory <a className="link" href={factoryAddress ? `${explorerUrl}/address/${factoryAddress}` : undefined}>{factoryAddress ? shorten(factoryAddress) : "pending"}</a></span><span>Deploy block {FACTORY_DEPLOY_BLOCK.toString()}</span>{base ? <span>Snapshot block {base.latest.toString()}</span> : null}</p>
-      <p className="mt-3 text-xs text-muted-foreground">Last successful base snapshot: {updated ?? "unavailable"}. Event counts cover loaded windows, not complete chain history. Position/rescue reads cover at most the first 40 accounts. Public chain observations are not real-user recruitment evidence.</p>
+      <p className="mt-3 text-xs text-muted-foreground">Last successful base snapshot: {updated ?? "unavailable"}. Event counts cover loaded windows, not complete chain history. Position and rescue reads are capped. Public chain observations are not real-user recruitment evidence.</p>
       <button type="button" className="link mt-4 text-sm" disabled={busy || !factoryAddress} onClick={() => void load(error ? failedBefore : undefined)}>Retry / refresh stats</button>
       {error ? <p role="alert" className="mt-4 text-danger">{error}</p> : null}
       {base?.unreadable ? <p className="mt-3 text-sm text-warn" role="alert">Some positions are unreadable; the open count is incomplete.</p> : null}

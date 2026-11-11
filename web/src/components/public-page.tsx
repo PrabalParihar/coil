@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { ArrowUpRight } from "lucide-react";
 import { CoilMark } from "@/components/shell";
-import { MobileNavigation, SiteNavigation, WorkspaceHeader, WorkspaceNavigation } from "@/components/site-navigation";
+import { MobileNavigation, SiteNavigation, WorkspaceHeader } from "@/components/site-navigation";
 import { deployment, selectedChain } from "@/lib/network";
 
 export function PublicPage({ eyebrow, title, children }: { eyebrow: string; title: string; children: ReactNode }) {
@@ -19,7 +19,6 @@ export function PublicPage({ eyebrow, title, children }: { eyebrow: string; titl
           <MobileNavigation />
         </div>
       </div>
-      <WorkspaceNavigation />
     </WorkspaceHeader>
     <main id="public-content" tabIndex={-1} className="mx-auto max-w-5xl scroll-mt-28 px-4 py-7 outline-none sm:px-8">
       <p className="mb-2 flex flex-wrap gap-x-2 text-xs text-muted-foreground"><span>{selectedChain.name}</span><span>· {deployment.status}</span></p>

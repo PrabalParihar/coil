@@ -12,7 +12,7 @@ export type PositionQuoteRequest = {
   target: bigint; slippage: bigint; flash: boolean;
 };
 
-/** New fee-aware views include the clone's existing position and refinancing. */
+/** New fee-aware views include the account's existing position and refinancing. */
 export async function readStateAwareQuote(client: Pick<PublicClient, "readContract">, request: PositionQuoteRequest): Promise<FlashPreview> {
   const common = { address: request.account, abi: coilAccountAbi, args: [request.deposit, request.target, request.slippage] as const };
   const [q, flashBtc, poolFeeMusd, coilFeeMusd] = request.flash

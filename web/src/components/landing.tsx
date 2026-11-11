@@ -18,6 +18,8 @@ import { formatUsd, type Market } from "@/lib/quote";
 import { factoryAddress } from "@/lib/mezo";
 import { deployment, selectedChain } from "@/lib/network";
 import { DEPLOYMENTS } from "@/lib/deployment.generated";
+import { HERO_SUBLINE, HERO_TITLE, HONEST_LIMITS, MOAT_LINES } from "@/lib/product-copy";
+import { KeeperStatus } from "@/components/keeper-status";
 import { shorten, useMotionOk } from "@/components/shell";
 
 const RING = "M240 70 a170 170 0 1 1 0 340 a170 170 0 1 1 0 -340";
@@ -36,7 +38,7 @@ function chevron(angle: number) {
 export function LoopViz() {
   const motionOk = useMotionOk();
   const stations = [
-    { x: 240, y: 70, label: "Trove", sub: "Post BTC · mint MUSD", n: "01", pos: "left-[61%] top-[7%] text-left" },
+    { x: 240, y: 70, label: "Borrow", sub: "Post BTC · mint MUSD", n: "01", pos: "left-[61%] top-[7%] text-left" },
     { x: 387.2, y: 325, label: "Mezo Pools", sub: "Swap MUSD → BTC", n: "02", pos: "right-[-2%] top-[74%] sm:right-[-6%]" },
     { x: 92.8, y: 325, label: "Collateral", sub: "Post the BTC back", n: "03", pos: "left-[-2%] top-[74%] sm:left-[-6%]" },
   ];
@@ -90,7 +92,7 @@ export function LoopViz() {
             />
           );
         })}
-        {/* travelling value: MUSD out of the trove, BTC back from the pool */}
+        {/* travelling value: MUSD out, BTC back from the pool */}
         {motionOk
           ? [0, 1, 2].map((i) => (
               <g key={`m${i}`}>
@@ -150,16 +152,55 @@ export function LoopViz() {
 /* Hero                                                                */
 /* ------------------------------------------------------------------ */
 
-export function Hero({ market, marketError }: { market: Market | null; marketError: string | null }) {
+export function Hero({
+  market,
+  marketError,
+  feeText,
+  opensPaused,
+}: {
+  market: Market | null;
+  marketError: string | null;
+  feeText: string;
+  opensPaused: boolean;
+}) {
   return (
-    <section aria-label="Coil overview" className="flex flex-wrap items-center justify-between gap-4 border-b border-border py-6 sm:py-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Bitcoin leverage</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">Set a deposit and target ratio.</p>
+    <section aria-label="Coil overview" className="border-b border-border py-8 sm:py-12">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="chip border-filament/40 text-foreground">Testnet</span>
+        <span className="chip border-warn/40 text-warn">Not audited</span>
+        <KeeperStatus pill />
+        {opensPaused ? <span className="chip text-muted-foreground">Opens paused</span> : null}
       </div>
-      <div className="flex w-full flex-wrap justify-between gap-x-4 gap-y-1 text-xs text-muted-foreground sm:block sm:w-auto sm:space-y-1 sm:text-right">
-        <p>{selectedChain.name} · {deployment.status}</p>
-        <p>{market ? `BTC ${formatUsd(market.price)}` : marketError ? "Market data unavailable" : "Reading market data…"}</p>
+      <h1 className="mt-5 max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">{HERO_TITLE}</h1>
+      <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">{HERO_SUBLINE}</p>
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <a href="#app" className="btn-btc inline-flex min-h-11 items-center rounded-lg px-4 text-sm font-medium">
+          Open a position
+        </a>
+        <p className="text-xs text-muted-foreground">
+          {selectedChain.name}
+          {market ? ` · BTC ${formatUsd(market.price)}` : marketError ? " · market data unavailable" : " · reading the oracle"}
+          {` · ${deployment.status}`}
+        </p>
+      </div>
+      <p id="coil-open-fee" role="status" className="mt-5 max-w-3xl text-sm leading-relaxed text-foreground">
+        {feeText}
+      </p>
+      <div className="mt-8 grid gap-3 md:grid-cols-3">
+        {MOAT_LINES.map((line, index) => (
+          <article key={line} className="panel p-4">
+            <p className="font-mono text-[11px] text-filament">0{index + 1}</p>
+            <p className="mt-2 text-sm leading-relaxed">{line}</p>
+          </article>
+        ))}
+      </div>
+      <div className="mt-4 rounded-lg border border-border px-4 py-3">
+        <p className="text-xs font-medium">What this build does not do</p>
+        <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+          {HONEST_LIMITS.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
       </div>
     </section>
   );
@@ -205,7 +246,7 @@ const HOW = [
   {
     icon: Bitcoin,
     title: "Post BTC, mint MUSD",
-    body: "Your BTC opens or tops up a MUSD trove owned by your own Coil clone. BorrowerOperations mints MUSD against it.",
+    body: "Your BTC opens or tops up a MUSD position in an account you own. The protocol mints MUSD against it.",
     tag: "BorrowerOperations",
   },
   {
@@ -217,8 +258,8 @@ const HOW = [
   {
     icon: Layers,
     title: "Post it back, stop at your ratio",
-    body: "The flash-borrowed BTC is posted as collateral. The clone mints the MUSD the pool is owed and repays it in the same transaction, landing on or above your target.",
-    tag: "flash swap · openTrove",
+    body: "The borrowed BTC is posted as collateral. Your account mints the MUSD the pool is owed and repays it in the same transaction, landing on or above your target.",
+    tag: "one transaction",
   },
 ];
 
@@ -233,8 +274,8 @@ export function HowItWorks() {
           </h2>
         </div>
         <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-          The clone owns the trove. A Mezo Pools flash swap borrows the BTC, posts it, and repays the pool before the transaction ends.
-          Transaction paths are checked against Mezo’s 20-call limit; the two-swap loop remains the fallback when the pool is paused.
+          Your account holds the position. A Mezo Pools swap borrows the BTC, posts it, and repays the pool before the transaction ends.
+          Transaction paths stay inside the Mezo call limit. A two-swap path remains the fallback when the pool is paused.
         </p>
       </div>
       <ol className="mt-5 grid gap-3 md:grid-cols-3">
@@ -264,12 +305,12 @@ type Receipt = { label: string; hash: `0x${string}` };
 
 const PROOF: { kicker: string; big: string; title: string; body: string; receipts: Receipt[] }[] = [
   {
-    kicker: "Wave 2 · flashLoop",
+    kicker: "Earlier testnet open",
     big: "4.00×",
     title: "0.015 BTC to 133.33% in one transaction",
-    body: "The Wave 2 factory opened 0.05183 BTC of collateral against 3,100.8 MUSD. A keeper then raised 133.30% to 150.00% for 1 MEZO, and one flashUnwind closed the trove.",
+    body: "An earlier factory opened 0.05183 BTC of collateral against 3,100.8 MUSD. A keeper then raised 133.30% to 150.00% for 1 MEZO, and one close returned the position. Those receipts are not this factory.",
     receipts: [
-      { label: "flashLoop", hash: "0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef" },
+      { label: "Open", hash: "0x576e5383d45538f63658ffdc110d256a4d1a41779efbd7df9c4e0b3d55af0eef" },
       { label: "guard", hash: "0xcb90da8575306d82209d7ba49c0d21caef14e5d5527ec5b9486c4689d71fb54a" },
       { label: "flashUnwind", hash: "0x296bb52c8458bbdd0f00bd8c58f425655cccabb6409c3068bb87e36a9209c3d2" },
     ],
@@ -285,7 +326,7 @@ const PROOF: { kicker: string; big: string; title: string; body: string; receipt
     kicker: "Wave 1 · deleverTo(300%)",
     big: "288.04%",
     title: "De-lever raised the ratio",
-    body: "One sale repaid the debt to exactly 2,000 MUSD, Mezo's floor for that trove. A second call succeeded without selling.",
+    body: "One sale repaid the debt to exactly 2,000 MUSD, Mezo's floor for that position. A second call succeeded without selling.",
     receipts: [
       { label: "Sale 1", hash: "0x8e742936951d59555c236f9c03dfd20d7d3d28d3a91b74e29f7863c18a6885a8" },
       { label: "Call 2", hash: "0xbafe5283fbcb373b167591cec8015b80606e5b970742bb17aa76ea70f47ff060" },
@@ -294,8 +335,8 @@ const PROOF: { kicker: string; big: string; title: string; body: string; receipt
   {
     kicker: "Wave 1 · unwind(100%)",
     big: "2 txs",
-    title: "A fresh 200% trove, fully closed",
-    body: "A new 0.046 BTC loop at 200.09% unwound in two transactions: repay to the floor at 281.99%, then close the trove.",
+    title: "A fresh 200% position, fully closed",
+    body: "A new 0.046 BTC open at 200.09% unwound in two transactions: repay to the floor at 281.99%, then close the position.",
     receipts: [
       { label: "Loop", hash: "0xd72758f1114ac3add69ed08a519603d1059c41c2fa959b9e225fc88769d9fd89" },
       { label: "Unwind 1", hash: "0x3ff34e57f63d0278bf5932442f786bd346e08028f40bae0cbb5dc1f5d2efc2fd" },
@@ -371,17 +412,17 @@ const RISKS = [
   {
     icon: TriangleAlert,
     title: "Liquidation at 110%",
-    body: "A trove under 110% collateral can be liquidated. Coil will not target below 115%, and the app shows how far BTC can fall before that line.",
+    body: "A position under 110% collateral can be liquidated. Coil will not target below 115%, and the app shows how far BTC can fall before that line.",
   },
   {
     icon: Repeat2,
     title: "Redemptions go lowest-first",
-    body: "MUSD redemptions repay the lowest-ratio troves first and take their BTC. A tight coil sits near the front of that queue.",
+    body: "MUSD redemptions repay the lowest-ratio positions first and take their BTC. A tight position sits near the front of that queue.",
   },
   {
     icon: ShieldCheck,
     title: "A keeper that can only help",
-    body: "If you set a guard, the keeper may call deleverTo up to your target. It cannot loop, unwind, or withdraw. Unset, it cannot touch the trove.",
+    body: "If you set a guard, the keeper may reduce risk up to your target. It cannot open, close, or withdraw. Unset, it cannot touch the position.",
   },
   {
     icon: TimerReset,
@@ -410,7 +451,7 @@ export function Risks() {
           </div>
         ))}
       </div>
-      <p className="mt-5 text-xs text-muted-foreground">Unaudited prototype. Mainnet writes require a confirmed deployment and explicit release enablement.</p>
+      <p className="mt-5 text-xs text-muted-foreground">Unaudited testnet prototype. Writes stay off until this deployment is confirmed and explicitly enabled.</p>
     </section>
   );
 }

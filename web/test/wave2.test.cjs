@@ -435,3 +435,155 @@ test('same-owner discovery refresh preserves the funded view while changed-owner
   assert.equal(changedOwner.pending, true);
   assert.equal(changedOwner.choices, catalog);
 });
+
+const quoteCard = require('../src/lib/quote-card.ts');
+const productCopy = require('../src/lib/product-copy.ts');
+const path = require('node:path');
+
+test('an off-oracle pool still yields a sample liquidation price', () => {
+  const skewed = { ...market, reserveBtc: 1000n * W };
+  assert.throws(() => quote.quoteFlashLoop(W / 10n, 2n * W, 50n, skewed));
+  const sample = quote.quoteFlashLoop(W / 10n, 2n * W, 50n, skewed, true);
+  assert.ok(sample.liquidationPrice > 0n);
+  assert.ok(sample.collateral > 0n);
+  const view = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: true,
+    illustrative: true,
+    overLimit: false,
+    liquidationPrice: '$1',
+    dropPercent: 45,
+    feeLine: 'fees',
+  });
+  assert.equal(view.badge, 'Sample');
+  assert.equal(view.liquidationPrice, '$1');
+  assert.equal(view.dropLine, 'BTC can fall 45%');
+});
+test('quote card shows liquidation price, how far BTC can fall, and fees', () => {
+  const view = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: false,
+    overLimit: false,
+    liquidationPrice: '$50,000',
+    dropPercent: 45,
+    feeLine: quoteCard.quoteFeeLine('12.50', '1.20', '0.25%'),
+  });
+  assert.equal(view.badge, 'Quote');
+  assert.equal(view.liquidationPrice, '$50,000');
+  assert.equal(view.dropLine, 'BTC can fall 45%');
+  assert.match(view.feeLine, /0\.25%/);
+  assert.match(view.feeLine, /12\.50 MUSD/);
+  assert.match(view.feeLine, /1\.20 MUSD/);
+  assert.equal(view.pegMessage, null);
+  assert.equal(view.overLimitMessage, null);
+});
+
+test('paused or peg-blocked opens are labelled Sample and still show the outcome', () => {
+  for (const flags of [{ paused: true, pegBlocked: false }, { paused: false, pegBlocked: true }]) {
+    const view = quoteCard.quoteCardView({
+      ...flags,
+      overLimit: false,
+      liquidationPrice: '$40,000',
+      dropPercent: 26.7,
+      feeLine: quoteCard.quoteFeeLine('3.00', '0.40', '0.25%'),
+    });
+    assert.equal(view.badge, 'Sample');
+    assert.equal(view.liquidationPrice, '$40,000');
+    assert.equal(view.dropLine, 'BTC can fall 26.7%');
+    assert.match(view.feeLine, /Pool fee 0\.40 MUSD/);
+  }
+});
+
+test('a peg block says the pool price is off the oracle and that raising slippage will not help', () => {
+  const view = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: true,
+    overLimit: false,
+    liquidationPrice: '$40,000',
+    dropPercent: 26.7,
+    feeLine: 'Coil fee 0.25% (3.00 MUSD on newly minted debt). Pool fee 0.40 MUSD. Exit fee 0.',
+  });
+  assert.equal(view.pegMessage, productCopy.PEG_BLOCK_MESSAGE);
+  assert.match(view.pegMessage, /pool price is off the oracle price/);
+  assert.match(view.pegMessage, /Raising slippage will not help/);
+  assert.equal(view.overLimitMessage, null);
+  assert.equal(view.badge, 'Sample');
+});
+
+test('a deposit over the factory limit gets its own message', () => {
+  const view = quoteCard.quoteCardView({
+    paused: false,
+    pegBlocked: false,
+    overLimit: true,
+    liquidationPrice: '$80,000',
+    dropPercent: 45,
+    feeLine: quoteCard.quoteFeeLine('9.00', '2.00', '0.25%'),
+  });
+  assert.equal(view.overLimitMessage, productCopy.OVER_LIMIT_MESSAGE);
+  assert.notEqual(view.overLimitMessage, productCopy.PEG_BLOCK_MESSAGE);
+  assert.doesNotMatch(view.overLimitMessage, /slippage/i);
+  assert.equal(view.pegMessage, null);
+  assert.equal(view.badge, 'Quote');
+  assert.equal(view.liquidationPrice, '$80,000');
+  const wad = 10n ** 18n;
+  assert.equal(quoteCard.exceedsFactoryLimit('1.5', 15n * wad / 10n, wad), true);
+  assert.equal(quoteCard.exceedsFactoryLimit('0.01', wad / 100n, wad), false);
+  assert.equal(quoteCard.exceedsFactoryLimit('5', null, wad), true);
+});
+
+test('leverage choices are 2x then 3x then 4x, with LTV next to CR', () => {
+  assert.deepEqual(productCopy.LEVERAGE_CHOICES.map(choice => choice.multiple), ['2x', '3x', '4x']);
+  for (const choice of productCopy.LEVERAGE_CHOICES) {
+    assert.match(choice.crLabel, /% CR$/);
+    assert.match(choice.ltvLabel, /% LTV$/);
+  }
+  assert.equal(productCopy.HERO_TITLE, 'Leverage your BTC in one transaction.');
+  assert.notEqual(productCopy.HERO_TITLE, 'Turn your BTC into more BTC.');
+  assert.equal(productCopy.btcCanFallLine(45), 'BTC can fall 45%');
+});
+
+test('user-facing strings omit banned jargon, mainnet claims, and the em dash', () => {
+  const root = path.join(__dirname, '../src');
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(tsx|ts)$/.test(entry.name)) files.push(full);
+    }
+  };
+  walk(root);
+  const allow = new Set(['flashLoop', 'setPegBounds', 'loop', 'flashUnwind', 'unwind']);
+  const banned = [
+    { name: 'PegOff', re: /PegOff/ },
+    { name: 'setPegBounds', re: /setPegBounds/ },
+    { name: 'flashLoop', re: /flashLoop/ },
+    { name: 'clone', re: /\bclone\b/i },
+    { name: 'trove', re: /\btrove\b/i },
+    { name: 'first 40 accounts', re: /first 40 accounts/i },
+    { name: 'em dash', re: /\u2014/ },
+    { name: 'WitLabs', re: /WitLabs/i },
+    { name: 'mainnet claim', re: /\bmainnet\b/i },
+  ];
+  const hits = [];
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const lines = source.split('\n').filter(line => !line.trim().startsWith('//')).join('\n');
+    const chunks = [];
+    const quoted = /`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g;
+    for (const match of lines.matchAll(quoted)) chunks.push(match[0].slice(1, -1));
+    for (const match of lines.matchAll(/>([^<>{}]+)</g)) chunks.push(match[1]);
+    for (const chunk of chunks) {
+      const text = chunk.trim();
+      if (!text || allow.has(text)) continue;
+      for (const rule of banned) {
+        if (rule.re.test(text)) hits.push(`${path.relative(root, file)}: ${rule.name}: ${text.slice(0, 180)}`);
+      }
+    }
+  }
+  assert.deepEqual(hits, []);
+  const landing = fs.readFileSync(path.join(root, 'components/landing.tsx'), 'utf8');
+  assert.match(landing, /<h1[^>]*>\{HERO_TITLE\}<\/h1>/);
+  assert.equal(productCopy.HERO_TITLE, 'Leverage your BTC in one transaction.');
+  assert.doesNotMatch(landing + productCopy.HERO_TITLE + productCopy.HERO_SUBLINE + productCopy.MOAT_LINES.join('\n'), /Turn your BTC into more BTC/);
+});
